@@ -8,7 +8,8 @@ import {
   buildModelMappingObject,
   fetchKiroDefaultMappings,
   getModelsByPlatform,
-  getPresetMappingsByPlatform
+  getPresetMappingsByPlatform,
+  splitModelMappingObject
 } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
@@ -193,5 +194,35 @@ describe('useModelWhitelist', () => {
     expect(mappings.every(item => item.from.startsWith('claude-'))).toBe(true)
     expect(mappings.every(item => item.to.startsWith('claude-'))).toBe(true)
     expect(mappings.some(item => item.to === 'claude-opus-4-7')).toBe(false)
+  })
+
+  it('combined 模式会同时保留白名单身份映射和模型映射', () => {
+    const mapping = buildModelMappingObject(
+      'combined',
+      ['gpt-5.4', 'claude-*'],
+      [
+        { from: 'gpt-latest', to: 'gpt-5.4' },
+        { from: 'gpt-5.4', to: 'gpt-5.4-mini' }
+      ]
+    )
+
+    expect(mapping).toEqual({
+      'gpt-5.4': 'gpt-5.4-mini',
+      'gpt-latest': 'gpt-5.4'
+    })
+  })
+
+  it('splitModelMappingObject 会把身份映射还原成白名单，其余保留为映射', () => {
+    const parsed = splitModelMappingObject({
+      'gpt-5.4': 'gpt-5.4',
+      'gpt-latest': 'gpt-5.4',
+      ' ': 'gpt-empty',
+      broken: 123
+    })
+
+    expect(parsed).toEqual({
+      allowedModels: ['gpt-5.4'],
+      modelMappings: [{ from: 'gpt-latest', to: 'gpt-5.4' }]
+    })
   })
 })
