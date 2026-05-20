@@ -8,7 +8,8 @@ import {
   buildModelMappingObject,
   fetchKiroDefaultMappings,
   getModelsByPlatform,
-  getPresetMappingsByPlatform
+  getPresetMappingsByPlatform,
+  splitModelMappingObject
 } from '../useModelWhitelist'
 
 describe('useModelWhitelist', () => {
@@ -69,6 +70,8 @@ describe('useModelWhitelist', () => {
     const models = getModelsByPlatform('kiro')
 
     expect(models).toEqual([
+      'claude-opus-4-7',
+      'claude-opus-4-7-thinking',
       'claude-opus-4-6',
       'claude-opus-4-6-thinking',
       'claude-sonnet-4-6',
@@ -84,12 +87,12 @@ describe('useModelWhitelist', () => {
     expect(models.some(model => model.endsWith('-agentic'))).toBe(false)
     expect(models.some(model => model.endsWith('-chat'))).toBe(false)
     expect(models).not.toContain('kiro-auto')
-    expect(models).not.toContain('claude-opus-4-5')
-    expect(models).not.toContain('claude-sonnet-4-5')
-    expect(models).not.toContain('claude-sonnet-4')
+    expect(models).not.toContain('claude-opus-4.7')
+    expect(models).not.toContain('claude-opus-4.6')
+    expect(models).not.toContain('claude-sonnet-4.6')
     expect(models).not.toContain('claude-3-5-sonnet-20241022')
     expect(models).not.toContain('claude-3-5-haiku-20241022')
-    expect(models).not.toContain('claude-haiku-4-5')
+    expect(models).not.toContain('claude-haiku-4.5')
     expect(models).not.toContain('gpt-4o')
     expect(models).not.toContain('gpt-4')
     expect(models).not.toContain('gpt-4-turbo')
@@ -136,6 +139,8 @@ describe('useModelWhitelist', () => {
     const mappingTargets = mappings.map(item => item.to)
 
     expect(mappings.map(({ from, to }) => ({ from, to }))).toEqual([
+      { from: 'claude-opus-4-7', to: 'claude-opus-4.7' },
+      { from: 'claude-opus-4-7-thinking', to: 'claude-opus-4.7' },
       { from: 'claude-opus-4-6', to: 'claude-opus-4.6' },
       { from: 'claude-opus-4-6-thinking', to: 'claude-opus-4.6' },
       { from: 'claude-sonnet-4-6', to: 'claude-sonnet-4.6' },
@@ -153,12 +158,12 @@ describe('useModelWhitelist', () => {
     expect(mappingTargets.some(model => model.endsWith('-chat'))).toBe(false)
     expect(mappingTargets).not.toContain('kiro-auto')
     expect(mappingTargets.some(model => model.startsWith('kiro-'))).toBe(false)
-    expect(mappings.some(item => item.from === 'claude-opus-4-5')).toBe(false)
-    expect(mappings.some(item => item.from === 'claude-sonnet-4-5')).toBe(false)
-    expect(mappings.some(item => item.from === 'claude-sonnet-4')).toBe(false)
+    expect(mappings.some(item => item.from === 'claude-opus-4.7')).toBe(false)
+    expect(mappings.some(item => item.from === 'claude-opus-4.6')).toBe(false)
+    expect(mappings.some(item => item.from === 'claude-sonnet-4.6')).toBe(false)
     expect(mappings.some(item => item.from === 'claude-3-5-sonnet-20241022')).toBe(false)
     expect(mappings.some(item => item.from === 'claude-3-5-haiku-20241022')).toBe(false)
-    expect(mappings.some(item => item.from === 'claude-haiku-4-5')).toBe(false)
+    expect(mappings.some(item => item.from === 'claude-haiku-4.5')).toBe(false)
     expect(mappingTargets).not.toContain('gpt-4o')
     expect(mappingTargets).not.toContain('gpt-4')
     expect(mappingTargets).not.toContain('gpt-4-turbo')
@@ -172,6 +177,8 @@ describe('useModelWhitelist', () => {
     const mappings = await fetchKiroDefaultMappings()
 
     expect(mappings).toEqual(expect.arrayContaining([
+      { from: 'claude-opus-4-7', to: 'claude-opus-4.7' },
+      { from: 'claude-opus-4-7-thinking', to: 'claude-opus-4.7' },
       { from: 'claude-opus-4-6', to: 'claude-opus-4.6' },
       { from: 'claude-opus-4-6-thinking', to: 'claude-opus-4.6' },
       { from: 'claude-sonnet-4-6', to: 'claude-sonnet-4.6' },
@@ -183,7 +190,7 @@ describe('useModelWhitelist', () => {
       { from: 'claude-haiku-4-5-20251001', to: 'claude-haiku-4.5' },
       { from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5' }
     ]))
-    expect(mappings).toHaveLength(10)
+    expect(mappings).toHaveLength(12)
     expect(mappings.every(item => !item.from.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.to.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.from.endsWith('-agentic'))).toBe(true)
@@ -192,6 +199,35 @@ describe('useModelWhitelist', () => {
     expect(mappings.every(item => !item.to.endsWith('-chat'))).toBe(true)
     expect(mappings.every(item => item.from.startsWith('claude-'))).toBe(true)
     expect(mappings.every(item => item.to.startsWith('claude-'))).toBe(true)
-    expect(mappings.some(item => item.to === 'claude-opus-4-7')).toBe(false)
+  })
+
+  it('combined 模式会同时保留白名单身份映射和模型映射', () => {
+    const mapping = buildModelMappingObject(
+      'combined',
+      ['gpt-5.4', 'claude-*'],
+      [
+        { from: 'gpt-latest', to: 'gpt-5.4' },
+        { from: 'gpt-5.4', to: 'gpt-5.4-mini' }
+      ]
+    )
+
+    expect(mapping).toEqual({
+      'gpt-5.4': 'gpt-5.4-mini',
+      'gpt-latest': 'gpt-5.4'
+    })
+  })
+
+  it('splitModelMappingObject 会把身份映射还原成白名单，其余保留为映射', () => {
+    const parsed = splitModelMappingObject({
+      'gpt-5.4': 'gpt-5.4',
+      'gpt-latest': 'gpt-5.4',
+      ' ': 'gpt-empty',
+      broken: 123
+    })
+
+    expect(parsed).toEqual({
+      allowedModels: ['gpt-5.4'],
+      modelMappings: [{ from: 'gpt-latest', to: 'gpt-5.4' }]
+    })
   })
 })
