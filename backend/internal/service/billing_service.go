@@ -232,6 +232,9 @@ func (s *BillingService) initFallbackPricing() {
 	// Claude 4.7 Opus (暂与4.6同价，待官方定价更新)
 	s.fallbackPrices["claude-opus-4.7"] = s.fallbackPrices["claude-opus-4.6"]
 
+	// Claude 4.8 Opus (暂与4.7同价，待官方定价更新)
+	s.fallbackPrices["claude-opus-4.8"] = s.fallbackPrices["claude-opus-4.7"]
+
 	// Claude Sonnet 4.5/4.6 当前与 Sonnet 4 同价
 	s.fallbackPrices["claude-sonnet-4.5"] = s.fallbackPrices["claude-sonnet-4"]
 	s.fallbackPrices["claude-sonnet-4.6"] = s.fallbackPrices["claude-sonnet-4.5"]
@@ -307,6 +310,9 @@ func (s *BillingService) getFallbackPricing(model string) *ModelPricing {
 
 	// 按模型系列匹配
 	if strings.Contains(modelLower, "opus") {
+		if strings.Contains(modelLower, "4.8") || strings.Contains(modelLower, "4-8") {
+			return s.fallbackPrices["claude-opus-4.8"]
+		}
 		if strings.Contains(modelLower, "4.7") || strings.Contains(modelLower, "4-7") {
 			return s.fallbackPrices["claude-opus-4.7"]
 		}

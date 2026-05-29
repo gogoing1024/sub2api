@@ -324,6 +324,8 @@ const antigravityPresetMappings = [
 ]
 
 const kiroPresetMappings = [
+  { label: 'Opus 4.8', from: 'claude-opus-4-8', to: 'claude-opus-4.8', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
+  { label: 'Opus 4.8 Thinking', from: 'claude-opus-4-8-thinking', to: 'claude-opus-4.8', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
   { label: 'Opus 4.7', from: 'claude-opus-4-7', to: 'claude-opus-4.7', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
   { label: 'Opus 4.7 Thinking', from: 'claude-opus-4-7-thinking', to: 'claude-opus-4.7', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
   { label: 'Opus 4.6', from: 'claude-opus-4-6', to: 'claude-opus-4.6', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
