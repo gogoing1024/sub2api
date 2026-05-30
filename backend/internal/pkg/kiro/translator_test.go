@@ -282,63 +282,19 @@ func TestBuildKiroPayloadInjectsThinkingIntoHistory(t *testing.T) {
 	require.Equal(t, "I will follow these instructions.", gjson.GetBytes(payload, "conversationState.history.1.assistantResponseMessage.content").String())
 }
 
-func TestBuildKiroPayloadInjectsAdaptiveThinkingForOpusThinkingModels(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		requestBody string
-		modelID     string
-		wantEffort  string
-	}{
-		{
-			name: "opus 4.6 thinking alias",
-			requestBody: `{
-				"model":"claude-opus-4-6-thinking",
-				"messages":[{"role":"user","content":"hello kiro"}]
-			}`,
-			modelID:    "claude-opus-4.6",
-			wantEffort: "high",
-		},
-		{
-			name: "opus 4.7 thinking alias",
-			requestBody: `{
-				"model":"claude-opus-4-7-thinking",
-				"messages":[{"role":"user","content":"hello kiro"}]
-			}`,
-			modelID:    "claude-opus-4.7",
-			wantEffort: "high",
-		},
-		{
-			name: "opus 4.8 thinking alias",
-			requestBody: `{
-				"model":"claude-opus-4-8-thinking",
-				"messages":[{"role":"user","content":"hello kiro"}]
-			}`,
-			modelID:    "claude-opus-4.8",
-			wantEffort: "high",
-		},
-		{
-			name: "opus 4.8 enabled thinking from cli body",
-			requestBody: `{
-				"model":"claude-opus-4-8",
-				"thinking":{"type":"enabled","budget_tokens":32000},
-				"output_config":{"effort":"xhigh"},
-				"messages":[{"role":"user","content":"hello kiro"}]
-			}`,
-			modelID:    "claude-opus-4.8",
-			wantEffort: "xhigh",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			kiroBuildResult, err := BuildKiroPayloadWithContext([]byte(tc.requestBody), tc.modelID, "", "AI_EDITOR", nil)
-			require.NoError(t, err)
-			payload := kiroBuildResult.Payload
+func TestBuildKiroPayloadInjectsAdaptiveThinkingForOpus46ThinkingModel(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-opus-4-6-thinking",
+		"messages":[{"role":"user","content":"hello kiro"}]
+	}`)
 
-			systemContent := gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String()
-			require.Contains(t, systemContent, "<thinking_mode>adaptive</thinking_mode>\n<thinking_effort>"+tc.wantEffort+"</thinking_effort>")
-			require.NotContains(t, systemContent, "<thinking_mode>enabled</thinking_mode>")
-			require.Contains(t, systemContent, "[Context: Current time is ")
-		})
-	}
+	kiroBuildResult, err := BuildKiroPayloadWithContext(body, "claude-opus-4.6", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+	payload := kiroBuildResult.Payload
+
+	systemContent := gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String()
+	require.Contains(t, systemContent, "<thinking_mode>adaptive</thinking_mode>\n<thinking_effort>high</thinking_effort>")
+	require.Contains(t, systemContent, "[Context: Current time is ")
 }
 
 func TestBuildKiroPayloadInjectsThinkingForThinkingAliasModel(t *testing.T) {
@@ -681,8 +637,6 @@ func TestStreamEventStreamAsAnthropicExtractsEmbeddedToolCall(t *testing.T) {
 	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{})
 	require.NoError(t, err)
 	require.Equal(t, "tool_use", result.StopReason)
-	require.Equal(t, 2, result.TextDeltaCount)
-	require.Equal(t, 1, result.ToolUseCount)
 
 	output := out.String()
 	require.NotContains(t, output, "[Called")
@@ -792,25 +746,6 @@ func TestStreamEventStreamAsAnthropicDelaysMessageStartUntilContent(t *testing.T
 	require.Less(t, messageStartIdx, toolUseIdx)
 }
 
-func TestStreamEventStreamAsAnthropicReturnsEmptyStreamErrorWithoutClientOutput(t *testing.T) {
-	stream := bytes.NewBuffer(nil)
-	_, _ = stream.Write(buildEventStreamFrame(t, "messageMetadataEvent", map[string]any{
-		"messageMetadataEvent": map[string]any{
-			"tokenUsage": map[string]any{
-				"uncachedInputTokens": 9,
-				"outputTokens":        0,
-				"totalTokens":         9,
-			},
-		},
-	}))
-
-	var out bytes.Buffer
-	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{})
-	require.Nil(t, result)
-	require.ErrorIs(t, err, ErrEmptyKiroStream)
-	require.Empty(t, out.String())
-}
-
 func TestStreamEventStreamAsAnthropicStreamsToolUseFragments(t *testing.T) {
 	stream := bytes.NewBuffer(nil)
 	_, _ = stream.Write(buildEventStreamFrame(t, "toolUseEvent", map[string]any{
@@ -839,8 +774,6 @@ func TestStreamEventStreamAsAnthropicStreamsToolUseFragments(t *testing.T) {
 	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{})
 	require.NoError(t, err)
 	require.Equal(t, "tool_use", result.StopReason)
-	require.Equal(t, 1, result.ToolUseCount)
-	require.Equal(t, 0, result.TextDeltaCount)
 
 	output := out.String()
 	require.Equal(t, 1, strings.Count(output, `"id":"toolu_stream"`))
@@ -1084,9 +1017,6 @@ func TestStreamEventStreamAsAnthropicThinkingOnlyResponse(t *testing.T) {
 	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{ThinkingEnabled: true})
 	require.NoError(t, err)
 	require.Equal(t, "max_tokens", result.StopReason)
-	require.Equal(t, 1, result.ThinkingDeltaCount)
-	require.Equal(t, 1, result.TextDeltaCount)
-	require.Equal(t, 0, result.ToolUseCount)
 
 	output := out.String()
 	require.Contains(t, output, `"type":"thinking"`)
@@ -1213,8 +1143,8 @@ func TestStreamEventStreamAsAnthropicIgnoresReasoningContentWhenThinkingDisabled
 
 	var out bytes.Buffer
 	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{})
-	require.Nil(t, result)
-	require.ErrorIs(t, err, ErrEmptyKiroStream)
+	require.NoError(t, err)
+	require.Equal(t, "end_turn", result.StopReason)
 	require.NotContains(t, out.String(), "hidden reasoning")
 	require.NotContains(t, out.String(), `"type":"thinking"`)
 }

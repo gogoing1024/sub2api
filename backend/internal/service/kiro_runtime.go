@@ -313,8 +313,7 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
-		streamResult, streamErr := kiropkg.StreamEventStreamAsAnthropicWithContext(ctx, resp.Body, pw, mappedModel, inputTokens, requestCtx)
-		logKiroStreamTranslateResult(account, mappedModel, requestModel, streamResult, streamErr)
+		_, streamErr := kiropkg.StreamEventStreamAsAnthropicWithContext(ctx, resp.Body, pw, mappedModel, inputTokens, requestCtx)
 		if streamErr != nil {
 			_ = pw.CloseWithError(streamErr)
 			return
@@ -327,41 +326,6 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		Header:     wrappedHeaders,
 		Body:       pr,
 	}, inputTokens, nil
-}
-
-func logKiroStreamTranslateResult(account *Account, mappedModel, requestModel string, result *kiropkg.StreamResult, err error) {
-	accountID := int64(0)
-	if account != nil {
-		accountID = account.ID
-	}
-	fields := []zap.Field{
-		zap.Int64("account_id", accountID),
-		zap.String("mapped_model", strings.TrimSpace(mappedModel)),
-		zap.String("request_model", strings.TrimSpace(requestModel)),
-	}
-	if result != nil {
-		firstDeltaMs := -1
-		if result.FirstDeltaDur != nil {
-			firstDeltaMs = int(result.FirstDeltaDur.Milliseconds())
-		}
-		fields = append(fields,
-			zap.String("stop_reason", result.StopReason),
-			zap.Int("input_tokens", result.Usage.InputTokens),
-			zap.Int("output_tokens", result.Usage.OutputTokens),
-			zap.Int("cache_read_input_tokens", result.Usage.CacheReadInputTokens),
-			zap.Int("cache_creation_input_tokens", result.Usage.CacheCreationInputTokens),
-			zap.Int("text_delta_count", result.TextDeltaCount),
-			zap.Int("thinking_delta_count", result.ThinkingDeltaCount),
-			zap.Int("tool_use_count", result.ToolUseCount),
-			zap.Int("first_delta_ms", firstDeltaMs),
-		)
-	}
-	if err != nil {
-		fields = append(fields, zap.Error(err))
-		logger.L().Warn("kiro.stream_translate_done", fields...)
-		return
-	}
-	logger.L().Info("kiro.stream_translate_done", fields...)
 }
 
 func (s *GatewayService) executeKiroUpstream(ctx context.Context, account *Account, anthropicBody []byte, mappedModel, requestModel, token string, headers http.Header) (*http.Response, kiropkg.KiroRequestContext, error) {

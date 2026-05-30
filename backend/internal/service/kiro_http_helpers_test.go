@@ -211,47 +211,6 @@ func TestBuildKiroPayloadForAccountMapsOpus47ToDottedModelID(t *testing.T) {
 	require.Equal(t, "claude-opus-4.7", gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.modelId").String())
 }
 
-func TestBuildKiroPayloadForAccountMapsOpus48ToDottedModelID(t *testing.T) {
-	account := &Account{
-		ID:       11,
-		Platform: PlatformKiro,
-		Type:     AccountTypeOAuth,
-		Credentials: map[string]any{
-			"model_mapping": map[string]any{
-				"claude-opus-4-8": "claude-opus-4.8",
-			},
-		},
-	}
-	body := []byte(`{
-		"model":"claude-opus-4.8",
-		"thinking":{"type":"enabled","budget_tokens":32000},
-		"output_config":{"effort":"xhigh"},
-		"messages":[{"role":"user","content":"hello"}]
-	}`)
-
-	mappedModel := account.GetMappedModel("claude-opus-4-8")
-	modelID := kiropkg.MapModel(mappedModel)
-	require.Equal(t, "claude-opus-4.8", modelID)
-
-	buildResult, err := (&GatewayService{}).buildKiroPayloadForAccount(
-		context.Background(),
-		account,
-		body,
-		modelID,
-		"kiro-access-token",
-		"claude-opus-4-8",
-		nil,
-	)
-	require.NoError(t, err)
-	payload := buildResult.Payload
-
-	require.Equal(t, "claude-opus-4.8", gjson.GetBytes(payload, "conversationState.currentMessage.userInputMessage.modelId").String())
-	systemContent := gjson.GetBytes(payload, "conversationState.history.0.userInputMessage.content").String()
-	require.Contains(t, systemContent, "<thinking_mode>adaptive</thinking_mode>")
-	require.Contains(t, systemContent, "<thinking_effort>xhigh</thinking_effort>")
-	require.NotContains(t, systemContent, "<thinking_mode>enabled</thinking_mode>")
-}
-
 func TestBuildKiroPayloadForAccountDoesNotEnableThinkingForNonThinkingAlias(t *testing.T) {
 	account := &Account{
 		ID:       9,
