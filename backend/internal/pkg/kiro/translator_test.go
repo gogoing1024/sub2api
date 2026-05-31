@@ -297,6 +297,52 @@ func TestBuildKiroPayloadInjectsAdaptiveThinkingForOpus46ThinkingModel(t *testin
 	require.Contains(t, systemContent, "[Context: Current time is ")
 }
 
+// 客户端未请求 thinking 但模型是 Opus 4.7/4.8 时,解析器仍需开启 <thinking> tag 抽取,
+// 否则上游 CoT 文本会原样泄漏到 assistant 正文。
+func TestBuildKiroPayloadEnablesImplicitThinkingTagStrippingForOpus47And48(t *testing.T) {
+	cases := []struct {
+		name    string
+		model   string
+		mapped  string
+		wantStr bool
+	}{
+		{name: "opus-4.7 plain", model: "claude-opus-4-7", mapped: "claude-opus-4.7", wantStr: true},
+		{name: "opus-4.8 plain", model: "claude-opus-4-8", mapped: "claude-opus-4.8", wantStr: true},
+		{name: "sonnet-4.5 plain stays disabled", model: "claude-sonnet-4-5", mapped: "claude-sonnet-4.5", wantStr: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(`{"model":"` + tc.model + `","messages":[{"role":"user","content":"hi"}]}`)
+			result, err := BuildKiroPayloadWithContext(body, tc.mapped, "", "AI_EDITOR", nil)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantStr, result.Context.ThinkingEnabled,
+				"ThinkingEnabled mismatch for model %q (mapped %q)", tc.model, tc.mapped)
+
+			// 隐式开启不应在 system prompt 注入 <thinking_mode> 前缀,避免改变上游请求语义
+			systemContent := gjson.GetBytes(result.Payload, "conversationState.history.0.userInputMessage.content").String()
+			require.NotContains(t, systemContent, "<thinking_mode>",
+				"implicit tag stripping must not inject <thinking_mode> prefix")
+		})
+	}
+}
+
+// kiroBuiltinIdentityPrompt 中的 {{identity}} 占位符必须被实际身份替换,
+// 默认回退到 "Claude",避免模型直接复读模板字面量。
+func TestBuildKiroPayloadRendersBuiltinIdentityPlaceholder(t *testing.T) {
+	body := []byte(`{
+		"model":"claude-sonnet-4-5",
+		"messages":[{"role":"user","content":"hi"}]
+	}`)
+	result, err := BuildKiroPayloadWithContext(body, "claude-sonnet-4.5", "", "AI_EDITOR", nil)
+	require.NoError(t, err)
+
+	systemContent := gjson.GetBytes(result.Payload, "conversationState.history.0.userInputMessage.content").String()
+	require.NotContains(t, systemContent, "{{identity}}",
+		"placeholder must be rendered before sending to upstream")
+	require.Contains(t, systemContent, "You are Claude,",
+		"default identity should fall back to 'Claude'")
+}
+
 func TestBuildKiroPayloadInjectsThinkingForThinkingAliasModel(t *testing.T) {
 	body := []byte(`{
 		"model":"claude-sonnet-4-5-20250929-thinking",
@@ -456,7 +502,8 @@ func TestParseNonStreamingEventStreamPureThinkingFallback(t *testing.T) {
 
 	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
 	require.NoError(t, err)
-	require.Equal(t, "max_tokens", gjson.GetBytes(result.ResponseBody, "stop_reason").String())
+	// thinking-only 不再被误判为 max_tokens,按协议自然兜底为 end_turn
+	require.Equal(t, "end_turn", gjson.GetBytes(result.ResponseBody, "stop_reason").String())
 
 	content := gjson.GetBytes(result.ResponseBody, "content").Array()
 	require.Len(t, content, 2)
@@ -613,7 +660,8 @@ func TestParseNonStreamingEventStreamThinkingOnlyResponse(t *testing.T) {
 
 	result, err := ParseNonStreamingEventStreamWithContext(stream, "claude-sonnet-4-5", KiroRequestContext{})
 	require.NoError(t, err)
-	require.Equal(t, "max_tokens", gjson.GetBytes(result.ResponseBody, "stop_reason").String())
+	// thinking-only 不再被误判为 max_tokens,按协议自然兜底为 end_turn
+	require.Equal(t, "end_turn", gjson.GetBytes(result.ResponseBody, "stop_reason").String())
 	require.Equal(t, "thinking", gjson.GetBytes(result.ResponseBody, "content.0.type").String())
 	require.Equal(t, "I should think first.", gjson.GetBytes(result.ResponseBody, "content.0.thinking").String())
 	require.Equal(t, "text", gjson.GetBytes(result.ResponseBody, "content.1.type").String())
@@ -1037,13 +1085,13 @@ func TestStreamEventStreamAsAnthropicThinkingOnlyResponse(t *testing.T) {
 	var out bytes.Buffer
 	result, err := StreamEventStreamAsAnthropicWithContext(context.Background(), stream, &out, "claude-sonnet-4-5", 9, KiroRequestContext{ThinkingEnabled: true})
 	require.NoError(t, err)
-	require.Equal(t, "max_tokens", result.StopReason)
+	// thinking-only 不再被误判为 max_tokens,按协议自然兜底为 end_turn
+	require.Equal(t, "end_turn", result.StopReason)
 
 	output := out.String()
 	require.Contains(t, output, `"type":"thinking"`)
 	require.Contains(t, output, `"type":"thinking_delta"`)
 	require.Contains(t, output, `"thinking":"I should think first."`)
-	require.Contains(t, output, `"text":" "`)
 	require.Contains(t, output, `event: message_delta`)
 	require.Contains(t, output, `event: message_stop`)
 }

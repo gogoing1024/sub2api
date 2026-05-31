@@ -250,6 +250,24 @@ func MapModel(model string) string {
 	}
 }
 
+// requiresImplicitThinkingTagStripping 判断是否需要在客户端未显式请求 thinking 时
+// 仍开启流式/非流式解析器的 <thinking> tag 抽取。
+//
+// Opus 4.7/4.8 的内部 CoT 在 Kiro 上游以 <thinking>...</thinking> 文本形式流出,
+// 不开启抽取会让标签和思考内容直接落到 assistant 正文,客户端看到形如
+// "<thinking>...</thinking>final" 的乱码。
+//
+// 仅作用于解析阶段;不会触发 system prompt 注入 <thinking_mode> 前缀,
+// 也不会改写 inferenceConfig,避免改变上游请求语义。
+func requiresImplicitThinkingTagStripping(modelID string) bool {
+	switch strings.TrimSpace(strings.ToLower(modelID)) {
+	case "claude-opus-4.7", "claude-opus-4-7", "claude-opus-4-7-thinking",
+		"claude-opus-4.8", "claude-opus-4-8", "claude-opus-4-8-thinking":
+		return true
+	}
+	return false
+}
+
 func normalizeModelAlias(model string) string {
 	base := strings.TrimSpace(strings.ToLower(model))
 	for {
@@ -290,6 +308,11 @@ func BuildKiroPayloadWithContext(claudeBody []byte, modelID, profileArn, origin 
 	inlineSystem, filteredMessages := extractInlineSystemPrompts(messages)
 	thinking := deriveThinkingDirective(claudeBody, headers)
 	requestCtx.ThinkingEnabled = thinking != nil
+	// Opus 4.7/4.8 即便客户端未请求 thinking,上游仍会以 <thinking>...</thinking> 文本流出 CoT;
+	// 此处仅为流式/非流式解析器开启 tag 抽取,不会改写 system prompt,避免将思考内容泄露到正文。
+	if !requestCtx.ThinkingEnabled && requiresImplicitThinkingTagStripping(modelID) {
+		requestCtx.ThinkingEnabled = true
+	}
 	toolChoiceHint := extractClaudeToolChoiceHint(claudeBody, &requestCtx)
 	baseSystem := extractSystemPrompt(claudeBody)
 	if inlineSystem != "" {
@@ -405,7 +428,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	thinkingBuffer := ""
 	inThinkingBlock := false
 	stripThinkingLeadingNewline := false
-	sawNonThinkingBlock := false
 	var outputTextBuf strings.Builder
 
 	writeEvent := func(event string, data any) error {
@@ -479,7 +501,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		if toolUseID == "" || name == "" || streamingToolStopped[toolUseID] {
 			return nil
 		}
-		sawNonThinkingBlock = true
 		if currentStreamingToolID != "" && currentStreamingToolID != toolUseID {
 			if err := closeOpenStreamingTool(); err != nil {
 				return err
@@ -591,7 +612,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		if err := ensureMessageStart(); err != nil {
 			return err
 		}
-		sawNonThinkingBlock = true
 		if firstDelta == nil {
 			delta := time.Since(start)
 			firstDelta = &delta
@@ -627,7 +647,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		if !shouldEmitToolUse(tool, emittedToolContents) {
 			return nil
 		}
-		sawNonThinkingBlock = true
 		if err := closeOpenStreamingTool(); err != nil {
 			return err
 		}
@@ -851,8 +870,14 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		if evt == nil {
 			return nil
 		}
+		// 仅接受 Anthropic 协议规定的 stop_reason 白名单值
+		// 上游中间帧若透传 pause_turn/refusal/stop_sequence 等新值会让客户端误判为终态
+		// 其余值忽略,等流真正 EOF 时由后续兜底分支按 tool_use/end_turn 处理
 		if evt.SourceStopReason != "" {
-			stopReason = evt.SourceStopReason
+			switch strings.ToLower(strings.TrimSpace(evt.SourceStopReason)) {
+			case "end_turn", "tool_use", "max_tokens":
+				stopReason = evt.SourceStopReason
+			}
 		}
 		switch evt.Type {
 		case kiroSemanticContent:
@@ -948,12 +973,10 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	if err := flushPendingAssistantText(); err != nil {
 		return nil, err
 	}
-	if requestCtx.ThinkingEnabled && thinkingBlockIndex != -1 && !sawNonThinkingBlock {
-		stopReason = "max_tokens"
-		if err := emitTextDelta(" ", true); err != nil {
-			return nil, err
-		}
-	}
+	// 移除"thinking-only 强制 max_tokens"误判分支
+	// 仅有 thinking 块、无 text 输出不代表截断,opus 4.8 思考密集场景常见
+	// 真正的截断由上游 ContentLengthExceededException 异常帧设置 stop_reason
+	// 此处由后续 stopReason == "" 兜底分支按 tool_use/end_turn 自然处理
 
 	if err := closeText(); err != nil {
 		return nil, err
@@ -1104,6 +1127,15 @@ func thinkingDirectiveFromModel(model string) *thinkingDirective {
 			BudgetTokens: 20000,
 			Effort:       "high",
 		}
+	// opus 4.7/4.8 走 adaptive 高预算,budget 对齐 Antigravity 的 ClaudeAdaptiveHighThinkingBudgetTokens
+	// 避免 thinking 提前耗尽导致流式中途断开
+	case "claude-opus-4-7", "claude-opus-4.7",
+		"claude-opus-4-8", "claude-opus-4.8":
+		return &thinkingDirective{
+			Mode:         "adaptive",
+			BudgetTokens: 24576,
+			Effort:       "high",
+		}
 	default:
 		return &thinkingDirective{
 			Mode:         "enabled",
@@ -1112,10 +1144,26 @@ func thinkingDirectiveFromModel(model string) *thinkingDirective {
 	}
 }
 
+// renderKiroBuiltinIdentityPrompt 渲染 kiroBuiltinIdentityPrompt 中的 {{identity}} 占位符。
+//
+// kiroBuiltinIdentityPrompt 内的 <identity> 段写有 "You are {{identity}}, ...",
+// 这是个字面量;若不替换,模型会直接复读 "I am {{identity}}",对 Opus 4.7/4.8 这类
+// 对格式更敏感的版本尤其明显。
+//
+// identity 为空时回退到 "Claude",对齐 prompt 中 <CRITICAL_OVERRIDE> 的兜底语义:
+// "If no identity is provided, say that you are Claude."
+func renderKiroBuiltinIdentityPrompt(identity string) string {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		identity = "Claude"
+	}
+	return strings.ReplaceAll(kiroBuiltinIdentityPrompt, "{{identity}}", identity)
+}
+
 func buildInjectedSystemPrompt(systemPrompt string, thinking *thinkingDirective, toolChoiceHint string) string {
 	systemPrompt = strings.TrimSpace(systemPrompt)
 	timestampContext := fmt.Sprintf("[Context: Current time is %s]", time.Now().Format("2006-01-02 15:04:05 MST"))
-	promptParts := []string{kiroBuiltinIdentityPrompt, timestampContext}
+	promptParts := []string{renderKiroBuiltinIdentityPrompt(""), timestampContext}
 	if systemPrompt != "" {
 		promptParts = append(promptParts, systemPrompt)
 	}
@@ -2023,10 +2071,10 @@ func buildClaudeResponse(content string, toolUses []KiroToolUse, model string, u
 			"input": tool.Input,
 		})
 	}
-	pureThinking := hasThinkingBlocksOnly(blocks) && usableTools == 0
-	if pureThinking {
+	// 移除"thinking-only 强制 max_tokens"误判分支(与流式路径同步)
+	// 非流式响应若仅有 thinking 块,补一个空 text 块保证协议完整性,但不强设 stop_reason
+	if hasThinkingBlocksOnly(blocks) && usableTools == 0 {
 		blocks = append(blocks, map[string]any{"type": "text", "text": ""})
-		stopReason = "max_tokens"
 	}
 	if len(blocks) == 0 {
 		blocks = append(blocks, map[string]any{"type": "text", "text": ""})
