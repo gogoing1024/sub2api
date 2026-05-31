@@ -26,7 +26,7 @@
       <span class="select-icon">
         <Icon
           name="chevronDown"
-          size="md"
+          :size="size === 'sm' ? 'sm' : 'md'"
           :class="['transition-transform duration-200', isOpen && 'rotate-180']"
         />
       </span>
@@ -39,7 +39,7 @@
           v-if="isOpen"
           ref="dropdownRef"
           class="select-dropdown-portal"
-          :class="[instanceId]"
+          :class="[instanceId, size === 'sm' && 'select-dropdown-sm']"
           :style="dropdownStyle"
           role="listbox"
           @click.stop
@@ -538,6 +538,35 @@ onUnmounted(() => {
 .select-dropdown-portal .select-empty {
   @apply px-4 py-8 text-center text-sm;
   @apply text-gray-500 dark:text-dark-400;
+}
+
+/* 紧凑尺寸下拉面板：选项行/搜索框收紧，宽度跟随触发器 */
+.select-dropdown-portal.select-dropdown-sm {
+  @apply min-w-0 rounded-lg;
+}
+
+.select-dropdown-portal.select-dropdown-sm .select-search {
+  @apply px-2 py-1.5;
+}
+
+.select-dropdown-portal.select-dropdown-sm .select-search-input {
+  @apply text-xs;
+}
+
+.select-dropdown-portal.select-dropdown-sm .select-options {
+  @apply py-0.5;
+}
+
+.select-dropdown-portal.select-dropdown-sm .select-option {
+  @apply px-2.5 py-1.5 text-xs;
+}
+
+.select-dropdown-portal.select-dropdown-sm .select-option-group {
+  @apply px-2.5 py-1 text-[10px];
+}
+
+.select-dropdown-portal.select-dropdown-sm .select-empty {
+  @apply px-2.5 py-4 text-xs;
 }
 
 .select-dropdown-enter-active,
