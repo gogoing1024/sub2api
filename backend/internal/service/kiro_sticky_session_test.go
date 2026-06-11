@@ -30,6 +30,16 @@ func newKiroRequestBody(systemPrompt string, turns int) []byte {
 	return []byte(body)
 }
 
+func newKiroRequestBodyWithoutSystem(firstUserMessage string, turns int) []byte {
+	msgs := `[{"role":"user","content":"` + firstUserMessage + `"}`
+	for i := 1; i < turns; i++ {
+		msgs += `,{"role":"assistant","content":"reply"},{"role":"user","content":"next turn"}`
+	}
+	msgs += `]`
+	body := `{"model":"claude-sonnet-4-5","messages":` + msgs + `}`
+	return []byte(body)
+}
+
 // TestKiroStickySession_SystemPromptHashStableAcrossRounds 验证：
 // Kiro 分组的请求，随着 messages 增加（多轮对话），session hash 保持不变。
 func TestKiroStickySession_SystemPromptHashStableAcrossRounds(t *testing.T) {
@@ -182,24 +192,32 @@ func TestKiroStickySession_ExplicitSessionIDDifferentAPIKeys(t *testing.T) {
 	require.NotEqual(t, makeHash(1), makeHash(2), "不同 API Key 即使相同 session id 也应隔离")
 }
 
-// TestKiroStickySession_EmptySystemPromptFallsThrough 验证：
-// Kiro 分组但没有 system prompt 时，不走 kiro_system_prompt 路径，fallback 到消息内容 hash。
-func TestKiroStickySession_EmptySystemPromptFallsThrough(t *testing.T) {
+// TestKiroStickySession_EmptySystemPromptUsesFirstUserMessage 验证：
+// Kiro 分组没有 system prompt 时，使用第一条 user 消息作为稳定种子，避免多轮 messages 增长导致 hash 变化。
+func TestKiroStickySession_EmptySystemPromptUsesFirstUserMessage(t *testing.T) {
 	svc := &GatewayService{}
-
-	body := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hello"}]}`)
-	ref := NewRequestBodyRef(body)
-	parsed, err := ParseGatewayRequest(ref, "anthropic")
-	require.NoError(t, err)
-	parsed.Group = kiroGroup()
-	parsed.SessionContext = &SessionContext{
+	ctx := &SessionContext{
 		ClientIP: "1.2.3.4",
 		APIKeyID: 42,
 	}
 
-	hash := svc.GenerateSessionHash(parsed)
-	// 没有 system prompt，但有 messages，应 fallback 到消息内容 hash，结果非空
-	require.NotEmpty(t, hash, "没有 system prompt 时应 fallback 到消息内容 hash")
+	makeHash := func(firstUserMessage string, turns int) string {
+		body := newKiroRequestBodyWithoutSystem(firstUserMessage, turns)
+		ref := NewRequestBodyRef(body)
+		parsed, err := ParseGatewayRequest(ref, "anthropic")
+		require.NoError(t, err)
+		parsed.Group = kiroGroup()
+		parsed.SessionContext = ctx
+		return svc.GenerateSessionHash(parsed)
+	}
+
+	hash1 := makeHash("hello", 1)
+	hash2 := makeHash("hello", 2)
+	hash3 := makeHash("different first prompt", 2)
+
+	require.NotEmpty(t, hash1)
+	require.Equal(t, hash1, hash2, "没有 system prompt 时，同一第一条 user 消息应保持 hash 稳定")
+	require.NotEqual(t, hash1, hash3, "不同第一条 user 消息应产生不同 hash")
 }
 
 // TestIsKiroGroup 验证 isKiroGroup 辅助函数。

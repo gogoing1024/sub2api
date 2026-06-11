@@ -784,29 +784,34 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 		return hash
 	}
 
-	// 2.5. Kiro 分组专用：仅用 system prompt 内容做 hash
+	// 2.5. Kiro 分组专用：使用对话生命周期内稳定的内容做 hash
 	//
 	// 背景：Kiro 采用 stateless replay 架构，每次请求都生成新的 conversationId，
 	// 无法依赖 conversationId 做粘性。同时 Claude Code / cursor 等客户端通常
 	// 不传 metadata.user_id，也不使用 cache_control: ephemeral。
 	//
-	// 解法：system prompt 在整个会话生命周期内固定不变（Claude Code 会在第一条消息
-	// 里附上完整系统提示，后续轮次不变），而 messages 数组每轮都会追加新内容导致 hash
-	// 变化。因此，对于 Kiro 分组，只用 system prompt 文本 + APIKeyID 区分因子做 hash，
-	// 保证同一个会话的多轮对话始终路由到同一账号，让 Kiro prompt cache 生效。
+	// 解法：优先用 system prompt；如果客户端没有传 system prompt，则退到第一条 user
+	// 消息。它们在同一对话后续轮次中通常保持不变，而完整 messages 会每轮追加导致 hash
+	// 变化。混入 APIKeyID 后，可以让同一个 API Key 下的同一对话固定路由到同一账号。
 	if isKiroGroup(parsed.Group) {
-		if systemText := extractTextFromSystemRaw(parsed.SystemRaw()); systemText != "" {
+		stableSeed := extractTextFromSystemRaw(parsed.SystemRaw())
+		source := "kiro_system_prompt"
+		if stableSeed == "" {
+			stableSeed = extractFirstUserMessageTextFromRaw(parsed.MessagesRaw())
+			source = "kiro_first_user_message"
+		}
+		if stableSeed != "" {
 			var sb strings.Builder
 			if parsed.SessionContext != nil {
 				_, _ = sb.WriteString(strconv.FormatInt(parsed.SessionContext.APIKeyID, 10))
 				_, _ = sb.WriteString("|")
 			}
-			_, _ = sb.WriteString(systemText)
+			_, _ = sb.WriteString(stableSeed)
 			hash := s.hashContent(sb.String())
 			slog.Info("sticky.hash_source",
-				"source", "kiro_system_prompt",
+				"source", source,
 				"hash", hash,
-				"system_len", len(systemText),
+				"seed_len", len(stableSeed),
 			)
 			return hash
 		}
@@ -988,6 +993,41 @@ func appendMessageTextsFromRaw(builder *strings.Builder, raw []byte) {
 		}
 		return true
 	})
+}
+
+func extractFirstUserMessageTextFromRaw(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	messages := parseRawJSONView(raw)
+	if !messages.IsArray() {
+		return ""
+	}
+	var firstText string
+	messages.ForEach(func(_, msg gjson.Result) bool {
+		role := strings.ToLower(strings.TrimSpace(msg.Get("role").String()))
+		if role != "" && role != "user" {
+			return true
+		}
+		if content := msg.Get("content"); content.Exists() {
+			firstText = extractTextFromContentRaw(content)
+		}
+		if firstText == "" {
+			parts := msg.Get("parts")
+			if parts.IsArray() {
+				var builder strings.Builder
+				parts.ForEach(func(_, part gjson.Result) bool {
+					if text := part.Get("text").String(); text != "" {
+						_, _ = builder.WriteString(text)
+					}
+					return true
+				})
+				firstText = builder.String()
+			}
+		}
+		return strings.TrimSpace(firstText) == ""
+	})
+	return strings.TrimSpace(firstText)
 }
 
 func extractCacheableTextFromSystemRaw(raw []byte) string {
