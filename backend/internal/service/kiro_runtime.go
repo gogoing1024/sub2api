@@ -386,7 +386,9 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 			}
 
 			if resp.StatusCode == http.StatusTooManyRequests {
-				cooldown, err := s.markKiro429(ctx, accountKey)
+				dumpKiro429ResponseForDebug(resp, account.ID, endpoint.URL, endpoint.Name)
+
+				cooldown, err := s.markKiro429(ctx, account.ID, accountKey)
 				if err != nil {
 					_ = resp.Body.Close()
 					return nil, requestCtx, err
@@ -496,7 +498,7 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 			}
 
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				if err := s.markKiroSuccess(ctx, accountKey); err != nil {
+				if err := s.markKiroSuccess(ctx, account.ID, accountKey); err != nil {
 					_ = resp.Body.Close()
 					return nil, requestCtx, err
 				}
@@ -776,6 +778,57 @@ func logKiroBadRequestClassification(classification kiroErrorClassification, acc
 		zap.String("model", strings.TrimSpace(model)),
 		zap.String("request_id", headers.Get("x-request-id")),
 		zap.String("body_excerpt", truncateForLog(body, 512)),
+	)
+}
+
+// dumpKiro429ResponseForDebug captures the first 2KB of a Kiro 429 response body
+// and the rate-limit-relevant headers, then restores resp.Body so the caller can
+// still consume it. Used to investigate whether Kiro returns a reset-time field
+// (e.g. nextDateReset) we should parse instead of falling back to fixed cooldown.
+func dumpKiro429ResponseForDebug(resp *http.Response, accountID int64, endpointURL, endpointName string) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	const maxBytes = 2048
+	limited := io.LimitReader(resp.Body, maxBytes+1)
+	sample, err := io.ReadAll(limited)
+	if err != nil {
+		logger.L().Warn("kiro.429_debug_read_failed",
+			zap.Int64("account_id", accountID),
+			zap.String("endpoint", endpointName),
+			zap.Error(err),
+		)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(nil))
+		return
+	}
+	truncated := false
+	if len(sample) > maxBytes {
+		sample = sample[:maxBytes]
+		truncated = true
+	}
+	rest, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(append(append([]byte{}, sample...), rest...)))
+
+	headers := map[string]string{}
+	for k, v := range resp.Header {
+		lk := strings.ToLower(k)
+		if strings.Contains(lk, "ratelimit") || strings.Contains(lk, "retry") || strings.Contains(lk, "reset") ||
+			lk == "content-type" || lk == "x-amzn-requestid" || lk == "x-amzn-errortype" {
+			headers[k] = strings.Join(v, ",")
+		}
+	}
+
+	logger.L().Warn("kiro.429_raw_response",
+		zap.Int64("account_id", accountID),
+		zap.String("endpoint_url", endpointURL),
+		zap.String("endpoint_name", endpointName),
+		zap.String("content_type", resp.Header.Get("Content-Type")),
+		zap.Any("relevant_headers", headers),
+		zap.Int("body_bytes", len(sample)),
+		zap.Bool("truncated", truncated),
+		zap.String("body_sample", string(sample)),
 	)
 }
 

@@ -44,6 +44,14 @@ type recordingKiroTempUnschedRepo struct {
 	rateID          int64
 	rateLimitReset  time.Time
 	rateLimitedCall int
+	clearCalled     bool
+	clearID         int64
+}
+
+func (r *recordingKiroTempUnschedRepo) ClearRateLimit(_ context.Context, id int64) error {
+	r.clearCalled = true
+	r.clearID = id
+	return nil
 }
 
 func (r *recordingKiroTempUnschedRepo) SetTempUnschedulable(_ context.Context, id int64, until time.Time, reason string) error {
@@ -103,6 +111,88 @@ func (s *stubKiroCooldownStore) ClearEarliestTransientCooldown(_ context.Context
 	s.clearCalled = true
 	s.clearKeys = append([]string(nil), tokenKeys...)
 	return s.clearResult, s.clearErr
+}
+
+func TestMarkKiro429SyncsDBRateLimitResetAt(t *testing.T) {
+	cooldown := 90 * time.Second
+	repo := &recordingKiroTempUnschedRepo{}
+	svc := &GatewayService{
+		accountRepo:       repo,
+		kiroCooldownStore: &stubKiroCooldownStore{mark429TTL: cooldown},
+	}
+
+	before := time.Now()
+	got, err := svc.markKiro429(context.Background(), 42, "token1")
+	require.NoError(t, err)
+	require.Equal(t, cooldown, got)
+	require.True(t, repo.rateCalled, "expected SetRateLimited to be called so DB scheduler skips the account")
+	require.Equal(t, int64(42), repo.rateID)
+	// resetAt must land inside [now+cooldown, now+cooldown+slack]
+	min := before.Add(cooldown)
+	max := time.Now().Add(cooldown + 100*time.Millisecond)
+	require.False(t, repo.rateLimitReset.Before(min), "resetAt %s before expected min %s", repo.rateLimitReset, min)
+	require.False(t, repo.rateLimitReset.After(max), "resetAt %s after expected max %s", repo.rateLimitReset, max)
+}
+
+func TestMarkKiro429SkipsDBSyncWhenAccountIDZero(t *testing.T) {
+	repo := &recordingKiroTempUnschedRepo{}
+	svc := &GatewayService{
+		accountRepo:       repo,
+		kiroCooldownStore: &stubKiroCooldownStore{mark429TTL: time.Minute},
+	}
+
+	_, err := svc.markKiro429(context.Background(), 0, "token1")
+	require.NoError(t, err)
+	require.False(t, repo.rateCalled, "should not write DB when accountID is unknown")
+}
+
+func TestMarkKiroSuccessClearsDBRateLimit(t *testing.T) {
+	repo := &recordingKiroTempUnschedRepo{}
+	svc := &GatewayService{
+		accountRepo:       repo,
+		kiroCooldownStore: &stubKiroCooldownStore{},
+	}
+
+	require.NoError(t, svc.markKiroSuccess(context.Background(), 42, "token1"))
+	require.True(t, repo.clearCalled, "expected ClearRateLimit so a recovered Kiro account becomes schedulable immediately")
+	require.Equal(t, int64(42), repo.clearID)
+}
+
+func TestMarkKiroSuccessSkipsDBClearWhenAccountIDZero(t *testing.T) {
+	repo := &recordingKiroTempUnschedRepo{}
+	svc := &GatewayService{
+		accountRepo:       repo,
+		kiroCooldownStore: &stubKiroCooldownStore{},
+	}
+
+	require.NoError(t, svc.markKiroSuccess(context.Background(), 0, "token1"))
+	require.False(t, repo.clearCalled, "should not clear DB when accountID is unknown")
+}
+
+func TestMarkKiroSuccessSkipsDBClearWhenRedisFails(t *testing.T) {
+	expected := errors.New("redis exploded")
+	repo := &recordingKiroTempUnschedRepo{}
+	svc := &GatewayService{
+		accountRepo:       repo,
+		kiroCooldownStore: &stubKiroCooldownStore{successErr: expected},
+	}
+
+	err := svc.markKiroSuccess(context.Background(), 42, "token1")
+	require.ErrorIs(t, err, expected)
+	require.False(t, repo.clearCalled, "DB clear must not run when Redis MarkSuccess failed")
+}
+
+func TestMarkKiro429PropagatesRedisError(t *testing.T) {
+	expected := errors.New("redis exploded")
+	repo := &recordingKiroTempUnschedRepo{}
+	svc := &GatewayService{
+		accountRepo:       repo,
+		kiroCooldownStore: &stubKiroCooldownStore{mark429Err: expected},
+	}
+
+	_, err := svc.markKiro429(context.Background(), 42, "token1")
+	require.ErrorIs(t, err, expected)
+	require.False(t, repo.rateCalled, "DB sync must not run when Redis Mark429 failed")
 }
 
 func TestCalculateKiro429Cooldown(t *testing.T) {

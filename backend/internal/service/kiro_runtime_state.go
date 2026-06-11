@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/kirocooldown"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"go.uber.org/zap"
 )
 
 var errKiroCooldownStoreUnavailable = errors.New("kiro cooldown store unavailable")
@@ -57,18 +59,55 @@ func (s *GatewayService) checkAndWaitKiroCooldown(ctx context.Context, tokenKey 
 	}
 }
 
-func (s *GatewayService) markKiroSuccess(ctx context.Context, tokenKey string) error {
+// markKiroSuccess records a successful Kiro response. Pair with markKiro429:
+// because markKiro429 writes account.rate_limit_reset_at into DB, an account
+// that recovers (success) must also clear that DB field, otherwise the
+// scheduler keeps filtering the now-healthy account until the stale
+// rate_limit_reset_at naturally expires (up to 5min). accountID may be 0 for
+// callers that don't have it (Redis-only clear).
+func (s *GatewayService) markKiroSuccess(ctx context.Context, accountID int64, tokenKey string) error {
 	if s == nil || s.kiroCooldownStore == nil {
 		return errKiroCooldownStoreUnavailable
 	}
-	return s.kiroCooldownStore.MarkSuccess(ctx, tokenKey)
+	if err := s.kiroCooldownStore.MarkSuccess(ctx, tokenKey); err != nil {
+		return err
+	}
+	if s.accountRepo != nil && accountID > 0 {
+		if dbErr := s.accountRepo.ClearRateLimit(ctx, accountID); dbErr != nil {
+			logger.L().Warn("kiro.mark_success_db_clear_failed",
+				zap.Int64("account_id", accountID),
+				zap.Error(dbErr),
+			)
+		}
+	}
+	return nil
 }
 
-func (s *GatewayService) markKiro429(ctx context.Context, tokenKey string) (time.Duration, error) {
+// markKiro429 records a Kiro 429 in both Redis (kiroCooldownStore) and DB
+// (account.rate_limit_reset_at). Syncing to DB is critical: without it,
+// ListSchedulable* still returns this account as schedulable, so the failover
+// loop keeps re-picking it just to bounce off the Redis gate (asKiroCooldownFailoverError)
+// — burning failover slots and amplifying retry storms. accountID may be 0 for
+// callers that don't have it; we fall back to Redis-only.
+func (s *GatewayService) markKiro429(ctx context.Context, accountID int64, tokenKey string) (time.Duration, error) {
 	if s == nil || s.kiroCooldownStore == nil {
 		return 0, errKiroCooldownStoreUnavailable
 	}
-	return s.kiroCooldownStore.Mark429(ctx, tokenKey)
+	cooldown, err := s.kiroCooldownStore.Mark429(ctx, tokenKey)
+	if err != nil {
+		return 0, err
+	}
+	if s.accountRepo != nil && accountID > 0 && cooldown > 0 {
+		resetAt := time.Now().Add(cooldown)
+		if dbErr := s.accountRepo.SetRateLimited(ctx, accountID, resetAt); dbErr != nil {
+			logger.L().Warn("kiro.mark_429_db_sync_failed",
+				zap.Int64("account_id", accountID),
+				zap.Duration("cooldown", cooldown),
+				zap.Error(dbErr),
+			)
+		}
+	}
+	return cooldown, nil
 }
 
 func (s *GatewayService) markKiroSuspended(ctx context.Context, tokenKey string) (time.Duration, error) {
