@@ -1924,7 +1924,7 @@
             {{ formatDateTime(new Date(String(account.extra.openai_compact_checked_at))) }}
           </span>
         </div>
-        <div class="space-y-3 border-y border-gray-200 py-5 dark:border-dark-600">
+        <div class="space-y-3 border-t border-gray-200 pt-5 dark:border-dark-600">
           <div>
             <label class="input-label">{{ t('admin.accounts.openai.compactModelMapping') }}</label>
             <p class="input-hint">{{ t('admin.accounts.openai.compactModelMappingDesc') }}</p>
