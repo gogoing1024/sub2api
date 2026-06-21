@@ -97,6 +97,7 @@ export default {
       claude: 'Claude',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
+      kiro: 'Kiro',
       more: 'More'
     },
     // CTA section
@@ -1874,6 +1875,7 @@ export default {
         usageOpenAI: 'Usage (OpenAI)',
         usageGemini: 'Usage (Gemini)',
         usageAntigravity: 'Usage (Antigravity)',
+        usageKiro: 'Usage (Kiro)',
         concurrency: 'Concurrency',
         status: 'Status',
         lastActive: 'Last Active',

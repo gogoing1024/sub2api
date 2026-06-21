@@ -97,6 +97,7 @@ export default {
       claude: 'Claude',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
+      kiro: 'Kiro',
       more: '更多'
     },
     // CTA 区块
@@ -1895,6 +1896,7 @@ export default {
         usageOpenAI: '用量 (OpenAI)',
         usageGemini: '用量 (Gemini)',
         usageAntigravity: '用量 (Antigravity)',
+        usageKiro: '用量 (Kiro)',
         concurrency: '并发数',
         status: '状态',
         lastActive: '最后活跃时间',
