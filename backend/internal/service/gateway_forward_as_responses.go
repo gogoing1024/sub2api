@@ -249,6 +249,19 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 	}
 }
 
+func mergeKiroCreditsFromAnthropicPayload(dst *ClaudeUsage, payload string) {
+	if dst == nil || payload == "" || !gjson.Valid(payload) {
+		return
+	}
+	if credits := kiroCreditsFromUsageGJSON(gjson.Get(payload, "usage")); credits > 0 {
+		dst.KiroCredits = credits
+		return
+	}
+	if credits := kiroCreditsFromUsageGJSON(gjson.Get(payload, "message.usage")); credits > 0 {
+		dst.KiroCredits = credits
+	}
+}
+
 // handleResponsesBufferedStreamingResponse reads all Anthropic SSE events from
 // the upstream streaming response, assembles them into a complete Anthropic
 // response, converts to Responses API JSON format, and writes it to the client.
@@ -311,6 +324,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 			if event.Usage != nil {
 				mergeAnthropicUsage(&usage, *event.Usage)
 			}
+			mergeKiroCreditsFromAnthropicPayload(&usage, payload)
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = event.Delta.StopReason
 			}
@@ -521,6 +535,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			)
 			continue
 		}
+		mergeKiroCreditsFromAnthropicPayload(&usage, payload)
 
 		if processEvent(&event) {
 			return resultWithUsage(), nil

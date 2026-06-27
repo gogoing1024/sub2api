@@ -11,6 +11,36 @@ import (
 	"github.com/google/uuid"
 )
 
+// Kiro 默认 profileArn 常量（与 kiro.rs-admin 保持一致）。
+// BuilderID 占位符：纯 BuilderID 账号没有真实 profile，上游 IDE 发送此占位符。
+// Social 共享 ARN：Social 登录账号使用此共享 ARN。
+const (
+	kiroBuilderIDProfileARN = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
+	kiroSocialProfileARN    = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
+)
+
+// kiroIsPlaceholderProfileARN 判断给定 ARN 是否为 BuilderID 占位符（非真实可用的 profile）。
+func kiroIsPlaceholderProfileARN(arn string) bool {
+	return arn == kiroBuilderIDProfileARN
+}
+
+// kiroIsSocialLogin 判断账号是否为 Social 登录方式。
+func kiroIsSocialLogin(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(account.GetCredential("auth_method")), "social")
+}
+
+// kiroDefaultProfileARN 返回凭据缺少显式 profileArn 时应使用的默认 ARN：
+// Social 登录 → kiroSocialProfileARN，其余（BuilderID 等）→ kiroBuilderIDProfileARN。
+func kiroDefaultProfileARN(account *Account) string {
+	if kiroIsSocialLogin(account) {
+		return kiroSocialProfileARN
+	}
+	return kiroBuilderIDProfileARN
+}
+
 func buildKiroAccountKey(account *Account) string {
 	if account == nil {
 		return ""
@@ -133,6 +163,17 @@ func resolveKiroPayloadProfileArn(account *Account) string {
 	return strings.TrimSpace(account.GetCredential("profile_arn"))
 }
 
+// kiroResolveProfileArnForKRS 返回 KRS endpoint 所需的 profileArn。
+// KRS endpoint（runtime.us-east-1.kiro.dev）强制要求 profileArn，
+// 凭据无值时 fallback 到默认 ARN（Social → Social ARN，其余 → BuilderID 占位符）。
+func kiroResolveProfileArnForKRS(account *Account) string {
+	arn := resolveKiroPayloadProfileArn(account)
+	if arn != "" {
+		return arn
+	}
+	return kiroDefaultProfileARN(account)
+}
+
 func newKiroJSONRequest(ctx context.Context, endpointURL string, payload []byte, token, accountKey, machineID, amzTarget string, account *Account) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, bytes.NewReader(payload))
 	if err != nil {
@@ -156,8 +197,8 @@ func newKiroJSONRequest(ctx context.Context, endpointURL string, payload []byte,
 	if amzTarget != "" {
 		req.Header.Set("X-Amz-Target", amzTarget)
 	}
-	if account != nil {
-		profileArn := strings.TrimSpace(account.GetCredential("profile_arn"))
+	if account != nil && endpointURL == kiroKRSEndpointURL {
+		profileArn := kiroResolveProfileArnForKRS(account)
 		if profileArn != "" {
 			req.Header.Set("x-amzn-kiro-profile-arn", profileArn)
 		}

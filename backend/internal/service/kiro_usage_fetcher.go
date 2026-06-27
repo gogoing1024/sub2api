@@ -164,7 +164,7 @@ func (s *AccountUsageService) fetchAndCacheKiroUsage(ctx context.Context, accoun
 	}
 
 	region := kiroAPIRegion(account)
-	profileArn := strings.TrimSpace(account.GetCredential("profile_arn"))
+	profileArn := resolveKiroPayloadProfileArn(account)
 
 	resp, err := s.requestKiroUsageLimits(ctx, account, region, profileArn, token)
 	if err != nil {

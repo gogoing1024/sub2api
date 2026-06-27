@@ -423,6 +423,8 @@ func (s *TokenRefreshService) postRefreshActions(ctx context.Context, account *A
 	s.ensureOpenAIPrivacy(ctx, account)
 	// Antigravity OAuth: 刷新成功后，检查是否已设置 privacy_mode，未设置则调用 setUserSettings
 	s.ensureAntigravityPrivacy(ctx, account)
+	// Kiro OAuth: 刷新成功后，提前解析并回填 profileArn（Enterprise/IdC 账号需要）
+	s.ensureKiroProfileArn(ctx, account)
 }
 
 // errRefreshSkipped 表示刷新被跳过（锁竞争或已被其他路径刷新），不计入 failed 或 refreshed
@@ -500,6 +502,29 @@ func (s *TokenRefreshService) ensureOpenAIPrivacy(ctx context.Context, account *
 			"privacy_mode", mode,
 		)
 	}
+}
+
+// ensureKiroProfileArn 后台刷新中检查 Kiro OAuth 账号的 profileArn 是否已回填。
+// Enterprise/IdC 账号的 OAuth 流程不返回 profileArn，需要在 token 刷新成功后
+// 主动调用 ListAvailableProfiles API 解析真实 ARN 并持久化，避免请求路径首次触发时延迟。
+func (s *TokenRefreshService) ensureKiroProfileArn(ctx context.Context, account *Account) {
+	if account.Platform != PlatformKiro || account.Type != AccountTypeOAuth {
+		return
+	}
+
+	// 已有真实（非占位符）profileArn → 无需解析
+	existingARN := strings.TrimSpace(account.GetCredential("profile_arn"))
+	if existingARN != "" && !kiroIsPlaceholderProfileARN(existingARN) {
+		return
+	}
+
+	// 使用刚刷新的 access_token 调用 ListAvailableProfiles
+	token := strings.TrimSpace(account.GetCredential("access_token"))
+	if token == "" {
+		return
+	}
+
+	_ = kiroResolveAndPersistProfileArn(ctx, s.accountRepo, account, token)
 }
 
 // ensureAntigravityPrivacy 后台刷新中检查 Antigravity OAuth 账号隐私状态。

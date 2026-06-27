@@ -355,6 +355,10 @@ func (s *GatewayService) executeKiroUpstreamWithParsed(ctx context.Context, acco
 		return nil, requestCtx, err
 	}
 
+	// KRS 模式：确保 profileArn 已解析（ListAvailableProfiles + 回填持久化）
+	mode := kiroEndpointModeForRequest(parsed)
+	s.ensureKiroProfileArnForRequest(ctx, account, token, mode)
+
 	modelID := kiropkg.MapModel(mappedModel)
 	currentToken := token
 	buildResult, err := s.buildKiroPayloadForAccount(ctx, account, parsed, anthropicBody, modelID, currentToken, requestModel, headers)
@@ -548,7 +552,10 @@ func (s *GatewayService) buildKiroPayloadForAccount(ctx context.Context, account
 	_ = s
 	_ = ctx
 	_ = token
-	profileArn := resolveKiroPayloadProfileArn(account)
+	var profileArn string
+	if kiroEndpointModeForRequest(parsed) == KiroEndpointModeKRS {
+		profileArn = kiroResolveProfileArnForKRS(account)
+	}
 	anthropicBody = prepareKiroPayloadBodyForRequestModel(anthropicBody, requestModel)
 	buildResult, err := kiropkg.BuildKiroPayloadWithContext(anthropicBody, modelID, profileArn, "AI_EDITOR", headers)
 	if err != nil {
