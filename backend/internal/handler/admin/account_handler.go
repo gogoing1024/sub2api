@@ -969,6 +969,8 @@ func (h *AccountHandler) refreshSingleAccount(ctx context.Context, account *serv
 	h.adminService.EnsureOpenAIPrivacy(ctx, updatedAccount)
 	// Antigravity OAuth: 刷新成功后检查并设置 privacy_mode
 	h.adminService.EnsureAntigravityPrivacy(ctx, updatedAccount)
+	// Kiro OAuth: 刷新成功后解析并回填 profile_arn
+	h.adminService.EnsureKiroProfileArn(ctx, updatedAccount)
 
 	return updatedAccount, "", nil
 }

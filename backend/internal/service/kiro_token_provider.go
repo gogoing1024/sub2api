@@ -200,6 +200,10 @@ func (p *KiroTokenProvider) ForceRefreshAccessToken(ctx context.Context, account
 	if accessToken == "" {
 		return "", errors.New("access_token not found after kiro refresh")
 	}
+
+	// 刷新成功后解析并回填 profileArn（与后台刷新 postRefreshActions 保持一致）
+	_ = kiroResolveAndPersistProfileArn(ctx, p.accountRepo, account, accessToken)
+
 	if err := p.cacheAccessToken(ctx, account, accessToken); err != nil {
 		return "", err
 	}

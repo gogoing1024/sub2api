@@ -149,19 +149,20 @@ func kiroResolveAndPersistProfileArn(ctx context.Context, repo AccountRepository
 
 	var resolvedARN string
 	once.Do(func() {
+		arn := kiroDefaultProfileARN(account)
+
 		profiles, err := kiroListAvailableProfiles(ctx, account, token)
 		if err != nil {
-			logger.L().Warn("kiro profileArn resolution failed",
+			// API 失败（如 BuilderID 账号不支持 ListAvailableProfiles），fallback 到默认 ARN
+			logger.L().Warn("kiro profileArn resolution failed, using default",
 				zap.Int64("account_id", accountID),
+				zap.String("profile_arn", arn),
 				zap.Error(err),
 			)
-			return
-		}
-
-		arn := profiles.firstARN()
-		if arn == "" {
+		} else if real := profiles.firstARN(); real != "" {
+			arn = real
+		} else {
 			// 上游无 Enterprise profile（Social/BuilderID 等），使用默认 ARN 回填
-			arn = kiroDefaultProfileARN(account)
 			logger.L().Debug("kiro profileArn resolution: no enterprise profile found, using default",
 				zap.Int64("account_id", accountID),
 				zap.String("profile_arn", arn),

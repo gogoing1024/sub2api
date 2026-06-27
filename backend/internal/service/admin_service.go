@@ -96,6 +96,8 @@ type AdminService interface {
 	ForceOpenAIPrivacy(ctx context.Context, account *Account) string
 	// ForceAntigravityPrivacy 强制重新设置 Antigravity OAuth 账号隐私，无论当前状态。
 	ForceAntigravityPrivacy(ctx context.Context, account *Account) string
+	// EnsureKiroProfileArn 检查 Kiro OAuth 账号是否已有 profile_arn，缺失或为占位符则解析并持久化。
+	EnsureKiroProfileArn(ctx context.Context, account *Account) string
 	SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error)
 	BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error)
 	CheckMixedChannelRisk(ctx context.Context, currentAccountID int64, currentAccountPlatform string, groupIDs []int64) error
@@ -4010,6 +4012,23 @@ func (s *adminServiceImpl) EnsureAntigravityPrivacy(ctx context.Context, account
 	}
 	applyAntigravityPrivacyMode(account, mode)
 	return mode
+}
+
+// EnsureKiroProfileArn 检查 Kiro OAuth 账号是否已有 profile_arn，
+// 缺失或为占位符则调用 kiroResolveAndPersistProfileArn 解析并持久化。
+func (s *adminServiceImpl) EnsureKiroProfileArn(ctx context.Context, account *Account) string {
+	if account == nil || account.Platform != PlatformKiro || account.Type != AccountTypeOAuth {
+		return ""
+	}
+	existingARN := strings.TrimSpace(account.GetCredential("profile_arn"))
+	if existingARN != "" && !kiroIsPlaceholderProfileARN(existingARN) {
+		return existingARN
+	}
+	token := strings.TrimSpace(account.GetCredential("access_token"))
+	if token == "" {
+		return ""
+	}
+	return kiroResolveAndPersistProfileArn(ctx, s.accountRepo, account, token)
 }
 
 // ForceAntigravityPrivacy 强制重新设置 Antigravity OAuth 账号隐私，无论当前状态。
