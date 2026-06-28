@@ -93,12 +93,11 @@ export default {
       title: '已支持的 AI 模型',
       description: '一个 API，多种选择',
       supported: '已支持',
-      soon: '即将推出',
       claude: 'Claude',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
       kiro: 'Kiro',
-      more: '更多'
+      grok: 'Grok'
     },
     // CTA 区块
     cta: {

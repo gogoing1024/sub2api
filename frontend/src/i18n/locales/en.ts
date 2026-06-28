@@ -93,12 +93,11 @@ export default {
       title: 'Supported AI Models',
       description: 'One API, Multiple Choices',
       supported: 'Supported',
-      soon: 'Soon',
       claude: 'Claude',
       gemini: 'Gemini',
       antigravity: 'Antigravity',
       kiro: 'Kiro',
-      more: 'More'
+      grok: 'Grok'
     },
     // CTA section
     cta: {
