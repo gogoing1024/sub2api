@@ -1900,6 +1900,7 @@ export default {
         usageGemini: '用量 (Gemini)',
         usageAntigravity: '用量 (Antigravity)',
         usageKiro: '用量 (Kiro)',
+        usageGrok: '用量 (Grok)',
         concurrency: '并发数',
         status: '状态',
         lastActive: '最后活跃时间',
@@ -2249,6 +2250,7 @@ export default {
         gemini: 'Gemini',
         antigravity: 'Antigravity',
         kiro: 'Kiro',
+        grok: 'Grok',
       },
       saving: '保存中...',
       noGroups: '暂无分组',
@@ -3707,7 +3709,6 @@ export default {
         modelRestrictionDisabledByPassthrough: '已开启自动透传：模型白名单/映射不会生效。',
       },
       kiro: {
-        baseUrlHint: '留空即可，将直连 AWS（q.{region}.amazonaws.com）。区域由凭据 api_region 控制，默认 us-east-1',
         apiKeyHint: 'Kiro API Key（ksk_ 开头），将作为直连 AWS 的 Bearer Token',
         relayBaseUrlHint: '外部 Anthropic 兼容上游地址（如 https://your-relay.example.com），将请求 {base_url}/v1/messages',
         relayApiKeyHint: '该外部上游的 API Key（通过 x-api-key 头发送）',
