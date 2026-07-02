@@ -393,10 +393,36 @@ func TestBuildKiroEndpointsKRS(t *testing.T) {
 	require.Equal(t, kiroKRSEndpointURL, endpoints[0].URL)
 }
 
+// TestBuildKiroEndpointsAuto 验证 mode=auto 时返回 Q + KRS 双端点（Q 优先）。
+func TestBuildKiroEndpointsAuto(t *testing.T) {
+	account := &Account{Credentials: map[string]any{"api_region": "us-west-2"}}
+	endpoints := buildKiroEndpoints(account, KiroEndpointModeAuto)
+	require.Len(t, endpoints, 2)
+	// 第一个端点为 Q
+	require.Equal(t, "AmazonQ", endpoints[0].Name)
+	require.Equal(t, "https://q.us-west-2.amazonaws.com/generateAssistantResponse", endpoints[0].URL)
+	// 第二个端点为 KRS
+	require.Equal(t, "KiroRuntime", endpoints[1].Name)
+	require.Equal(t, kiroKRSEndpointURL, endpoints[1].URL)
+}
+
 // TestEffectiveKiroEndpointMode 验证 group 取值与兜底。
 func TestEffectiveKiroEndpointMode(t *testing.T) {
 	require.Equal(t, KiroEndpointModeQ, (*Group)(nil).EffectiveKiroEndpointMode())
 	require.Equal(t, KiroEndpointModeQ, (&Group{Platform: PlatformAnthropic, KiroEndpointMode: "krs"}).EffectiveKiroEndpointMode())
 	require.Equal(t, KiroEndpointModeKRS, (&Group{Platform: PlatformKiro, KiroEndpointMode: "krs"}).EffectiveKiroEndpointMode())
+	require.Equal(t, KiroEndpointModeAuto, (&Group{Platform: PlatformKiro, KiroEndpointMode: "auto"}).EffectiveKiroEndpointMode())
 	require.Equal(t, KiroEndpointModeQ, (&Group{Platform: PlatformKiro, KiroEndpointMode: "bogus"}).EffectiveKiroEndpointMode())
+}
+
+// TestNormalizeKiroEndpointFieldsAuto 验证 auto 模式在 normalize 后被保留。
+func TestNormalizeKiroEndpointFieldsAuto(t *testing.T) {
+	g := &Group{Platform: PlatformKiro, KiroEndpointMode: KiroEndpointModeAuto}
+	normalizeKiroEndpointFields(g)
+	require.Equal(t, KiroEndpointModeAuto, g.KiroEndpointMode)
+
+	// 非 kiro 平台清空
+	g2 := &Group{Platform: PlatformAnthropic, KiroEndpointMode: KiroEndpointModeAuto}
+	normalizeKiroEndpointFields(g2)
+	require.Equal(t, "", g2.KiroEndpointMode)
 }

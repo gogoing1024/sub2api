@@ -21,9 +21,12 @@ import (
 type stubKiroCooldownStore struct {
 	reserveWait  time.Duration
 	reserveErr   error
+	reserveKeys  []string
 	successErr   error
+	successKeys  []string
 	mark429TTL   time.Duration
 	mark429Err   error
+	mark429Keys  []string
 	suspendedTTL time.Duration
 	suspendedErr error
 	state        *kirocooldown.State
@@ -84,15 +87,18 @@ func (r *recordingKiroErrorRepo) SetError(_ context.Context, id int64, errorMsg 
 	return nil
 }
 
-func (s *stubKiroCooldownStore) ReserveRequest(context.Context, string) (time.Duration, error) {
+func (s *stubKiroCooldownStore) ReserveRequest(_ context.Context, tokenKey string) (time.Duration, error) {
+	s.reserveKeys = append(s.reserveKeys, tokenKey)
 	return s.reserveWait, s.reserveErr
 }
 
-func (s *stubKiroCooldownStore) MarkSuccess(context.Context, string) error {
+func (s *stubKiroCooldownStore) MarkSuccess(_ context.Context, tokenKey string) error {
+	s.successKeys = append(s.successKeys, tokenKey)
 	return s.successErr
 }
 
-func (s *stubKiroCooldownStore) Mark429(context.Context, string) (time.Duration, error) {
+func (s *stubKiroCooldownStore) Mark429(_ context.Context, tokenKey string) (time.Duration, error) {
+	s.mark429Keys = append(s.mark429Keys, tokenKey)
 	return s.mark429TTL, s.mark429Err
 }
 
@@ -383,6 +389,56 @@ func TestExecuteKiroUpstreamCooldownReturnsFailoverError(t *testing.T) {
 	require.False(t, failoverErr.RetryableOnSameAccount)
 }
 
+func TestExecuteKiroUpstreamEnsuresProfileArnBeforeCooldownKey(t *testing.T) {
+	accountID := int64(430001)
+	kiroProfileResolutionFlight.Delete(accountID)
+	t.Cleanup(func() { kiroProfileResolutionFlight.Delete(accountID) })
+
+	account := &Account{
+		ID:          accountID,
+		Platform:    PlatformKiro,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_region": "us-west-2",
+		},
+	}
+	cooldownStore := &stubKiroCooldownStore{}
+	upstream := &queuedHTTPUpstream{
+		responses: []*http.Response{
+			newJSONResponse(http.StatusOK, `{"ok":true}`),
+		},
+	}
+	svc := &GatewayService{
+		httpUpstream:        upstream,
+		kiroCooldownStore:   cooldownStore,
+		tlsFPProfileService: &TLSFingerprintProfileService{},
+	}
+	parsed := &ParsedRequest{
+		Group: &Group{
+			Platform:         PlatformKiro,
+			KiroEndpointMode: KiroEndpointModeAuto,
+		},
+	}
+
+	payload, err := createTestPayload("claude-sonnet-4-6")
+	require.NoError(t, err)
+	payloadBytes, err := json.Marshal(payload)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	resp, _, err := svc.executeKiroUpstreamWithParsed(ctx, account, parsed, payloadBytes, "claude-sonnet-4-6", "claude-sonnet-4-6", "test-token", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, kiroBuilderIDProfileARN, account.GetCredential("profile_arn"))
+	expectedKey := buildKiroAccountKey(account)
+	require.Equal(t, []string{expectedKey}, cooldownStore.reserveKeys)
+	require.Equal(t, []string{expectedKey}, cooldownStore.successKeys)
+}
+
 func TestExecuteKiroUpstreamInvalidModelDoesNotRefreshProfileArnOrRetry(t *testing.T) {
 	account := &Account{
 		ID:          42,
@@ -413,7 +469,13 @@ func TestExecuteKiroUpstreamInvalidModelDoesNotRefreshProfileArnOrRetry(t *testi
 	payloadBytes, err := json.Marshal(payload)
 	require.NoError(t, err)
 
-	resp, _, err := svc.executeKiroUpstream(context.Background(), account, payloadBytes, "claude-opus-4-6", "claude-opus-4-6", "test-token", nil)
+	parsed := &ParsedRequest{
+		Group: &Group{
+			Platform:         PlatformKiro,
+			KiroEndpointMode: KiroEndpointModeKRS,
+		},
+	}
+	resp, _, err := svc.executeKiroUpstreamWithParsed(context.Background(), account, parsed, payloadBytes, "claude-opus-4-6", "claude-opus-4-6", "test-token", nil)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	require.Len(t, upstream.requests, 1)
@@ -422,6 +484,62 @@ func TestExecuteKiroUpstreamInvalidModelDoesNotRefreshProfileArnOrRetry(t *testi
 	require.NoError(t, readErr)
 	require.Contains(t, string(firstBody), `"profileArn":"arn:aws:codewhisperer:us-east-1:123456789012:profile/STALE"`)
 	require.Equal(t, "arn:aws:codewhisperer:us-east-1:123456789012:profile/STALE", account.GetCredential("profile_arn"))
+}
+
+func TestExecuteKiroUpstreamAutoSwitchesFromQ429ToKRS(t *testing.T) {
+	prevSleep := kiroRetrySleep
+	kiroRetrySleep = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { kiroRetrySleep = prevSleep })
+
+	profileARN := "arn:aws:codewhisperer:us-east-1:123456789012:profile/AUTO"
+	account := &Account{
+		ID:          43,
+		Platform:    PlatformKiro,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_region":  "us-west-2",
+			"profile_arn": profileARN,
+		},
+	}
+	upstream := &queuedHTTPUpstream{
+		responses: []*http.Response{
+			newJSONResponse(http.StatusTooManyRequests, `{"message":"rate limited"}`),
+			newJSONResponse(http.StatusOK, `{"ok":true}`),
+		},
+	}
+	svc := &GatewayService{
+		httpUpstream:        upstream,
+		kiroCooldownStore:   &stubKiroCooldownStore{mark429TTL: time.Minute},
+		tlsFPProfileService: &TLSFingerprintProfileService{},
+	}
+	parsed := &ParsedRequest{
+		Group: &Group{
+			Platform:         PlatformKiro,
+			KiroEndpointMode: KiroEndpointModeAuto,
+		},
+	}
+
+	payload, err := createTestPayload("claude-sonnet-4-6")
+	require.NoError(t, err)
+	payloadBytes, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, _, err := svc.executeKiroUpstreamWithParsed(context.Background(), account, parsed, payloadBytes, "claude-sonnet-4-6", "claude-sonnet-4-6", "test-token", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, upstream.requests, 2)
+	require.Equal(t, "https://q.us-west-2.amazonaws.com/generateAssistantResponse", upstream.requests[0].URL.String())
+	require.Equal(t, kiroKRSEndpointURL, upstream.requests[1].URL.String())
+
+	qBody, err := io.ReadAll(upstream.requests[0].Body)
+	require.NoError(t, err)
+	krsBody, err := io.ReadAll(upstream.requests[1].Body)
+	require.NoError(t, err)
+	require.NotContains(t, string(qBody), `"profileArn"`)
+	require.Contains(t, string(krsBody), `"profileArn":"`+profileARN+`"`)
 }
 
 func TestHandleKiroHTTPErrorOAuthInvalidModelRateLimitsAndFailovers(t *testing.T) {
