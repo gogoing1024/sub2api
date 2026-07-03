@@ -172,7 +172,7 @@
         </div>
 
         <!-- Tab Content -->
-        <form id="channel-form" @submit.prevent="handleSubmit" class="flex-1 overflow-y-auto pt-4">
+        <form id="channel-form" @submit.prevent="handleSubmit" class="channel-dialog-form flex-1 overflow-y-auto px-0.5 pt-4 pb-1">
           <!-- Basic Settings Tab -->
           <div v-show="activeTab === 'basic'" class="space-y-5">
             <!-- Name -->
@@ -263,10 +263,12 @@
                     {{ t('admin.channels.form.applyPricingToAccountStatsDesc') }}
                   </p>
                 </div>
-                <Toggle
-                  :modelValue="form.apply_pricing_to_account_stats"
-                  @update:modelValue="form.apply_pricing_to_account_stats = $event"
-                />
+                <div class="channel-dialog-toggle-control flex-shrink-0 p-1">
+                  <Toggle
+                    :modelValue="form.apply_pricing_to_account_stats"
+                    @update:modelValue="form.apply_pricing_to_account_stats = $event"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -335,7 +337,9 @@
                     {{ t('admin.channels.form.webSearchEmulationHint') }}
                   </p>
                 </div>
-                <Toggle v-model="section.web_search_emulation" />
+                <div class="channel-dialog-toggle-control flex-shrink-0 p-1">
+                  <Toggle v-model="section.web_search_emulation" />
+                </div>
               </div>
             </div>
 
@@ -350,7 +354,9 @@
                     {{ t('admin.channels.form.codexImageGenerationBridgeHint') }}
                   </p>
                 </div>
-                <Toggle v-model="section.codex_image_generation_bridge" />
+                <div class="channel-dialog-toggle-control flex-shrink-0 p-1">
+                  <Toggle v-model="section.codex_image_generation_bridge" />
+                </div>
               </div>
             </div>
 
@@ -365,7 +371,9 @@
                     {{ t('admin.channels.form.bedrockCCCompatHint') }}
                   </p>
                 </div>
-                <Toggle v-model="section.bedrock_cc_compat" />
+                <div class="channel-dialog-toggle-control flex-shrink-0 p-1">
+                  <Toggle v-model="section.bedrock_cc_compat" />
+                </div>
               </div>
             </div>
 
@@ -428,7 +436,7 @@
                     :disabled="syncingPlatform === section.platform"
                     class="text-xs text-gray-500 hover:text-primary-600 disabled:opacity-50"
                   >
-                    {{ syncingPlatform === section.platform ? t('admin.channels.form.syncingModels') : t('admin.channels.form.syncLatestModels') }}
+                    {{ syncingPlatform === section.platform ? pricingModelsActionLoadingLabel(section.platform) : pricingModelsActionLabel(section.platform) }}
                   </button>
                   <button type="button" @click="addPricingEntry(sIdx)" class="text-xs text-primary-600 hover:text-primary-700">
                     + {{ t('common.add', 'Add') }}
@@ -650,6 +658,7 @@ import Toggle from '@/components/common/Toggle.vue'
 import PricingEntryCard from '@/components/admin/channel/PricingEntryCard.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
+import { getModelsByPlatform } from '@/composables/useModelWhitelist'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -851,27 +860,52 @@ function toggleGroupInSection(sectionIdx: number, groupId: number) {
 }
 
 // ── Pricing helpers ──
-function addPricingEntry(sectionIdx: number) {
-  form.platforms[sectionIdx].model_pricing.push({
-    models: [],
+function createTokenPricingEntry(models: string[], defaults: Partial<PricingFormEntry> = {}): PricingFormEntry {
+  return {
+    models,
     billing_mode: 'token',
-    input_price: null,
-    output_price: null,
-    cache_write_price: null,
-    cache_read_price: null,
-    image_output_price: null,
+    input_price: defaults.input_price ?? null,
+    output_price: defaults.output_price ?? null,
+    cache_write_price: defaults.cache_write_price ?? null,
+    cache_read_price: defaults.cache_read_price ?? null,
+    image_output_price: defaults.image_output_price ?? null,
     per_request_price: null,
     intervals: []
-  })
+  }
+}
+
+function addPricingEntry(sectionIdx: number) {
+  form.platforms[sectionIdx].model_pricing.push(createTokenPricingEntry([]))
 }
 
 const syncingPlatform = ref<string | null>(null)
+
+function isKiroPlatform(platform: string): boolean {
+  return platform === 'kiro'
+}
+
+function pricingModelsActionLabel(platform: string): string {
+  return isKiroPlatform(platform)
+    ? t('admin.channels.form.fillDefaultModels', '填充默认模型')
+    : t('admin.channels.form.syncLatestModels')
+}
+
+function pricingModelsActionLoadingLabel(platform: string): string {
+  return isKiroPlatform(platform)
+    ? t('admin.channels.form.fillingDefaultModels', '填充中...')
+    : t('admin.channels.form.syncingModels')
+}
 
 async function syncLatestModels(sectionIdx: number) {
   const platform = form.platforms[sectionIdx].platform
   if (syncingPlatform.value) return
   syncingPlatform.value = platform
   try {
+    if (isKiroPlatform(platform)) {
+      await fillKiroDefaultModels(sectionIdx)
+      return
+    }
+
     const result = await adminAPI.channels.syncPricingModels(platform)
     // Collect all model names already present in this platform's pricing entries
     const existingModels = new Set<string>()
@@ -884,22 +918,50 @@ async function syncLatestModels(sectionIdx: number) {
       return
     }
     // Add new models as a single new pricing entry (user fills in prices)
-    form.platforms[sectionIdx].model_pricing.push({
-      models: newModels,
-      billing_mode: 'token',
-      input_price: null,
-      output_price: null,
-      cache_write_price: null,
-      cache_read_price: null,
-      image_output_price: null,
-      per_request_price: null,
-      intervals: []
-    })
+    form.platforms[sectionIdx].model_pricing.push(createTokenPricingEntry(newModels))
     appStore.showSuccess(t('admin.channels.form.syncModelsSuccess', { count: newModels.length }))
   } catch (error) {
     appStore.showError(extractApiErrorMessage(error, t('admin.channels.form.syncModelsError')))
   } finally {
     syncingPlatform.value = null
+  }
+}
+
+async function fillKiroDefaultModels(sectionIdx: number) {
+  const section = form.platforms[sectionIdx]
+  const existingModels = new Set<string>()
+  for (const entry of section.model_pricing) {
+    for (const model of entry.models) existingModels.add(model)
+  }
+
+  const newModels = getModelsByPlatform('kiro').filter(model => !existingModels.has(model))
+  if (newModels.length === 0) {
+    appStore.showSuccess(t('admin.channels.form.fillDefaultModelsAlreadyConfigured', '默认模型已全部配置'))
+    return
+  }
+
+  const entries = await Promise.all(newModels.map(async (model) => {
+    const defaults = await loadDefaultPricingForRequestModel(model)
+    return createTokenPricingEntry([model], defaults)
+  }))
+
+  section.model_pricing.push(...entries)
+  appStore.showSuccess(t('admin.channels.form.fillDefaultModelsSuccess', { count: newModels.length }, `已填充 ${newModels.length} 个默认模型`))
+}
+
+async function loadDefaultPricingForRequestModel(model: string): Promise<Partial<PricingFormEntry>> {
+  try {
+    const result = await adminAPI.channels.getModelDefaultPricing(model)
+    if (!result.found) return {}
+    return {
+      input_price: perTokenToMTok(result.input_price ?? null),
+      output_price: perTokenToMTok(result.output_price ?? null),
+      cache_write_price: perTokenToMTok(result.cache_write_price ?? null),
+      cache_read_price: perTokenToMTok(result.cache_read_price ?? null),
+      image_output_price: perTokenToMTok(result.image_output_price ?? null)
+    }
+  } catch {
+    return {}
   }
 }
 
