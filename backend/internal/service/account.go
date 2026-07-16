@@ -96,6 +96,7 @@ const openAILongContextBillingEnabledKey = "openai_long_context_billing_enabled"
 const (
 	OpenAIEndpointCapabilityChatCompletions OpenAIEndpointCapability = "chat_completions"
 	OpenAIEndpointCapabilityEmbeddings      OpenAIEndpointCapability = "embeddings"
+	OpenAIEndpointCapabilityAlphaSearch     OpenAIEndpointCapability = "alpha_search"
 )
 
 const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
@@ -1423,6 +1424,13 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 	}
 	switch capability {
 	case OpenAIEndpointCapabilityChatCompletions:
+	case OpenAIEndpointCapabilityAlphaSearch:
+		// Codex alpha/search 是 ChatGPT/Codex 后端工具端点，必须使用
+		// OAuth/PAT/AgentIdentity 这类 ChatGPT 账号凭据；API key 被发往
+		// chatgpt.com/backend-api/codex/alpha/search 会稳定 401。
+		if a.Type != AccountTypeOAuth {
+			return false
+		}
 	case OpenAIEndpointCapabilityEmbeddings:
 		if a.Type != AccountTypeAPIKey {
 			return false
@@ -1433,6 +1441,9 @@ func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapa
 
 	configured, found := a.openAIEndpointCapabilitySet()
 	if !found {
+		return true
+	}
+	if capability == OpenAIEndpointCapabilityAlphaSearch && configured[string(OpenAIEndpointCapabilityChatCompletions)] {
 		return true
 	}
 	return configured[string(capability)]

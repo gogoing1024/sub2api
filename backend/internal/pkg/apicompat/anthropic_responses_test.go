@@ -718,9 +718,7 @@ func TestStreamingToolCallDoneWithoutDeltaEmitsArguments(t *testing.T) {
 	assert.Equal(t, "content_block_stop", events[1].Type)
 }
 
-// 本 fork：Read 累积 delta，done 时净化 pages 空串后一次性发送。
-// 与上游 a5d40c98「Read 实时流式」互斥，按本 fork 契约断言。
-func TestStreamingReadToolAccumulatesAndSanitizesOnDone(t *testing.T) {
+func TestStreamingReadToolStreamsDeltas(t *testing.T) {
 	state := NewResponsesEventToAnthropicState()
 
 	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
@@ -741,18 +739,17 @@ func TestStreamingReadToolAccumulatesAndSanitizesOnDone(t *testing.T) {
 		OutputIndex: 0,
 		Delta:       `{"file_path":"/tmp/demo.py","limit":2000,"offset":0,"pages":""}`,
 	}, state)
-	require.Len(t, events, 0, "Read tool deltas accumulate, not stream")
+	require.Len(t, events, 1, "Read tool deltas must be streamed like any other tool")
+	assert.Equal(t, "content_block_delta", events[0].Type)
+	assert.Equal(t, "input_json_delta", events[0].Delta.Type)
 
 	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type:        "response.function_call_arguments.done",
 		OutputIndex: 0,
 		Arguments:   `{"file_path":"/tmp/demo.py","limit":2000,"offset":0,"pages":""}`,
 	}, state)
-	require.Len(t, events, 2, "done should emit sanitized input_json_delta + content_block_stop")
-	assert.Equal(t, "content_block_delta", events[0].Type)
-	assert.Equal(t, "input_json_delta", events[0].Delta.Type)
-	assert.JSONEq(t, `{"file_path":"/tmp/demo.py","limit":2000,"offset":0}`, events[0].Delta.PartialJSON)
-	assert.Equal(t, "content_block_stop", events[1].Type)
+	require.Len(t, events, 1, "after streaming deltas, .done should just close the block")
+	assert.Equal(t, "content_block_stop", events[0].Type)
 }
 
 func TestStreamingReasoning(t *testing.T) {
@@ -788,160 +785,12 @@ func TestStreamingReasoning(t *testing.T) {
 	assert.Equal(t, "thinking_delta", events[0].Delta.Type)
 	assert.Equal(t, "Let me think...", events[0].Delta.Thinking)
 
-	// reasoning_summary_text.done 只表示一段 summary 结束，不关闭 thinking 块；
-	// Grok 可能随后继续推 reasoning_text.delta。
+	// reasoning done
 	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
 		Type: "response.reasoning_summary_text.done",
 	}, state)
-	assert.Nil(t, events)
-
-	// 后续 reasoning 文本仍落到同一 thinking block。
-	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.reasoning_text.delta",
-		OutputIndex: 0,
-		Delta:       " more",
-	}, state)
-	require.Len(t, events, 1)
-	assert.Equal(t, "content_block_delta", events[0].Type)
-	assert.Equal(t, 0, *events[0].Index)
-
-	// output_item.done 才真正关闭 thinking block。
-	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.output_item.done",
-		OutputIndex: 0,
-		Item:        &ResponsesOutput{Type: "reasoning"},
-	}, state)
 	require.Len(t, events, 1)
 	assert.Equal(t, "content_block_stop", events[0].Type)
-	assert.Equal(t, 0, *events[0].Index)
-}
-
-// TestStreamingParallelToolCalls 回归 Claude Code "Content block not found"：
-// Grok/xAI 可能并行发出多个 function_call，各自 arguments.delta/done 交错。
-// 转换器必须保持多个 tool_use block 同时打开，且 delta/stop 只打到仍打开的 index。
-func TestStreamingParallelToolCalls(t *testing.T) {
-	state := NewResponsesEventToAnthropicState()
-
-	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:     "response.created",
-		Response: &ResponsesResponse{ID: "resp_parallel", Model: "grok-4.5"},
-	}, state)
-
-	events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.output_item.added",
-		OutputIndex: 0,
-		Item:        &ResponsesOutput{Type: "function_call", CallID: "call_a", Name: "Bash"},
-	}, state)
-	require.Len(t, events, 1)
-	assert.Equal(t, "content_block_start", events[0].Type)
-	assert.Equal(t, 0, *events[0].Index)
-
-	// 第二个 tool 不得关闭第一个。
-	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.output_item.added",
-		OutputIndex: 1,
-		Item:        &ResponsesOutput{Type: "function_call", CallID: "call_b", Name: "Read"},
-	}, state)
-	require.Len(t, events, 1)
-	assert.Equal(t, "content_block_start", events[0].Type)
-	assert.Equal(t, 1, *events[0].Index)
-	require.Len(t, state.OpenBlocks, 2)
-
-	// 交错 arguments.delta：先 b 再 a。
-	// Read 工具的 delta 被缓冲，不立刻外发。
-	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.function_call_arguments.delta",
-		OutputIndex: 1,
-		Delta:       `{"file_path":"a.go"}`,
-	}, state)
-	assert.Nil(t, events)
-
-	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.function_call_arguments.delta",
-		OutputIndex: 0,
-		Delta:       `{"command":"ls"}`,
-	}, state)
-	require.Len(t, events, 1)
-	assert.Equal(t, "content_block_delta", events[0].Type)
-	assert.Equal(t, 0, *events[0].Index)
-	assert.Equal(t, `{"command":"ls"}`, events[0].Delta.PartialJSON)
-
-	// 先完成 a：只 stop index 0，index 1 仍打开。
-	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.function_call_arguments.done",
-		OutputIndex: 0,
-		Arguments:   `{"command":"ls"}`,
-	}, state)
-	require.Len(t, events, 1)
-	assert.Equal(t, "content_block_stop", events[0].Type)
-	assert.Equal(t, 0, *events[0].Index)
-	require.Len(t, state.OpenBlocks, 1)
-	_, stillOpen := state.OpenBlocks[1]
-	require.True(t, stillOpen)
-
-	// 已关闭 index 0 的后续 delta 必须丢弃，不能再发 orphan event。
-	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.function_call_arguments.delta",
-		OutputIndex: 0,
-		Delta:       `extra`,
-	}, state)
-	assert.Nil(t, events)
-
-	// 完成 Read：缓冲参数作为一次性 input_json_delta + stop。
-	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.function_call_arguments.done",
-		OutputIndex: 1,
-		Arguments:   `{"file_path":"a.go"}`,
-	}, state)
-	require.Len(t, events, 2)
-	assert.Equal(t, "content_block_delta", events[0].Type)
-	assert.Equal(t, 1, *events[0].Index)
-	assert.JSONEq(t, `{"file_path":"a.go"}`, events[0].Delta.PartialJSON)
-	assert.Equal(t, "content_block_stop", events[1].Type)
-	assert.Equal(t, 1, *events[1].Index)
-	require.Empty(t, state.OpenBlocks)
-
-	// 已关闭 block 的 stop 再来一次必须是 no-op。
-	events = ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.output_item.done",
-		OutputIndex: 1,
-		Item:        &ResponsesOutput{Type: "function_call", CallID: "call_b", Name: "Read"},
-	}, state)
-	assert.Nil(t, events)
-}
-
-// TestStreamingReasoningMultiSegmentNoOrphanDelta 覆盖 Grok 多段 reasoning：
-// summary.done 后若仍有 reasoning_text.delta，不得对已关闭 index 发 thinking_delta。
-func TestStreamingReasoningMultiSegmentNoOrphanDelta(t *testing.T) {
-	state := NewResponsesEventToAnthropicState()
-	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:     "response.created",
-		Response: &ResponsesResponse{ID: "resp_reason", Model: "grok-4.5"},
-	}, state)
-	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.output_item.added",
-		OutputIndex: 0,
-		Item:        &ResponsesOutput{Type: "reasoning"},
-	}, state)
-	ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.reasoning_summary_text.delta",
-		OutputIndex: 0,
-		Delta:       "step1",
-	}, state)
-	// 旧实现会在这里 close block；新实现保持打开。
-	assert.Nil(t, ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type: "response.reasoning_summary_text.done",
-	}, state))
-
-	events := ResponsesEventToAnthropicEvents(&ResponsesStreamEvent{
-		Type:        "response.reasoning_text.delta",
-		OutputIndex: 0,
-		Delta:       "step2",
-	}, state)
-	require.Len(t, events, 1)
-	assert.Equal(t, "thinking_delta", events[0].Delta.Type)
-	assert.Equal(t, 0, *events[0].Index)
-	require.Contains(t, state.OpenBlocks, 0)
 }
 
 func TestStreamingIncomplete(t *testing.T) {

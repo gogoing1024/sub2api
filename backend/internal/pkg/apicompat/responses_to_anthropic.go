@@ -3,7 +3,6 @@ package apicompat
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 )
 
@@ -166,38 +165,20 @@ func sanitizeAnthropicToolUseInput(name string, raw string) json.RawMessage {
 // Streaming: ResponsesStreamEvent → []AnthropicStreamEvent (stateful converter)
 // ---------------------------------------------------------------------------
 
-// openAnthropicBlock tracks one currently-open Anthropic content block.
-// Grok/xAI Responses 可能并行发出多个 function_call；Claude Code 要求每个
-// content_block_delta/stop 都能在 map 中找到对应 start，因此必须按 block 维度
-// 跟踪开闭，而不是只保留“当前唯一块”。
-type openAnthropicBlock struct {
-	Type     string // "text" | "thinking" | "tool_use"
-	ToolName string
-	ToolArgs string
-	HadDelta bool
-}
-
 // ResponsesEventToAnthropicState tracks state for converting a sequence of
 // Responses SSE events directly into Anthropic SSE events.
 type ResponsesEventToAnthropicState struct {
 	MessageStartSent bool
 	MessageStopSent  bool
 
-	// ContentBlockIndex is the next Anthropic content block index to allocate.
-	// 在 start 时分配并递增，避免并行 tool_use 共用同一 index。
-	ContentBlockIndex int
-	// ContentBlockOpen / Current* 描述“主活动块”（text/thinking 或最近打开的 tool），
-	// 兼容既有单块路径；并行 tool 的权威状态在 OpenBlocks。
+	ContentBlockIndex   int
 	ContentBlockOpen    bool
-	CurrentBlockIndex   int
 	CurrentBlockType    string // "text" | "thinking" | "tool_use"
 	CurrentToolName     string
 	CurrentToolArgs     string
 	CurrentToolHadDelta bool
 	HasToolCall         bool
 
-	// OpenBlocks maps Anthropic content block index → open block metadata.
-	OpenBlocks map[int]*openAnthropicBlock
 	// OutputIndexToBlockIdx maps Responses output_index → Anthropic content block index.
 	OutputIndexToBlockIdx map[int]int
 
@@ -214,7 +195,6 @@ type ResponsesEventToAnthropicState struct {
 // NewResponsesEventToAnthropicState returns an initialised stream state.
 func NewResponsesEventToAnthropicState() *ResponsesEventToAnthropicState {
 	return &ResponsesEventToAnthropicState{
-		OpenBlocks:            make(map[int]*openAnthropicBlock),
 		OutputIndexToBlockIdx: make(map[int]int),
 		Created:               time.Now().Unix(),
 	}
@@ -239,8 +219,7 @@ func ResponsesEventToAnthropicEvents(
 		// custom/freeform 工具的输入增量与 function_call 参数增量同形。
 		"response.custom_tool_call_input.delta":
 		return resToAnthHandleFuncArgsDelta(evt, state)
-	case "response.function_call_arguments.done",
-		"response.custom_tool_call_input.done":
+	case "response.function_call_arguments.done":
 		return resToAnthHandleFuncArgsDone(evt, state)
 	case "response.output_item.done":
 		return resToAnthHandleOutputItemDone(evt, state)
@@ -249,10 +228,7 @@ func ResponsesEventToAnthropicEvents(
 		"response.reasoning_text.delta":
 		return resToAnthHandleReasoningDelta(evt, state)
 	case "response.reasoning_summary_text.done":
-		// reasoning_summary_text.done 只表示某一段推理文本结束；真正的 thinking 块关闭
-		// 由 output_item.done(reasoning) 或流终态驱动，避免 Grok 多段 reasoning
-		// 后对已关闭 block 再发 thinking_delta。
-		return nil
+		return resToAnthHandleBlockDone(state)
 	// response.done 是 Realtime/WS 与项目透传路径使用的终止别名；
 	// 普通 Responses HTTP SSE 的公开终止事件仍以 response.completed 为主。
 	case "response.completed", "response.done", "response.incomplete", "response.failed":
@@ -270,8 +246,7 @@ func FinalizeResponsesAnthropicStream(state *ResponsesEventToAnthropicState) []A
 	}
 
 	var events []AnthropicStreamEvent
-	// 终态前关闭全部打开块（含并行 tool_use），避免 Claude Code 残留半开 block。
-	events = append(events, closeAllOpenBlocks(state)...)
+	events = append(events, closeCurrentBlock(state)...)
 
 	stopReason := "end_turn"
 	if state.HasToolCall {
@@ -316,14 +291,12 @@ func resToAnthHandleCreated(evt *ResponsesStreamEvent, state *ResponsesEventToAn
 			state.Model = evt.Response.Model
 		}
 	}
-	return ensureAnthropicMessageStart(state)
-}
 
-func ensureAnthropicMessageStart(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
 	if state.MessageStartSent {
 		return nil
 	}
 	state.MessageStartSent = true
+
 	return []AnthropicStreamEvent{{
 		Type: "message_start",
 		Message: &AnthropicResponse{
@@ -348,26 +321,25 @@ func resToAnthHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 	switch evt.Item.Type {
 	// function_call 与 custom_tool_call（custom/freeform 工具，如新版 apply_patch）
 	// 同样映射为 Anthropic 的 tool_use 块。
-	// 并行 tool_use：不关闭其他已打开的 tool 块，只关闭 text/thinking 主活动块。
 	case "function_call", "custom_tool_call":
 		var events []AnthropicStreamEvent
-		events = append(events, ensureAnthropicMessageStart(state)...)
-		events = append(events, closeNonToolActiveBlock(state)...)
+		events = append(events, closeCurrentBlock(state)...)
 
-		idx := allocateAnthropicBlock(state, "tool_use", evt.Item.Name)
+		idx := state.ContentBlockIndex
 		state.OutputIndexToBlockIdx[evt.OutputIndex] = idx
+		state.ContentBlockOpen = true
+		state.CurrentBlockType = "tool_use"
+		state.CurrentToolName = evt.Item.Name
+		state.CurrentToolArgs = ""
+		state.CurrentToolHadDelta = false
 		state.HasToolCall = true
 
-		callID := evt.Item.CallID
-		if callID == "" {
-			callID = evt.Item.ID
-		}
 		events = append(events, AnthropicStreamEvent{
 			Type:  "content_block_start",
 			Index: &idx,
 			ContentBlock: &AnthropicContentBlock{
 				Type:  "tool_use",
-				ID:    fromResponsesCallID(callID),
+				ID:    fromResponsesCallID(evt.Item.CallID),
 				Name:  evt.Item.Name,
 				Input: json.RawMessage("{}"),
 			},
@@ -376,11 +348,12 @@ func resToAnthHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 
 	case "reasoning":
 		var events []AnthropicStreamEvent
-		events = append(events, ensureAnthropicMessageStart(state)...)
-		events = append(events, closeAllOpenBlocks(state)...)
+		events = append(events, closeCurrentBlock(state)...)
 
-		idx := allocateAnthropicBlock(state, "thinking", "")
+		idx := state.ContentBlockIndex
 		state.OutputIndexToBlockIdx[evt.OutputIndex] = idx
+		state.ContentBlockOpen = true
+		state.CurrentBlockType = "thinking"
 
 		events = append(events, AnthropicStreamEvent{
 			Type:  "content_block_start",
@@ -405,12 +378,14 @@ func resToAnthHandleTextDelta(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	}
 
 	var events []AnthropicStreamEvent
-	events = append(events, ensureAnthropicMessageStart(state)...)
 
 	if !state.ContentBlockOpen || state.CurrentBlockType != "text" {
-		// 文本块开始前关闭所有打开块（含并行 tool），保持 Anthropic 块生命周期串行。
-		events = append(events, closeAllOpenBlocks(state)...)
-		idx := allocateAnthropicBlock(state, "text", "")
+		events = append(events, closeCurrentBlock(state)...)
+
+		idx := state.ContentBlockIndex
+		state.ContentBlockOpen = true
+		state.CurrentBlockType = "text"
+
 		events = append(events, AnthropicStreamEvent{
 			Type:  "content_block_start",
 			Index: &idx,
@@ -421,11 +396,7 @@ func resToAnthHandleTextDelta(evt *ResponsesStreamEvent, state *ResponsesEventTo
 		})
 	}
 
-	idx := state.CurrentBlockIndex
-	if _, ok := state.OpenBlocks[idx]; !ok {
-		// 防御：主活动块已关闭时不发 orphan delta。
-		return events
-	}
+	idx := state.ContentBlockIndex
 	events = append(events, AnthropicStreamEvent{
 		Type:  "content_block_delta",
 		Index: &idx,
@@ -442,6 +413,28 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 		return nil
 	}
 
+	if state.CurrentBlockType == "tool_use" && state.CurrentToolName == "Read" {
+		state.CurrentToolArgs += evt.Delta
+		if state.CurrentToolHadDelta || !json.Valid([]byte(state.CurrentToolArgs)) {
+			return nil
+		}
+
+		blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
+		if !ok {
+			return nil
+		}
+		state.CurrentToolHadDelta = true
+		sanitized := sanitizeAnthropicToolUseInput(state.CurrentToolName, state.CurrentToolArgs)
+		return []AnthropicStreamEvent{{
+			Type:  "content_block_delta",
+			Index: &blockIdx,
+			Delta: &AnthropicDelta{
+				Type:        "input_json_delta",
+				PartialJSON: string(sanitized),
+			},
+		}}
+	}
+
 	if state.CurrentBlockType == "tool_use" {
 		state.CurrentToolHadDelta = true
 	}
@@ -450,21 +443,6 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 	if !ok {
 		return nil
 	}
-	block, ok := state.OpenBlocks[blockIdx]
-	if !ok || block.Type != "tool_use" {
-		// 块已关闭或类型不对：丢弃，避免 Claude Code "Content block not found"。
-		return nil
-	}
-
-	if block.ToolName == "Read" {
-		// Read：累积参数，done 时 sanitize(pages 空串) 后一次性发送。
-		block.ToolArgs += evt.Delta
-		// 不标记 HadDelta，让 done 路径能刷出完整净化后的参数。
-		syncCurrentToolFromBlock(state, blockIdx, block)
-		return nil
-	}
-	block.HadDelta = true
-	syncCurrentToolFromBlock(state, blockIdx, block)
 
 	return []AnthropicStreamEvent{{
 		Type:  "content_block_delta",
@@ -477,42 +455,48 @@ func resToAnthHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 }
 
 func resToAnthHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
-	blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
-	if !ok {
-		// 兼容旧路径：无 output_index 映射时，仅当主活动块是 tool_use 才关闭。
-		if state.CurrentBlockType == "tool_use" && state.ContentBlockOpen {
-			return closeBlockAt(state, state.CurrentBlockIndex)
-		}
+	if !state.ContentBlockOpen {
 		return nil
 	}
-	block, ok := state.OpenBlocks[blockIdx]
-	if !ok || block.Type != "tool_use" {
-		return nil
+	if state.CurrentBlockType != "tool_use" {
+		return resToAnthHandleBlockDone(state)
 	}
 
 	raw := evt.Arguments
 	if raw == "" {
-		raw = block.ToolArgs
+		raw = state.CurrentToolArgs
 	}
-	var events []AnthropicStreamEvent
-	if raw != "" && !block.HadDelta {
-		if block.ToolName == "Read" {
-			sanitized := sanitizeAnthropicToolUseInput(block.ToolName, raw)
-			if len(sanitized) == 0 {
-				return closeBlockAt(state, blockIdx)
-			}
-			raw = string(sanitized)
+	if raw == "" || state.CurrentToolHadDelta {
+		return closeCurrentBlock(state)
+	}
+	if state.CurrentToolName == "Read" {
+		sanitized := sanitizeAnthropicToolUseInput(state.CurrentToolName, raw)
+		if len(sanitized) == 0 {
+			return closeCurrentBlock(state)
 		}
-		events = append(events, AnthropicStreamEvent{
-			Type:  "content_block_delta",
-			Index: &blockIdx,
-			Delta: &AnthropicDelta{
-				Type:        "input_json_delta",
-				PartialJSON: raw,
-			},
-		})
+		raw = string(sanitized)
 	}
-	events = append(events, closeBlockAt(state, blockIdx)...)
+
+	// 从事件的 OutputIndex 解析正确的 block index，与 resToAnthHandleFuncArgsDelta 对齐
+	blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
+	if !ok {
+		blockIdx = state.ContentBlockIndex
+	}
+
+	// 如果 block 已关闭（ContentBlockIndex 已越过它），说明 arguments 已通过 delta 流式发完，不再补发
+	if !state.ContentBlockOpen || blockIdx != state.ContentBlockIndex {
+		return nil
+	}
+
+	events := []AnthropicStreamEvent{{
+		Type:  "content_block_delta",
+		Index: &blockIdx,
+		Delta: &AnthropicDelta{
+			Type:        "input_json_delta",
+			PartialJSON: raw,
+		},
+	}}
+	events = append(events, closeCurrentBlock(state)...)
 	return events
 }
 
@@ -521,47 +505,24 @@ func resToAnthHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 		return nil
 	}
 
-	var events []AnthropicStreamEvent
-	events = append(events, ensureAnthropicMessageStart(state)...)
-
 	blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]
-	if !ok || state.OpenBlocks[blockIdx] == nil || state.OpenBlocks[blockIdx].Type != "thinking" {
-		// 缺少 output_item.added(reasoning) 或 thinking 已关闭时自恢复，
-		// 避免直接对未知 index 发 thinking_delta。
-		events = append(events, closeAllOpenBlocks(state)...)
-		blockIdx = allocateAnthropicBlock(state, "thinking", "")
-		state.OutputIndexToBlockIdx[evt.OutputIndex] = blockIdx
-		events = append(events, AnthropicStreamEvent{
-			Type:  "content_block_start",
-			Index: &blockIdx,
-			ContentBlock: &AnthropicContentBlock{
-				Type:     "thinking",
-				Thinking: "",
-			},
-		})
+	if !ok {
+		return nil
 	}
 
-	if _, open := state.OpenBlocks[blockIdx]; !open {
-		return events
-	}
-	events = append(events, AnthropicStreamEvent{
+	return []AnthropicStreamEvent{{
 		Type:  "content_block_delta",
 		Index: &blockIdx,
 		Delta: &AnthropicDelta{
 			Type:     "thinking_delta",
 			Thinking: evt.Delta,
 		},
-	})
-	return events
+	}}
 }
 
 func resToAnthHandleBlockDone(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
 	if !state.ContentBlockOpen {
 		return nil
-	}
-	// output_text.done 只关闭当前 text 主活动块，不动并行 tool。
-	if state.CurrentBlockType == "text" {
-		return closeBlockAt(state, state.CurrentBlockIndex)
 	}
 	return closeCurrentBlock(state)
 }
@@ -576,14 +537,6 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 		return resToAnthHandleWebSearchDone(evt, state)
 	}
 
-	if blockIdx, ok := state.OutputIndexToBlockIdx[evt.OutputIndex]; ok {
-		if _, open := state.OpenBlocks[blockIdx]; open {
-			return closeBlockAt(state, blockIdx)
-		}
-		return nil
-	}
-
-	// 无 output_index 映射时退回主活动块关闭（兼容旧事件）。
 	if state.ContentBlockOpen {
 		return closeCurrentBlock(state)
 	}
@@ -595,8 +548,7 @@ func resToAnthHandleOutputItemDone(evt *ResponsesStreamEvent, state *ResponsesEv
 // This allows Claude Code to count the searches performed.
 func resToAnthHandleWebSearchDone(evt *ResponsesStreamEvent, state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
 	var events []AnthropicStreamEvent
-	events = append(events, ensureAnthropicMessageStart(state)...)
-	events = append(events, closeAllOpenBlocks(state)...)
+	events = append(events, closeCurrentBlock(state)...)
 
 	toolUseID := "srvtoolu_" + evt.Item.ID
 	query := ""
@@ -605,10 +557,8 @@ func resToAnthHandleWebSearchDone(evt *ResponsesStreamEvent, state *ResponsesEve
 	}
 	inputJSON, _ := json.Marshal(map[string]string{"query": query})
 
-	// Emit server_tool_use block (start + stop). Index 在 start 时分配并立即占用，
-	// stop 使用同一 index；不再依赖“open 标志 + 延迟递增”的旧模型。
+	// Emit server_tool_use block (start + stop).
 	idx1 := state.ContentBlockIndex
-	state.ContentBlockIndex++
 	events = append(events, AnthropicStreamEvent{
 		Type:  "content_block_start",
 		Index: &idx1,
@@ -623,13 +573,13 @@ func resToAnthHandleWebSearchDone(evt *ResponsesStreamEvent, state *ResponsesEve
 		Type:  "content_block_stop",
 		Index: &idx1,
 	})
+	state.ContentBlockIndex++
 
 	// Emit web_search_tool_result block (start + stop).
 	// Content is empty because OpenAI does not expose individual search results;
 	// the model consumes them internally and produces text output.
 	emptyResults, _ := json.Marshal([]struct{}{})
 	idx2 := state.ContentBlockIndex
-	state.ContentBlockIndex++
 	events = append(events, AnthropicStreamEvent{
 		Type:  "content_block_start",
 		Index: &idx2,
@@ -643,6 +593,7 @@ func resToAnthHandleWebSearchDone(evt *ResponsesStreamEvent, state *ResponsesEve
 		Type:  "content_block_stop",
 		Index: &idx2,
 	})
+	state.ContentBlockIndex++
 
 	return events
 }
@@ -653,9 +604,7 @@ func resToAnthHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	}
 
 	var events []AnthropicStreamEvent
-	// 终态不主动补 message_start：若上游从未发 response.created，保持旧语义
-	// 仅输出 message_delta/message_stop，避免改变纯终态事件的事件计数。
-	events = append(events, closeAllOpenBlocks(state)...)
+	events = append(events, closeCurrentBlock(state)...)
 
 	stopReason := "end_turn"
 	if evt.Usage != nil {
@@ -704,113 +653,18 @@ func resToAnthHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	return events
 }
 
-// allocateAnthropicBlock reserves the next content block index and marks it open.
-func allocateAnthropicBlock(state *ResponsesEventToAnthropicState, blockType, toolName string) int {
-	if state.OpenBlocks == nil {
-		state.OpenBlocks = make(map[int]*openAnthropicBlock)
-	}
-	idx := state.ContentBlockIndex
-	state.ContentBlockIndex++
-	state.OpenBlocks[idx] = &openAnthropicBlock{
-		Type:     blockType,
-		ToolName: toolName,
-	}
-	state.ContentBlockOpen = true
-	state.CurrentBlockIndex = idx
-	state.CurrentBlockType = blockType
-	state.CurrentToolName = toolName
-	state.CurrentToolArgs = ""
-	state.CurrentToolHadDelta = false
-	return idx
-}
-
-func syncCurrentToolFromBlock(state *ResponsesEventToAnthropicState, blockIdx int, block *openAnthropicBlock) {
-	if state.CurrentBlockIndex != blockIdx {
-		return
-	}
-	state.CurrentToolName = block.ToolName
-	state.CurrentToolArgs = block.ToolArgs
-	state.CurrentToolHadDelta = block.HadDelta
-}
-
-func closeBlockAt(state *ResponsesEventToAnthropicState, idx int) []AnthropicStreamEvent {
-	if state.OpenBlocks == nil {
-		return nil
-	}
-	if _, ok := state.OpenBlocks[idx]; !ok {
-		return nil
-	}
-	delete(state.OpenBlocks, idx)
-	if state.CurrentBlockIndex == idx {
-		state.ContentBlockOpen = len(state.OpenBlocks) > 0
-		if !state.ContentBlockOpen {
-			state.CurrentBlockType = ""
-			state.CurrentToolName = ""
-			state.CurrentToolArgs = ""
-			state.CurrentToolHadDelta = false
-		} else {
-			// 主活动块关闭后，若仍有打开块，选一个作为 Current*（任意即可）。
-			for otherIdx, other := range state.OpenBlocks {
-				state.CurrentBlockIndex = otherIdx
-				state.CurrentBlockType = other.Type
-				state.CurrentToolName = other.ToolName
-				state.CurrentToolArgs = other.ToolArgs
-				state.CurrentToolHadDelta = other.HadDelta
-				break
-			}
-		}
-	} else if len(state.OpenBlocks) == 0 {
-		state.ContentBlockOpen = false
-		state.CurrentBlockType = ""
-		state.CurrentToolName = ""
-		state.CurrentToolArgs = ""
-		state.CurrentToolHadDelta = false
-	}
-	return []AnthropicStreamEvent{{
-		Type:  "content_block_stop",
-		Index: &idx,
-	}}
-}
-
-// closeCurrentBlock closes the primary active block only.
 func closeCurrentBlock(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
 	if !state.ContentBlockOpen {
 		return nil
 	}
-	return closeBlockAt(state, state.CurrentBlockIndex)
-}
-
-// closeNonToolActiveBlock closes text/thinking primary block before opening a
-// tool_use block, while leaving other open tool blocks intact (parallel tools).
-func closeNonToolActiveBlock(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
-	if !state.ContentBlockOpen {
-		return nil
-	}
-	if state.CurrentBlockType == "tool_use" {
-		return nil
-	}
-	return closeBlockAt(state, state.CurrentBlockIndex)
-}
-
-// closeAllOpenBlocks closes every open content block in ascending index order.
-func closeAllOpenBlocks(state *ResponsesEventToAnthropicState) []AnthropicStreamEvent {
-	if len(state.OpenBlocks) == 0 {
-		state.ContentBlockOpen = false
-		state.CurrentBlockType = ""
-		state.CurrentToolName = ""
-		state.CurrentToolArgs = ""
-		state.CurrentToolHadDelta = false
-		return nil
-	}
-	idxs := make([]int, 0, len(state.OpenBlocks))
-	for idx := range state.OpenBlocks {
-		idxs = append(idxs, idx)
-	}
-	// 稳定按 index 升序关闭，满足 Claude Code 对 content_block 生命周期的期望。
-	sort.Ints(idxs)
-	var events []AnthropicStreamEvent
-	for _, idx := range idxs {
-		events = append(events, closeBlockAt(state, idx)...)
-	}
-	return events
+	idx := state.ContentBlockIndex
+	state.ContentBlockOpen = false
+	state.ContentBlockIndex++
+	state.CurrentToolName = ""
+	state.CurrentToolArgs = ""
+	state.CurrentToolHadDelta = false
+	return []AnthropicStreamEvent{{
+		Type:  "content_block_stop",
+		Index: &idx,
+	}}
 }
