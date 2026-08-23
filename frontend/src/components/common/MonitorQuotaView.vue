@@ -1,7 +1,7 @@
 <template>
   <div v-if="snapshot" class="space-y-1" data-testid="monitor-quota-view">
     <!-- 套餐等级徽章（如智谱 plan level / Claude 订阅档） -->
-    <div v-if="snapshot.plan_level" class="flex flex-wrap items-center gap-1.5">
+    <div v-if="!accountsOnly && snapshot.plan_level" class="flex flex-wrap items-center gap-1.5">
       <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-dark-600 dark:text-gray-300">
         {{ snapshot.plan_level }}
       </span>
@@ -20,7 +20,7 @@
     </div>
 
     <!-- 用量窗口条形图（样式/阈值对齐账号页 CNProviderQuotaCell） -->
-    <div v-if="snapshot.success && tierRows.length" class="space-y-1">
+    <div v-if="!accountsOnly && snapshot.success && tierRows.length" class="space-y-1">
       <div v-for="row in tierRows" :key="row.key" class="flex items-center gap-1.5 text-[10px]">
         <span class="w-14 shrink-0 truncate text-gray-500 dark:text-gray-400" :title="row.title">
           {{ row.label }}
@@ -42,7 +42,7 @@
     </div>
 
     <!-- 余额（国产 payg；支持多币种） -->
-    <div v-if="snapshot.success && balanceRows.length" class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
+    <div v-if="!accountsOnly && snapshot.success && balanceRows.length" class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
       <span
         v-for="b in balanceRows"
         :key="b.currency"
@@ -52,7 +52,7 @@
       </span>
     </div>
 
-    <div v-if="!snapshot.success" class="truncate text-[10px] text-red-600 dark:text-red-400" :title="snapshot.error" data-testid="monitor-quota-error">
+    <div v-if="!accountsOnly && !snapshot.success" class="truncate text-[10px] text-red-600 dark:text-red-400" :title="snapshot.error" data-testid="monitor-quota-error">
       {{ truncatedError }}
     </div>
   </div>
@@ -71,6 +71,8 @@ import type { MonitorQuotaSnapshot, MonitorQuotaTier } from '@/api/admin/channel
  */
 const props = defineProps<{
   snapshot?: MonitorQuotaSnapshot | null
+  /** 只渲染组级账号计数（用户端 show_quota 关闭时的脱敏形态） */
+  accountsOnly?: boolean
 }>()
 
 const { t, te } = useI18n()

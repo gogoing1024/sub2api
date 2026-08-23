@@ -180,6 +180,29 @@ describe('MonitorQuotaView', () => {
     expect(summary.text()).not.toContain('accountsExhausted')
   })
 
+  it('accounts-only mode keeps the count line and hides tiers, plan, and errors', () => {
+    const wrapper = mount(MonitorQuotaView, {
+      props: {
+        accountsOnly: true,
+        snapshot: makeSnapshot({
+          success: false,
+          error: 'internal fetch failed',
+          plan_level: 'pro',
+          tiers: [{ window: '5h', used_percent: 88 }],
+          accounts_total: 8,
+          accounts_healthy: 2,
+          accounts_exhausted: 5,
+        }),
+      },
+    })
+
+    expect(wrapper.find('[data-testid="monitor-quota-accounts"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="monitor-quota-error"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('pro')
+    expect(wrapper.text()).not.toContain('88%')
+    expect(wrapper.text()).not.toContain('internal fetch failed')
+  })
+
   it('keeps failed snapshots from rendering tier rows', () => {
     const wrapper = mount(MonitorQuotaView, {
       props: {
