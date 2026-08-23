@@ -556,7 +556,7 @@ export default {
         quotaSourceAccount: '单个账号',
         quotaSourceGroup: '分组聚合',
         linkedGroupPlaceholder: '选择分组',
-        linkedGroupHint: '聚合分组内全部启用账号的额度：全部耗尽记为异常，部分耗尽记为降级',
+        linkedGroupHint: '聚合分组内全部启用账号的额度：还有号有额度记为正常，全部耗尽记为异常',
         linkedGroupEmpty: '当前平台暂无启用分组，请先在分组管理中创建',
         linkedGroupMissing: '关联分组已不存在或不可访问，请重新选择分组',
         openAIQuotaProbeHint: '注意：OpenAI 平台的用量查询可能触发 Codex 探测请求，会消耗账号自身的额度（每 10 分钟最多触发一次）',

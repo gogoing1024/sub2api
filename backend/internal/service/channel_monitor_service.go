@@ -439,7 +439,7 @@ func (s *ChannelMonitorService) validateLinkedAccount(ctx context.Context, provi
 // validateLinkedGroup 校验关联分组存在且平台与监控 provider 一致。
 // 不校验组内账号的配额能力：分组是动态集合（成员随时增删），逐个卡能力会让
 // 「组里混进一个 API-Key 型 openai 账号」直接阻断整个监控的创建；这类账号在
-// 聚合时会落到「未知」计数里，由 deriveGroupQuotaStatus 自然降级。
+// 聚合时会落到「未知」计数里，由 deriveGroupQuotaStatus 按「还有没有健康号」推导。
 // fetcher 未注入时 fail-closed（与 validateLinkedAccount 一致）。
 func (s *ChannelMonitorService) validateLinkedGroup(ctx context.Context, provider string, groupID *int64) error {
 	if groupID == nil || *groupID <= 0 {

@@ -544,8 +544,8 @@ func usageFailureInfo(usage *UsageInfo) (failed, credentialInvalid bool, msg str
 //   - 凭据失效（401/403）     → failed
 //   - 网络/解析等其他错误      → error
 //
-// 组级聚合快照（AccountsTotal > 0）走 deriveGroupQuotaStatus 按账号计数推导，
-// 而不是单账号的 Success/Tiers 口径。
+// 组级聚合快照（AccountsTotal > 0）走 deriveGroupQuotaStatus：
+// 还有健康账号 → operational（耗尽只在计数里暴露），全部耗尽 → failed。
 func deriveQuotaCheckResult(snapshot *domain.MonitorQuotaSnapshot, model string, checkedAt time.Time) *CheckResult {
 	res := &CheckResult{Model: model, CheckedAt: checkedAt}
 	if snapshot == nil {

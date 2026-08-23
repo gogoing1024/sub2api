@@ -210,6 +210,10 @@ func flattenGroupTiers(
 //
 // 抓取失败（!Success）不算耗尽——那是「没查到」，计为未知；唯一例外是凭据失效，
 // 那种号确实用不了，由调用方单独计入耗尽。
+//
+// 同一 window 下的多档是可替换额度池（kiro credits+bonus、gemini 多档）：
+// 这一窗全部打满才算这个号在该窗口不可用。任一 window 整体打满 → 整号耗尽
+// （claude 5h 打满就发不出去，即使 7d 还有余）。
 func monitorAccountQuotaExhausted(snapshot *domain.MonitorQuotaSnapshot) bool {
 	if snapshot == nil || !snapshot.Success {
 		return false
@@ -217,26 +221,52 @@ func monitorAccountQuotaExhausted(snapshot *domain.MonitorQuotaSnapshot) bool {
 	if snapshot.CredentialInvalid || snapshot.BalanceLow {
 		return true
 	}
+	if len(snapshot.Tiers) == 0 {
+		return false
+	}
+	byWindow := make(map[string][]domain.MonitorQuotaTier, 4)
 	for _, tier := range snapshot.Tiers {
-		if tier.Limit > 0 && tier.Used >= tier.Limit {
-			return true
-		}
-		if tier.UsedPercent >= monitorQuotaExhaustedUsedPercent {
+		byWindow[tier.Window] = append(byWindow[tier.Window], tier)
+	}
+	for _, tiers := range byWindow {
+		if allQuotaTiersExhausted(tiers) {
 			return true
 		}
 	}
 	return false
 }
 
+func quotaTierExhausted(tier domain.MonitorQuotaTier) bool {
+	if tier.Limit > 0 && tier.Used >= tier.Limit {
+		return true
+	}
+	return tier.UsedPercent >= monitorQuotaExhaustedUsedPercent
+}
+
+func allQuotaTiersExhausted(tiers []domain.MonitorQuotaTier) bool {
+	if len(tiers) == 0 {
+		return false
+	}
+	for _, tier := range tiers {
+		if !quotaTierExhausted(tier) {
+			return false
+		}
+	}
+	return true
+}
+
 // deriveGroupQuotaStatus 组级聚合的状态推导。
 //
-// 分支顺序刻意把「全部没查到」与「全部确实耗尽」分开：冷启动首轮可能所有账号
-// 都超出时间预算，那是抓取问题（error），报 failed 会白白污染可用率曲线。
+// 组级监控回答的是「这条渠道还能不能打」，不是「池子里有没有空号」。
+// 还有健康账号 → 渠道可用（耗尽/未知只在计数摘要里暴露）；
+// 全部耗尽 → failed；全部没查到 → error（冷启动超预算不能污染可用率）。
+//
+// 90% 阈值只在全员健康时看聚合占用率。部分耗尽时 sum(used)/sum(limit)
+// 会被空号拉高，拿来再判降级会绕回「还有余额也降级」。
 func deriveGroupQuotaStatus(snapshot *domain.MonitorQuotaSnapshot) (status, message string) {
 	total := snapshot.AccountsTotal
 	healthy := snapshot.AccountsHealthy
 	exhausted := snapshot.AccountsExhausted
-	unknown := total - healthy - exhausted
 
 	switch {
 	case healthy == 0 && exhausted > 0:
@@ -246,16 +276,12 @@ func deriveGroupQuotaStatus(snapshot *domain.MonitorQuotaSnapshot) (status, mess
 			snapshot.Error,
 			fmt.Sprintf("quota unavailable for all %d accounts", total),
 		)
-	case healthy < total:
-		return MonitorStatusDegraded, fmt.Sprintf(
-			"%d/%d accounts have quota (%d exhausted, %d unknown)",
-			healthy, total, exhausted, unknown,
-		)
-	default:
-		// 全部账号都有额度：仍按单账号口径看聚合使用率是否接近上限。
+	case healthy == total:
 		if hint := quotaDegradedHint(snapshot); hint != "" {
 			return MonitorStatusDegraded, hint
 		}
+		return MonitorStatusOperational, ""
+	default:
 		return MonitorStatusOperational, ""
 	}
 }

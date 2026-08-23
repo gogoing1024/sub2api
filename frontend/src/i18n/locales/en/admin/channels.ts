@@ -556,7 +556,7 @@ export default {
         quotaSourceAccount: 'Single account',
         quotaSourceGroup: 'Group aggregate',
         linkedGroupPlaceholder: 'Select a group',
-        linkedGroupHint: 'Aggregates quota across every active account in the group: all exhausted reports failed, partially exhausted reports degraded',
+        linkedGroupHint: 'Aggregates quota across every active account in the group: still-healthy accounts report operational, all exhausted reports failed',
         linkedGroupEmpty: 'No active groups on this platform yet. Create one in Group Management first',
         linkedGroupMissing: 'The linked group no longer exists or is not accessible. Please re-select a group',
         openAIQuotaProbeHint: 'Note: on the OpenAI platform the usage query may trigger a Codex probe request that consumes the account\'s own quota (at most once every 10 minutes)',

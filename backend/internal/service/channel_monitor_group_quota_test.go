@@ -41,6 +41,19 @@ func (s *perAccountUsageSource) GetUsageForAccount(_ context.Context, account *A
 	return s.byAccount[account.ID], nil
 }
 
+// kiroUsageWithBonus 构造同时带 credits 和 bonus 的 kiro 用量。
+func kiroUsageWithBonus(creditUsed, creditLimit, bonusUsed, bonusLimit float64) *UsageInfo {
+	usage := kiroUsage(creditUsed, creditLimit)
+	if bonusLimit > 0 {
+		usage.KiroBonus = &KiroCreditProgress{
+			CurrentUsage:   bonusUsed,
+			UsageLimit:     bonusLimit,
+			PercentageUsed: bonusUsed / bonusLimit * 100,
+		}
+	}
+	return usage
+}
+
 // kiroUsage 构造一份 kiro 用量：credits 已用 used / 上限 limit。
 func kiroUsage(used, limit float64) *UsageInfo {
 	percent := 0.0
@@ -152,6 +165,36 @@ func TestFetchGroup_AggregatesCountsAndSumsTiers(t *testing.T) {
 	require.InDelta(t, 50, snapshot.Tiers[0].UsedPercent, 0.001)
 }
 
+// credits 打满但 bonus 还有余的号必须算健康，否则组里「还有余额」会被误判耗尽。
+func TestFetchGroup_KiroBonusRemainingIsHealthy(t *testing.T) {
+	fetcher := newGroupQuotaFetcher(t, kiroGroupAccounts(1, 2), &perAccountUsageSource{
+		byAccount: map[int64]*UsageInfo{
+			1: kiroUsageWithBonus(500, 500, 20, 200),
+			2: kiroUsage(0, 500),
+		},
+	})
+
+	snapshot := fetcher.FetchGroup(context.Background(), 9)
+	require.Equal(t, 2, snapshot.AccountsTotal)
+	require.Equal(t, 2, snapshot.AccountsHealthy)
+	require.Equal(t, 0, snapshot.AccountsExhausted)
+	require.Equal(t, MonitorStatusOperational, deriveQuotaCheckResult(snapshot, "quota", time.Now()).Status)
+}
+
+// 部分号耗尽时聚合占用率会被空号拉高，不能再拿 90% 阈值把整渠打成降级。
+func TestDeriveGroupQuotaStatus_PartialExhaustionIgnoresBlendedHighUsage(t *testing.T) {
+	status, _ := deriveGroupQuotaStatus(&domain.MonitorQuotaSnapshot{
+		Success:           true,
+		AccountsTotal:     10,
+		AccountsHealthy:   2,
+		AccountsExhausted: 8,
+		Tiers: []domain.MonitorQuotaTier{
+			{Window: "total", Label: "credits", UsedPercent: 96},
+		},
+	})
+	require.Equal(t, MonitorStatusOperational, status)
+}
+
 // 抓取失败的账号计为「未知」而非「耗尽」：不能把查不到当成没额度。
 func TestFetchGroup_FetchFailuresCountAsUnknown(t *testing.T) {
 	fetcher := newGroupQuotaFetcher(t, kiroGroupAccounts(1, 2), &perAccountUsageSource{
@@ -166,8 +209,7 @@ func TestFetchGroup_FetchFailuresCountAsUnknown(t *testing.T) {
 	require.Equal(t, 0, snapshot.AccountsExhausted)
 
 	res := deriveQuotaCheckResult(snapshot, "quota", time.Now())
-	require.Equal(t, MonitorStatusDegraded, res.Status)
-	require.Contains(t, res.Message, "1 unknown")
+	require.Equal(t, MonitorStatusOperational, res.Status)
 }
 
 // 凭据失效的号确实用不了，归入耗尽而不是未知。
@@ -240,8 +282,12 @@ func TestDeriveGroupQuotaStatus_Branches(t *testing.T) {
 			wantStatus: MonitorStatusError, wantMessage: "quota unavailable for all 2 accounts",
 		},
 		{
-			name: "部分耗尽记为 degraded", total: 5, healthy: 3, exhausted: 2,
-			wantStatus: MonitorStatusDegraded, wantMessage: "3/5 accounts have quota",
+			name: "部分耗尽但还有健康号记为 operational", total: 5, healthy: 3, exhausted: 2,
+			wantStatus: MonitorStatusOperational,
+		},
+		{
+			name: "部分未知但还有健康号记为 operational", total: 4, healthy: 1, exhausted: 0,
+			wantStatus: MonitorStatusOperational,
 		},
 		{
 			name: "全部健康记为 operational", total: 2, healthy: 2, exhausted: 0,
@@ -292,7 +338,7 @@ func TestDeriveQuotaCheckResult_AggregateTakesPrecedenceOverSuccessFlag(t *testi
 		AccountsHealthy:   2,
 		AccountsExhausted: 1,
 	}, "quota", time.Now())
-	require.Equal(t, MonitorStatusDegraded, res.Status)
+	require.Equal(t, MonitorStatusOperational, res.Status)
 }
 
 // --- 单账号耗尽判定 ---
@@ -315,6 +361,29 @@ func TestMonitorAccountQuotaExhausted(t *testing.T) {
 	require.False(t, monitorAccountQuotaExhausted(&domain.MonitorQuotaSnapshot{
 		Success: true,
 		Tiers:   []domain.MonitorQuotaTier{{Used: 990, Limit: 1000, UsedPercent: 99}},
+	}))
+	// kiro credits 打满但 bonus 还有余：这个号还能打，不能整号算耗尽。
+	require.False(t, monitorAccountQuotaExhausted(&domain.MonitorQuotaSnapshot{
+		Success: true,
+		Tiers: []domain.MonitorQuotaTier{
+			{Window: "total", Label: "credits", Used: 500, Limit: 500, UsedPercent: 100},
+			{Window: "total", Label: "bonus", Used: 10, Limit: 200, UsedPercent: 5},
+		},
+	}))
+	require.True(t, monitorAccountQuotaExhausted(&domain.MonitorQuotaSnapshot{
+		Success: true,
+		Tiers: []domain.MonitorQuotaTier{
+			{Window: "total", Label: "credits", Used: 500, Limit: 500, UsedPercent: 100},
+			{Window: "total", Label: "bonus", Used: 200, Limit: 200, UsedPercent: 100},
+		},
+	}))
+	// claude 5h 打满就发不出去，即使 7d 还有余。
+	require.True(t, monitorAccountQuotaExhausted(&domain.MonitorQuotaSnapshot{
+		Success: true,
+		Tiers: []domain.MonitorQuotaTier{
+			{Window: "5h", UsedPercent: 100},
+			{Window: "7d", UsedPercent: 40},
+		},
 	}))
 }
 
