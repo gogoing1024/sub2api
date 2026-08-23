@@ -7,6 +7,18 @@
       </span>
     </div>
 
+    <!-- 组级聚合：先给出「还有几个号有额度」，比聚合百分比更能反映渠道可用性 -->
+    <div
+      v-if="accountsSummary"
+      class="flex items-center gap-1 text-[10px]"
+      data-testid="monitor-quota-accounts"
+    >
+      <span :class="['font-medium', accountsSummary.tone]">{{ accountsSummary.text }}</span>
+      <span v-if="accountsSummary.detail" class="text-gray-400 dark:text-gray-500">
+        · {{ accountsSummary.detail }}
+      </span>
+    </div>
+
     <!-- 用量窗口条形图（样式/阈值对齐账号页 CNProviderQuotaCell） -->
     <div v-if="snapshot.success && tierRows.length" class="space-y-1">
       <div v-for="row in tierRows" :key="row.key" class="flex items-center gap-1.5 text-[10px]">
@@ -111,6 +123,37 @@ const tierRows = computed<QuotaTierRow[]>(() =>
     tier,
   })),
 )
+
+/**
+ * 组级聚合摘要：accounts_total > 0 才是聚合快照（单账号快照不带这些字段）。
+ * 「未知」= 抓取失败或超出聚合时间预算的账号，与「耗尽」分开展示，避免把
+ * 冷启动首轮的抓取失败误读成额度用尽。
+ */
+const accountsSummary = computed(() => {
+  const snapshot = props.snapshot
+  const total = snapshot?.accounts_total ?? 0
+  if (!snapshot || total <= 0) return null
+
+  const healthy = snapshot.accounts_healthy ?? 0
+  const exhausted = snapshot.accounts_exhausted ?? 0
+  const unknown = Math.max(0, total - healthy - exhausted)
+
+  const details: string[] = []
+  if (exhausted > 0) details.push(t('monitorCommon.quota.accountsExhausted', { count: exhausted }))
+  if (unknown > 0) details.push(t('monitorCommon.quota.accountsUnknown', { count: unknown }))
+
+  return {
+    text: t('monitorCommon.quota.accountsHealthy', { healthy, total }),
+    detail: details.join(' · '),
+    tone: accountsTone(healthy, total),
+  }
+})
+
+function accountsTone(healthy: number, total: number): string {
+  if (healthy === 0) return 'text-red-600 dark:text-red-400'
+  if (healthy < total) return 'text-amber-600 dark:text-amber-400'
+  return 'text-emerald-600 dark:text-emerald-400'
+}
 
 const balanceRows = computed(() => {
   const snapshot = props.snapshot

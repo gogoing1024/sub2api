@@ -50,9 +50,12 @@ type ChannelMonitor struct {
 	UpdatedAt       time.Time
 
 	// 配额模式（check_mode = quota / quota_probe）：
-	// 关联已有账号复用账号侧用量服务，Endpoint/APIKey 可为空（quota 模式）。
+	// 关联已有账号或分组复用账号侧用量服务，Endpoint/APIKey 可为空（quota 模式）。
+	// AccountID 与 GroupID 互斥（迁移 230 的 CHECK 在库层兜底）：
+	// 单账号视图回答「这个号还剩多少」，组级聚合回答「渠道还有几个号有额度」。
 	CheckMode string // probe（默认）/ quota / quota_probe；空串按 probe 处理
 	AccountID *int64 // 关联账号 ID；账号删除后被 DB 置空（监控保留并报「账号未关联」）
+	GroupID   *int64 // 关联分组 ID；分组删除后被 DB 置空（同上报「分组未关联」）
 
 	// 请求自定义快照（来自模板拷贝 or 用户手填，运行时直接读取）
 	TemplateID       *int64            // 仅用于 UI 分组 + 一键应用，运行时不用
@@ -99,9 +102,11 @@ type ChannelMonitorCreateParams struct {
 	BodyOverrideMode string
 	BodyOverride     map[string]any
 
-	// 配额模式：CheckMode 空串默认 probe；quota/quota_probe 必须关联账号。
+	// 配额模式：CheckMode 空串默认 probe；quota/quota_probe 必须恰好关联
+	// 一个数据源（账号或分组，二者互斥）。
 	CheckMode string
 	AccountID *int64
+	GroupID   *int64
 }
 
 // ChannelMonitorUpdateParams 更新参数（指针字段表示"未提供则不更新"）。
@@ -126,10 +131,12 @@ type ChannelMonitorUpdateParams struct {
 	BodyOverrideMode *string
 	BodyOverride     *map[string]any
 
-	// 配额模式：CheckMode nil = 不更新；AccountID nil = 不更新，
+	// 配额模式：CheckMode nil = 不更新；AccountID / GroupID nil = 不更新，
 	// 指向 0 = 清空关联（退回 probe 模式时由 CheckMode 分支兜底）。
+	// 二者互斥：设置一个会隐式清空另一个，避免出现双数据源的歧义状态。
 	CheckMode *string
 	AccountID *int64
+	GroupID   *int64
 }
 
 // CheckResult 单个模型一次检测的结果。
