@@ -15,7 +15,7 @@ import (
 //   - payg 账号不经过额度探测（走余额路径，本测试不放 payg 账号避免真实网络）；
 //   - 非激活账号完全跳过。
 
-// fakeCNQuotaProber 必须并发安全：runOnce 对 coding 目标按 4 并发探测，
+// fakeCNQuotaProber 必须并发安全：runOnce 以 cnQuotaProbeConcurrency 并发调用 QueryUsage，
 // 无锁 append 会丢记录，导致 ElementsMatch 在负载下偶发少一个账号。
 type fakeCNQuotaProber struct {
 	mu     sync.Mutex
@@ -24,8 +24,8 @@ type fakeCNQuotaProber struct {
 
 func (f *fakeCNQuotaProber) QueryUsage(ctx context.Context, accountID int64) (*CNProviderQuotaProbeResult, error) {
 	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.probed = append(f.probed, accountID)
-	f.mu.Unlock()
 	return &CNProviderQuotaProbeResult{Success: true, Persisted: true}, nil
 }
 
