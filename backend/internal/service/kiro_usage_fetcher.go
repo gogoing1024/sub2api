@@ -156,10 +156,10 @@ func (s *AccountUsageService) fetchAndCacheKiroUsage(ctx context.Context, accoun
 
 	region := kiroAPIRegion(account)
 	// getUsageLimits 强制要求 profileArn（缺失时上游返回 400
-	// "profileArn is required for this request."）。凭据无值时按账号类型回退到
-	// 默认 ARN（Social → Social ARN，其余含 Builder ID → 占位符 ARN），与聊天路径
-	// (kiroResolveProfileArnForKRS) 使用同一套兜底。
-	profileArn := kiroResolveProfileArnForKRS(account)
+	// "profileArn is required for this request."）。按账号类型解析：API Key → 空；
+	// 其余凭据无值时回退默认 ARN（Social → Social ARN，其余含 Builder ID → 占位符 ARN），
+	// 与聊天路径共用 kiroResolveRequestProfileArn。
+	profileArn := kiroResolveRequestProfileArn(account)
 
 	resp, err := s.requestKiroUsageLimits(ctx, account, region, profileArn, token)
 	if err != nil {
