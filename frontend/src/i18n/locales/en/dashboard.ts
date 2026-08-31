@@ -356,6 +356,10 @@ export default {
     ws: 'WS',
     stream: 'Stream',
     sync: 'Sync',
+    nativeCompactionV2: 'Compaction',
+    compactionFilter: 'Request Kind',
+    allCompactionTypes: 'All Requests',
+    compactionOnly: 'Compaction Only',
     cyber: 'Cyber',
     live: 'Live',
     unknown: 'Unknown',
@@ -474,7 +478,6 @@ export default {
     quota: {
       unavailable: 'Quota unavailable',
       resetSoon: 'resetting',
-      // Group aggregation summary: monitors bound to a group show how many accounts still have quota
       accountsHealthy: '{healthy}/{total} accounts with quota',
       accountsExhausted: '{count} exhausted',
       accountsUnknown: '{count} unknown',

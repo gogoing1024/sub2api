@@ -361,6 +361,10 @@ export default {
     ws: 'WS',
     stream: '流式',
     sync: '同步',
+    nativeCompactionV2: '压缩',
+    compactionFilter: '请求类别',
+    allCompactionTypes: '全部请求',
+    compactionOnly: '仅原生压缩',
     cyber: '安全策略',
     live: 'Live',
     unknown: '未知',
@@ -479,7 +483,6 @@ export default {
     quota: {
       unavailable: '配额信息不可用',
       resetSoon: '即将重置',
-      // 组级聚合摘要：绑定分组的监控展示「还有几个号有额度」
       accountsHealthy: '{healthy}/{total} 账号有额度',
       accountsExhausted: '{count} 个已耗尽',
       accountsUnknown: '{count} 个未知',
