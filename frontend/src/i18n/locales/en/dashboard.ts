@@ -499,6 +499,17 @@ export default {
         flash: 'Flash',
         credits: 'Credits',
         bonus: 'Bonus'
+      },
+      // 后端 message 是固定英文格式且已落库，展示层按格式解析后本地化（见 localizeMonitorMessage）
+      messages: {
+        noQuotaLeft: 'No quota left: {exhausted}/{total} accounts exhausted',
+        allUnavailable: 'Quota unavailable for all {total} accounts',
+        quotaHigh: 'Quota high: {name} at {percent}%',
+        balanceLow: 'Balance low: {amount} {currency}',
+        balanceLowNoAmount: 'Balance low ({currency})',
+        accountNotFound: 'Linked account not found',
+        groupNotFound: 'Linked group not found',
+        groupNoAccounts: 'Linked group has no accounts'
       }
     },
     extraModelsHeader: 'Extra Models',
