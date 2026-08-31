@@ -496,7 +496,9 @@ export default {
         tokens: 'Tokens',
         shared: 'Shared',
         pro: 'Pro',
-        flash: 'Flash'
+        flash: 'Flash',
+        credits: 'Credits',
+        bonus: 'Bonus'
       }
     },
     extraModelsHeader: 'Extra Models',

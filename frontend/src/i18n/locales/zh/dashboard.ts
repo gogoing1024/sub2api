@@ -501,7 +501,9 @@ export default {
         tokens: 'Token',
         shared: '共享',
         pro: 'Pro',
-        flash: 'Flash'
+        flash: 'Flash',
+        credits: '额度',
+        bonus: '赠额'
       }
     },
     extraModelsHeader: '附加模型',
