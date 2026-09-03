@@ -253,12 +253,14 @@ func (s *GatewayService) executeKiroWebSearch(ctx context.Context, account *Acco
 			}
 			return kiropkg.ParseNonStreamingEventStreamWithContext(resp.Body, requestModel, kiropkg.KiroRequestContext{
 				CacheEmulationUsage:  cacheUsage.toKiroUsage(),
+				CacheSourceMode:      group.EffectiveKiroCacheSourceMode(),
 				EstimatedInputTokens: inputTokens,
 			})
 		}()
 		if parseErr != nil {
 			return nil, parseErr
 		}
+		logKiroCacheUsage(account, group, mappedModel, group.EffectiveKiroCacheSourceMode(), cacheUsage, parseResult.Usage)
 		if requestID == "" {
 			requestID = buildKiroRequestID(resp)
 		}

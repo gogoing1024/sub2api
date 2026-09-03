@@ -158,6 +158,8 @@ type Group struct {
 	KiroCacheCreationEmulationRatio float64 `json:"kiro_cache_creation_emulation_ratio,omitempty"`
 	// Kiro 缓存读取模拟比例，范围 0-1（独立模式生效）
 	KiroCacheReadEmulationRatio float64 `json:"kiro_cache_read_emulation_ratio,omitempty"`
+	// Kiro 缓存用量来源：emulation_only=完全用模拟值，upstream_first=优先用上游真实缓存量、模拟兜底
+	KiroCacheSourceMode string `json:"kiro_cache_source_mode,omitempty"`
 	// Kiro 推理 endpoint：q=AWS Q (q.{region}.amazonaws.com), krs=Kiro Runtime Service (runtime.us-east-1.kiro.dev)
 	KiroEndpointMode string `json:"kiro_endpoint_mode,omitempty"`
 	// 是否启用利润控制：调度时仅允许账号计费倍率满足毛利率要求的账号进入候选池
@@ -280,7 +282,7 @@ func (*Group) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullFloat64)
 		case group.FieldID, group.FieldDefaultValidityDays, group.FieldFallbackGroupID, group.FieldFallbackGroupIDOnInvalidRequest, group.FieldSortOrder, group.FieldRpmLimit, group.FieldKiroStickySessionTTLSeconds:
 			values[i] = new(sql.NullInt64)
-		case group.FieldName, group.FieldDescription, group.FieldPeakStart, group.FieldPeakEnd, group.FieldStatus, group.FieldDuplicateOperationID, group.FieldPlatform, group.FieldSubscriptionType, group.FieldDefaultMappedModel, group.FieldMaxReasoningEffort, group.FieldMaxReasoningEffortOverLimit, group.FieldKiroCacheEmulationMode, group.FieldKiroEndpointMode:
+		case group.FieldName, group.FieldDescription, group.FieldPeakStart, group.FieldPeakEnd, group.FieldStatus, group.FieldDuplicateOperationID, group.FieldPlatform, group.FieldSubscriptionType, group.FieldDefaultMappedModel, group.FieldMaxReasoningEffort, group.FieldMaxReasoningEffortOverLimit, group.FieldKiroCacheEmulationMode, group.FieldKiroCacheSourceMode, group.FieldKiroEndpointMode:
 			values[i] = new(sql.NullString)
 		case group.FieldCreatedAt, group.FieldUpdatedAt, group.FieldDeletedAt:
 			values[i] = new(sql.NullTime)
@@ -752,6 +754,12 @@ func (_m *Group) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.KiroCacheReadEmulationRatio = value.Float64
 			}
+		case group.FieldKiroCacheSourceMode:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field kiro_cache_source_mode", values[i])
+			} else if value.Valid {
+				_m.KiroCacheSourceMode = value.String
+			}
 		case group.FieldKiroEndpointMode:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field kiro_endpoint_mode", values[i])
@@ -1096,6 +1104,9 @@ func (_m *Group) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("kiro_cache_read_emulation_ratio=")
 	builder.WriteString(fmt.Sprintf("%v", _m.KiroCacheReadEmulationRatio))
+	builder.WriteString(", ")
+	builder.WriteString("kiro_cache_source_mode=")
+	builder.WriteString(_m.KiroCacheSourceMode)
 	builder.WriteString(", ")
 	builder.WriteString("kiro_endpoint_mode=")
 	builder.WriteString(_m.KiroEndpointMode)

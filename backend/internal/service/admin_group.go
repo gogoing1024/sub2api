@@ -604,6 +604,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 			kiroCacheReadEmulationRatio = *input.KiroCacheReadEmulationRatio
 		}
 	}
+	kiroCacheSourceMode := KiroCacheSourceModeEmulationOnly
+	if input.KiroCacheSourceMode != nil {
+		kiroCacheSourceMode = normalizeKiroCacheSourceMode(*input.KiroCacheSourceMode)
+	}
 
 	// 如果指定了复制账号的源分组，先获取账号 ID 列表
 	var accountIDsToCopy []int64
@@ -702,6 +706,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		KiroCacheEmulationMode:          kiroCacheEmulationMode,
 		KiroCacheCreationEmulationRatio: kiroCacheCreationEmulationRatio,
 		KiroCacheReadEmulationRatio:     kiroCacheReadEmulationRatio,
+		KiroCacheSourceMode:             kiroCacheSourceMode,
 	}
 	if input.KiroStickySessionTTLSeconds != nil {
 		group.KiroStickySessionTTLSeconds = *input.KiroStickySessionTTLSeconds
@@ -1145,6 +1150,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		if input.KiroCacheReadEmulationRatio == nil {
 			group.KiroCacheReadEmulationRatio = group.KiroCacheEmulationRatio
 		}
+	}
+	if input.KiroCacheSourceMode != nil {
+		group.KiroCacheSourceMode = normalizeKiroCacheSourceMode(*input.KiroCacheSourceMode)
 	}
 	if input.KiroEndpointMode != nil {
 		group.KiroEndpointMode = *input.KiroEndpointMode

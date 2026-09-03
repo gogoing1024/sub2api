@@ -1028,6 +1028,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		KiroCacheEmulationMode:          g.KiroCacheEmulationMode,
 		KiroCacheCreationEmulationRatio: g.KiroCacheCreationEmulationRatio,
 		KiroCacheReadEmulationRatio:     g.KiroCacheReadEmulationRatio,
+		KiroCacheSourceMode:             g.KiroCacheSourceMode,
 		KiroEndpointMode:                g.KiroEndpointMode,
 		PeakRateEnabled:                 g.PeakRateEnabled,
 		PeakStart:                       g.PeakStart,

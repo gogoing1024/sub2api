@@ -81,6 +81,39 @@ var (
 	}
 )
 
+// Kiro 缓存用量来源模式。定义在本包是为了让 mergeKiroCacheEmulationUsage 不必反向
+// 依赖 service 包；service 侧的同名常量以这两个为唯一真源做别名。
+const (
+	// KiroCacheSourceModeEmulationOnly 完全采用本地模拟值，忽略上游缓存字段。
+	KiroCacheSourceModeEmulationOnly = "emulation_only"
+	// KiroCacheSourceModeUpstreamFirst 优先采用上游 metadataEvent.tokenUsage 的
+	// 真实缓存量；上游未下发该结构时退回本地模拟值兜底。
+	KiroCacheSourceModeUpstreamFirst = "upstream_first"
+)
+
+// UpstreamTokenUsage 保留 Kiro 上游 metadataEvent.tokenUsage 的原始快照。
+//
+// 与 Usage 的其它字段分开存放，原因有两个：
+//  1. mergeKiroCacheEmulationUsage 在 emulation_only 模式下会覆盖 Usage 的
+//     input/cache 字段，若不单独留存，上游原值合并后即丢失，日志便无法呈现
+//     「上游给的 / 模拟算的 / 最终采用的」三方对比。
+//  2. Seen 是 upstream_first 模式的闸门：只要上游下发了 tokenUsage 就整份采信
+//     （含全零），而不是看「缓存字段 > 0」。后者会在真实缓存未命中时退回模拟，
+//     让模拟器凭空编出一个命中值，与上游权威结论相悖。
+type UpstreamTokenUsage struct {
+	// Seen 表示上游确实下发了 tokenUsage 结构（不看各字段取值）。
+	Seen                  bool
+	UncachedInputTokens   int
+	OutputTokens          int
+	TotalTokens           int
+	CacheReadInputTokens  int
+	CacheWriteInputTokens int
+	// RawJSON 是 tokenUsage 的原样序列化，仅用于诊断日志：Kiro 的 smithy schema
+	// 里还有 contextUsagePercentage / normalizedTokenUsage 两个字段尚未接入计费，
+	// 保留原文便于观测其实际取值与语义。
+	RawJSON string
+}
+
 type Usage struct {
 	InputTokens                int
 	OutputTokens               int
@@ -90,6 +123,9 @@ type Usage struct {
 	CacheCreation5mInputTokens int
 	CacheCreation1hInputTokens int
 	KiroCredits                float64
+	// Upstream 是上游原始 tokenUsage 快照，不参与对外 usage 输出，
+	// 仅供模式判定与诊断日志使用。
+	Upstream UpstreamTokenUsage
 }
 
 type StreamResult struct {
@@ -105,16 +141,22 @@ type ParseResult struct {
 }
 
 type KiroRequestContext struct {
-	ToolNameMap              map[string]string
-	ThinkingEnabled          bool
-	CacheEmulationUsage      *Usage
+	ToolNameMap         map[string]string
+	ThinkingEnabled     bool
+	CacheEmulationUsage *Usage
+	// CacheSourceMode 决定上报的缓存用量来源，取值见 KiroCacheSourceMode* 常量。
+	// 空串按 emulation_only 处理（保持既有行为）。
+	CacheSourceMode          string
 	StructuredOutputToolName string
 	StructuredOutputUserHint string
 	StopSequences            []string
 	MaxOutputTokens          int
-	// EstimatedInputTokens 是调用方预估的输入 token 数，用于非流式路径兜底：
-	// Kiro 上游只上报 credits(meteringEvent),不发 tokenUsage,解析结果里的
-	// InputTokens 恒为 0。流式路径通过独立的 inputTokens 参数种入初值,非流式
+	// EstimatedInputTokens 是调用方预估的输入 token 数，用于非流式路径兜底。
+	//
+	// Kiro 上游在 metadataEvent.tokenUsage 里**会**下发 token 用量（其 smithy schema
+	// 含 uncachedInputTokens / outputTokens / totalTokens / cacheReadInputTokens /
+	// cacheWriteInputTokens 等字段），但并非每次响应都带；未下发时解析结果的
+	// InputTokens 为 0。流式路径通过独立的 inputTokens 参数种入初值,非流式
 	// 没有对应入口,不兜底会让响应体 usage.input_tokens 输出 0。
 	// 为 0 时不生效（保持原行为）。
 	EstimatedInputTokens int
@@ -538,9 +580,9 @@ func ParseNonStreamingEventStreamWithContext(body io.Reader, model string, reque
 		return nil, err
 	}
 	if requestCtx.CacheEmulationUsage != nil {
-		usage = mergeKiroCacheEmulationUsage(usage, requestCtx.CacheEmulationUsage)
+		usage = mergeKiroCacheEmulationUsage(usage, requestCtx.CacheEmulationUsage, requestCtx.CacheSourceMode)
 	}
-	// Kiro 不上报 tokenUsage,解析结果的 InputTokens 恒为 0；缓存模拟生效时会
+	// 上游未下发 tokenUsage 时解析结果的 InputTokens 为 0；缓存模拟生效时会
 	// 顺带填上（inputTokens 减去缓存部分），未生效时用调用方预估值兜底,
 	// 避免响应体 usage.input_tokens 输出 0。放在 merge 之后,让缓存模拟的
 	// 更精确取值优先。
@@ -600,7 +642,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		useMsgID := newClaudeMessageID()
 		startUsage := usage
 		if requestCtx.CacheEmulationUsage != nil {
-			startUsage = mergeKiroCacheEmulationUsage(startUsage, requestCtx.CacheEmulationUsage)
+			startUsage = mergeKiroCacheEmulationUsage(startUsage, requestCtx.CacheEmulationUsage, requestCtx.CacheSourceMode)
 		}
 		usageMap := map[string]any{
 			"input_tokens":  startUsage.InputTokens,
@@ -1309,7 +1351,7 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	}
 	if requestCtx.CacheEmulationUsage != nil {
-		usage = mergeKiroCacheEmulationUsage(usage, requestCtx.CacheEmulationUsage)
+		usage = mergeKiroCacheEmulationUsage(usage, requestCtx.CacheEmulationUsage, requestCtx.CacheSourceMode)
 	}
 	switch stopReason {
 	case "max_tokens", "stop_sequence":
@@ -4315,19 +4357,41 @@ func updateUsageFromEvent(usage *Usage, eventType string, event map[string]any) 
 		meta = event
 	}
 	if tokenUsage, ok := meta["tokenUsage"].(map[string]any); ok {
+		// 上游下发了 tokenUsage 即置 Seen，不看字段取值：全零也是权威结论
+		// （本次请求确实没有缓存命中），upstream_first 应当采信而非退回模拟。
+		usage.Upstream.Seen = true
+		if raw, err := json.Marshal(tokenUsage); err == nil {
+			usage.Upstream.RawJSON = string(raw)
+		}
 		if value, ok := toInt(tokenUsage["uncachedInputTokens"]); ok {
 			usage.InputTokens = value
+			usage.Upstream.UncachedInputTokens = value
 		}
 		if value, ok := toInt(tokenUsage["outputTokens"]); ok {
 			usage.OutputTokens = value
+			usage.Upstream.OutputTokens = value
 		}
 		if value, ok := toInt(tokenUsage["totalTokens"]); ok {
 			usage.TotalTokens = value
+			usage.Upstream.TotalTokens = value
 		}
 		if value, ok := toInt(tokenUsage["cacheReadInputTokens"]); ok {
 			usage.CacheReadInputTokens = value
+			usage.Upstream.CacheReadInputTokens = value
+		}
+		// cacheWriteInputTokens 是 Anthropic 口径的 cache_creation：此前漏解析，
+		// 导致上游真值永远无法填充 CacheCreationInputTokens，缓存创建量只能靠模拟。
+		if value, ok := toInt(tokenUsage["cacheWriteInputTokens"]); ok {
+			usage.CacheCreationInputTokens = value
+			usage.Upstream.CacheWriteInputTokens = value
 		}
 		updateKiroCreditsFromMap(usage, tokenUsage)
+		// 独立于 :1252 的事件级 trace：那里把 payload 截到 300 字符，
+		// metadataEvent 的 tokenUsage 可能正好被切掉，这里完整打印。
+		if kiroUpstreamTraceEnabled {
+			fmt.Fprintf(os.Stderr, "[KIRO_TRACE] tokenUsage eventType=%q raw=%s\n",
+				eventType, usage.Upstream.RawJSON)
+		}
 	}
 	updateKiroCreditsFromMap(usage, event)
 	updateKiroCreditsFromMap(usage, meta)
@@ -4474,11 +4538,24 @@ func toPositiveFiniteFloat(value any) (float64, bool) {
 	return out, true
 }
 
-func mergeKiroCacheEmulationUsage(base Usage, simulated *Usage) Usage {
+// mergeKiroCacheEmulationUsage 按 sourceMode 在「上游真值」与「本地模拟值」之间取舍。
+//
+// upstream_first：只要上游下发过 tokenUsage（base.Upstream.Seen）就整份采信，含全零
+// ——上游说本次零缓存也是权威结论，退回模拟会凭空编出命中值。上游未下发时落到模拟兜底。
+//
+// emulation_only：一律用模拟值，连上游的 uncachedInputTokens 也一并覆盖，这正是
+// 「完全采用模拟」的语义。
+//
+// 注意流式 message_start 处的调用：那时上游 metadataEvent 尚未到达，Seen 恒为 false，
+// 因此 upstream_first 下 message_start 也会先填模拟值，由结尾的 message_delta 用真值更正。
+// 这与 Anthropic 自身「先给临时 usage、结尾更正」的行为一致。
+//
+// base.Upstream 始终原样保留（不被 simulated 覆盖），供上层诊断日志做三方对比。
+func mergeKiroCacheEmulationUsage(base Usage, simulated *Usage, sourceMode string) Usage {
 	if simulated == nil {
 		return base
 	}
-	if base.CacheReadInputTokens > 0 || base.CacheCreationInputTokens > 0 || base.CacheCreation5mInputTokens > 0 || base.CacheCreation1hInputTokens > 0 {
+	if sourceMode == KiroCacheSourceModeUpstreamFirst && base.Upstream.Seen {
 		return base
 	}
 	base.InputTokens = simulated.InputTokens

@@ -365,6 +365,11 @@ func KiroCacheReadEmulationRatio(v float64) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldKiroCacheReadEmulationRatio, v))
 }
 
+// KiroCacheSourceMode applies equality check predicate on the "kiro_cache_source_mode" field. It's identical to KiroCacheSourceModeEQ.
+func KiroCacheSourceMode(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldKiroCacheSourceMode, v))
+}
+
 // KiroEndpointMode applies equality check predicate on the "kiro_endpoint_mode" field. It's identical to KiroEndpointModeEQ.
 func KiroEndpointMode(v string) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldKiroEndpointMode, v))
@@ -2843,6 +2848,71 @@ func KiroCacheReadEmulationRatioLT(v float64) predicate.Group {
 // KiroCacheReadEmulationRatioLTE applies the LTE predicate on the "kiro_cache_read_emulation_ratio" field.
 func KiroCacheReadEmulationRatioLTE(v float64) predicate.Group {
 	return predicate.Group(sql.FieldLTE(FieldKiroCacheReadEmulationRatio, v))
+}
+
+// KiroCacheSourceModeEQ applies the EQ predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeNEQ applies the NEQ predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeNEQ(v string) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeIn applies the In predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldKiroCacheSourceMode, vs...))
+}
+
+// KiroCacheSourceModeNotIn applies the NotIn predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeNotIn(vs ...string) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldKiroCacheSourceMode, vs...))
+}
+
+// KiroCacheSourceModeGT applies the GT predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeGT(v string) predicate.Group {
+	return predicate.Group(sql.FieldGT(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeGTE applies the GTE predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeGTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldGTE(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeLT applies the LT predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeLT(v string) predicate.Group {
+	return predicate.Group(sql.FieldLT(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeLTE applies the LTE predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeLTE(v string) predicate.Group {
+	return predicate.Group(sql.FieldLTE(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeContains applies the Contains predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeContains(v string) predicate.Group {
+	return predicate.Group(sql.FieldContains(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeHasPrefix applies the HasPrefix predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeHasPrefix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasPrefix(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeHasSuffix applies the HasSuffix predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeHasSuffix(v string) predicate.Group {
+	return predicate.Group(sql.FieldHasSuffix(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeEqualFold applies the EqualFold predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeEqualFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldEqualFold(FieldKiroCacheSourceMode, v))
+}
+
+// KiroCacheSourceModeContainsFold applies the ContainsFold predicate on the "kiro_cache_source_mode" field.
+func KiroCacheSourceModeContainsFold(v string) predicate.Group {
+	return predicate.Group(sql.FieldContainsFold(FieldKiroCacheSourceMode, v))
 }
 
 // KiroEndpointModeEQ applies the EQ predicate on the "kiro_endpoint_mode" field.

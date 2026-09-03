@@ -618,6 +618,7 @@ export interface Group {
   kiro_cache_emulation_mode: 'uniform' | 'independent'
   kiro_cache_creation_emulation_ratio: number
   kiro_cache_read_emulation_ratio: number
+  kiro_cache_source_mode: 'emulation_only' | 'upstream_first'
   kiro_endpoint_mode?: string
   created_at: string
   updated_at: string
@@ -846,6 +847,7 @@ export interface CreateGroupRequest {
   kiro_cache_emulation_mode?: 'uniform' | 'independent'
   kiro_cache_creation_emulation_ratio?: number
   kiro_cache_read_emulation_ratio?: number
+  kiro_cache_source_mode?: 'emulation_only' | 'upstream_first'
   kiro_endpoint_mode?: string
   // 从指定分组复制账号
   copy_accounts_from_group_ids?: number[]
@@ -919,6 +921,7 @@ export interface UpdateGroupRequest {
   kiro_cache_emulation_mode?: 'uniform' | 'independent'
   kiro_cache_creation_emulation_ratio?: number
   kiro_cache_read_emulation_ratio?: number
+  kiro_cache_source_mode?: 'emulation_only' | 'upstream_first'
   kiro_endpoint_mode?: string
   copy_accounts_from_group_ids?: number[]
 }

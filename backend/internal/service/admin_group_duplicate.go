@@ -165,6 +165,7 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		KiroCacheEmulationMode:          source.KiroCacheEmulationMode,
 		KiroCacheCreationEmulationRatio: source.KiroCacheCreationEmulationRatio,
 		KiroCacheReadEmulationRatio:     source.KiroCacheReadEmulationRatio,
+		KiroCacheSourceMode:             source.KiroCacheSourceMode,
 		KiroEndpointMode:                source.KiroEndpointMode,
 	}
 }

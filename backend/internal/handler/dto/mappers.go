@@ -173,6 +173,7 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 	out.KiroCacheEmulationMode = g.KiroCacheEmulationMode
 	out.KiroCacheCreationEmulationRatio = g.KiroCacheCreationEmulationRatio
 	out.KiroCacheReadEmulationRatio = g.KiroCacheReadEmulationRatio
+	out.KiroCacheSourceMode = g.KiroCacheSourceMode
 	if len(g.AccountGroups) > 0 {
 		out.AccountGroups = make([]AccountGroup, 0, len(g.AccountGroups))
 		for i := range g.AccountGroups {
@@ -239,6 +240,7 @@ func groupFromServiceBase(g *service.Group) Group {
 		KiroCacheEmulationMode:          g.EffectiveKiroCacheEmulationMode(),
 		KiroCacheCreationEmulationRatio: g.EffectiveKiroCacheCreationEmulationRatio(),
 		KiroCacheReadEmulationRatio:     g.EffectiveKiroCacheReadEmulationRatio(),
+		KiroCacheSourceMode:             g.EffectiveKiroCacheSourceMode(),
 		KiroEndpointMode:                g.EffectiveKiroEndpointMode(),
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,

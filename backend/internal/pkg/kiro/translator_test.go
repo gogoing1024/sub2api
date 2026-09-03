@@ -27,8 +27,12 @@ func TestBuildRuntimeUserAgentStable(t *testing.T) {
 	require.Equal(t, ua1, ua2)
 	require.Contains(t, ua1, "KiroIDE-")
 	require.Contains(t, amzUA, "KiroIDE-")
-	require.Contains(t, ua1, "KiroIDE-0.12.301")
-	require.Contains(t, ua1, "aws-sdk-js/1.0.34")
+	require.Contains(t, ua1, "KiroIDE-1.0.437")
+	// streamingSDKVersions 是多元素池，seed 决定命中哪一条；用 fingerprint 反查而
+	// 非硬编码字面量，避免每次扩池就要改测试。
+	fp := globalRuntimeFingerprints().Get(key, machineID)
+	require.Contains(t, ua1, "aws-sdk-js/"+fp.StreamingSDKVersion)
+	require.Contains(t, ua1, "api/codewhispererstreaming#"+fp.StreamingSDKVersion)
 	require.Contains(t, ua1, "md/nodejs#22.22.0")
 	require.Contains(t, ua1, machineID)
 	require.Contains(t, amzUA, machineID)

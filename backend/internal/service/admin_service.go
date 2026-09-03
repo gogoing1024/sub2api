@@ -292,6 +292,7 @@ type CreateGroupInput struct {
 	KiroCacheEmulationMode          *string
 	KiroCacheCreationEmulationRatio *float64
 	KiroCacheReadEmulationRatio     *float64
+	KiroCacheSourceMode             *string
 	KiroEndpointMode                *string
 	// 分组利润控制（五个 token 平台分组可启用；margin/buffer 为小数，nil 按 0 处理）
 	ProfitControlEnabled bool
@@ -380,6 +381,7 @@ type UpdateGroupInput struct {
 	KiroCacheEmulationMode          *string
 	KiroCacheCreationEmulationRatio *float64
 	KiroCacheReadEmulationRatio     *float64
+	KiroCacheSourceMode             *string
 	KiroEndpointMode                *string
 	// 分组利润控制（nil 表示不修改；margin/buffer 为小数）
 	ProfitControlEnabled *bool

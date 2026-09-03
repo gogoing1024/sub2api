@@ -33,3 +33,45 @@ describe("groups Kiro cache emulation modes", () => {
     );
   });
 });
+
+describe("groups Kiro cache source mode", () => {
+  it("exposes emulation_only and upstream_first controls for create and edit", () => {
+    expect(groupsViewSource).toContain(
+      ":aria-pressed=\"createForm.kiro_cache_source_mode === 'emulation_only'\"",
+    );
+    expect(groupsViewSource).toContain(
+      ":aria-pressed=\"createForm.kiro_cache_source_mode === 'upstream_first'\"",
+    );
+    expect(groupsViewSource).toContain(
+      ":aria-pressed=\"editForm.kiro_cache_source_mode === 'emulation_only'\"",
+    );
+    expect(groupsViewSource).toContain(
+      ":aria-pressed=\"editForm.kiro_cache_source_mode === 'upstream_first'\"",
+    );
+    expect(groupsViewSource).toContain("admin.groups.kiroCache.sourceModeHint");
+  });
+
+  it("defaults to emulation_only and backfills the edit form from the group", () => {
+    // 两处表单初值（create / edit）
+    expect(
+      groupsViewSource.match(
+        /kiro_cache_source_mode: "emulation_only" as "emulation_only" \| "upstream_first"/g,
+      ),
+    ).toHaveLength(2);
+    expect(groupsViewSource).toContain(
+      'createForm.kiro_cache_source_mode = "emulation_only"',
+    );
+    expect(groupsViewSource).toContain(
+      'editForm.kiro_cache_source_mode = group.kiro_cache_source_mode === "upstream_first"',
+    );
+  });
+
+  it("forces emulation_only for non-kiro platforms on create and update", () => {
+    expect(groupsViewSource).toContain(
+      'requestData.kiro_cache_source_mode = "emulation_only"',
+    );
+    expect(groupsViewSource).toContain(
+      'payload.kiro_cache_source_mode = "emulation_only"',
+    );
+  });
+});
