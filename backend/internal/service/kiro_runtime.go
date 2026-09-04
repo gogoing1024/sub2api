@@ -242,7 +242,6 @@ func (s *GatewayService) forwardKiroMessages(ctx context.Context, c *gin.Context
 
 	cacheUsage := s.buildKiroCacheEmulationUsage(ctx, account, parsed.Group, body, mappedModel, inputTokens)
 	requestCtx.CacheEmulationUsage = cacheUsage.toKiroUsage()
-	requestCtx.CacheSourceMode = parsed.Group.EffectiveKiroCacheSourceMode()
 	requestCtx.EstimatedInputTokens = inputTokens
 	parseResult, err := kiropkg.ParseNonStreamingEventStreamWithContext(resp.Body, originalModel, requestCtx)
 	if err != nil {
@@ -255,7 +254,6 @@ func (s *GatewayService) forwardKiroMessages(ctx context.Context, c *gin.Context
 		})
 		return nil, err
 	}
-	logKiroCacheUsage(account, parsed.Group, mappedModel, requestCtx.CacheSourceMode, cacheUsage, parseResult.Usage)
 
 	c.Header("Content-Type", "application/json")
 	requestID := buildKiroRequestID(resp)
@@ -332,11 +330,8 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 		plan = s.prepareKiroCacheEmulationUsage(ctx, account, group, anthropicBody, mappedModel, inputTokens)
 	}
 	// 请求已确认成功(2xx)，此时提交缓存前缀落盘才是安全的。
-	// 注意 commit 与来源模式无关：upstream_first 下也照常维护前缀链，
-	// 这样上游偶发不下发 tokenUsage 时兜底能立刻给出有意义的命中值。
 	plan.commit()
 	requestCtx.CacheEmulationUsage = plan.result().toKiroUsage()
-	requestCtx.CacheSourceMode = group.EffectiveKiroCacheSourceMode()
 
 	pr, pw := io.Pipe()
 	wrappedHeaders := resp.Header.Clone()
@@ -347,14 +342,11 @@ func (s *GatewayService) openKiroAnthropicStreamResponse(ctx context.Context, ac
 
 	go func() {
 		defer func() { _ = resp.Body.Close() }()
-		streamResult, streamErr := kiropkg.StreamEventStreamAsAnthropicWithContext(upstreamCtx, resp.Body, pw, requestModel, inputTokens, requestCtx)
+		_, streamErr := kiropkg.StreamEventStreamAsAnthropicWithContext(upstreamCtx, resp.Body, pw, requestModel, inputTokens, requestCtx)
 		if streamErr != nil {
 			_, _ = io.WriteString(pw, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"stream interrupted\"}}\n\n")
 			_ = pw.CloseWithError(streamErr)
 			return
-		}
-		if streamResult != nil {
-			logKiroCacheUsage(account, group, mappedModel, requestCtx.CacheSourceMode, plan.result(), streamResult.Usage)
 		}
 		_ = pw.Close()
 	}()

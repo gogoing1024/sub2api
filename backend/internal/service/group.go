@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/kiro"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
@@ -130,10 +129,6 @@ type Group struct {
 	KiroCacheEmulationMode          string
 	KiroCacheCreationEmulationRatio float64
 	KiroCacheReadEmulationRatio     float64
-	// KiroCacheSourceMode 决定上报的缓存用量来源（与上面的**比例**模式正交）：
-	// "emulation_only" = 完全采用本地模拟值；"upstream_first" = 优先采用上游
-	// metadataEvent.tokenUsage 的真实缓存量，上游未下发时用模拟兜底。
-	KiroCacheSourceMode string
 
 	// Kiro 推理 endpoint 模式（仅 platform=kiro 生效）。
 	// "q"   = AWS Q (q.{region}.amazonaws.com)，默认，与其它工具共用限流池
@@ -271,36 +266,6 @@ func normalizeKiroCacheEmulationMode(mode string) string {
 	}
 }
 
-// Kiro 缓存用量来源模式。与 KiroCacheEmulationMode（比例模式）正交：
-// 前者决定「用谁的数」，后者决定「模拟值按多少比例上报」。
-//
-// 取值以 pkg/kiro 的常量为唯一真源——合并逻辑在那一层，避免跨层重复枚举字符串。
-const (
-	// KiroCacheSourceModeEmulationOnly 完全采用本地模拟值，忽略上游缓存字段。
-	KiroCacheSourceModeEmulationOnly = kiro.KiroCacheSourceModeEmulationOnly
-	// KiroCacheSourceModeUpstreamFirst 优先采用上游 metadataEvent.tokenUsage 的
-	// 真实缓存量；上游未下发该结构时退回本地模拟值兜底。
-	KiroCacheSourceModeUpstreamFirst = kiro.KiroCacheSourceModeUpstreamFirst
-)
-
-// EffectiveKiroCacheSourceMode 返回当前 group 实际生效的缓存来源模式。
-// 非 kiro 平台、空值或未知字符串一律兜底为 emulation_only（保持既有行为）。
-func (g *Group) EffectiveKiroCacheSourceMode() string {
-	if g == nil || g.Platform != PlatformKiro {
-		return KiroCacheSourceModeEmulationOnly
-	}
-	return normalizeKiroCacheSourceMode(g.KiroCacheSourceMode)
-}
-
-func normalizeKiroCacheSourceMode(mode string) string {
-	switch mode {
-	case KiroCacheSourceModeUpstreamFirst:
-		return KiroCacheSourceModeUpstreamFirst
-	default:
-		return KiroCacheSourceModeEmulationOnly
-	}
-}
-
 func normalizeKiroCacheEmulationFields(g *Group) {
 	if g == nil {
 		return
@@ -313,7 +278,6 @@ func normalizeKiroCacheEmulationFields(g *Group) {
 		g.KiroCacheEmulationMode = KiroCacheEmulationModeUniform
 		g.KiroCacheCreationEmulationRatio = 0
 		g.KiroCacheReadEmulationRatio = 0
-		g.KiroCacheSourceMode = KiroCacheSourceModeEmulationOnly
 		return
 	}
 	g.KiroStickySessionTTLSeconds = normalizeKiroStickySessionTTLSeconds(g.KiroStickySessionTTLSeconds)
@@ -325,7 +289,6 @@ func normalizeKiroCacheEmulationFields(g *Group) {
 	}
 	g.KiroCacheCreationEmulationRatio = normalizeKiroCacheEmulationRatio(g.KiroCacheCreationEmulationRatio)
 	g.KiroCacheReadEmulationRatio = normalizeKiroCacheEmulationRatio(g.KiroCacheReadEmulationRatio)
-	g.KiroCacheSourceMode = normalizeKiroCacheSourceMode(g.KiroCacheSourceMode)
 }
 
 // Kiro 推理 endpoint 模式取值。

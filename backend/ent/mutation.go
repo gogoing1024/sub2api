@@ -22291,7 +22291,6 @@ type GroupMutation struct {
 	addkiro_cache_creation_emulation_ratio  *float64
 	kiro_cache_read_emulation_ratio         *float64
 	addkiro_cache_read_emulation_ratio      *float64
-	kiro_cache_source_mode                  *string
 	kiro_endpoint_mode                      *string
 	profit_control_enabled                  *bool
 	profit_min_margin                       *float64
@@ -25832,42 +25831,6 @@ func (m *GroupMutation) ResetKiroCacheReadEmulationRatio() {
 	m.addkiro_cache_read_emulation_ratio = nil
 }
 
-// SetKiroCacheSourceMode sets the "kiro_cache_source_mode" field.
-func (m *GroupMutation) SetKiroCacheSourceMode(s string) {
-	m.kiro_cache_source_mode = &s
-}
-
-// KiroCacheSourceMode returns the value of the "kiro_cache_source_mode" field in the mutation.
-func (m *GroupMutation) KiroCacheSourceMode() (r string, exists bool) {
-	v := m.kiro_cache_source_mode
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldKiroCacheSourceMode returns the old "kiro_cache_source_mode" field's value of the Group entity.
-// If the Group object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *GroupMutation) OldKiroCacheSourceMode(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldKiroCacheSourceMode is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldKiroCacheSourceMode requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldKiroCacheSourceMode: %w", err)
-	}
-	return oldValue.KiroCacheSourceMode, nil
-}
-
-// ResetKiroCacheSourceMode resets all changes to the "kiro_cache_source_mode" field.
-func (m *GroupMutation) ResetKiroCacheSourceMode() {
-	m.kiro_cache_source_mode = nil
-}
-
 // SetKiroEndpointMode sets the "kiro_endpoint_mode" field.
 func (m *GroupMutation) SetKiroEndpointMode(s string) {
 	m.kiro_endpoint_mode = &s
@@ -26410,7 +26373,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 74)
+	fields := make([]string, 0, 73)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -26618,9 +26581,6 @@ func (m *GroupMutation) Fields() []string {
 	if m.kiro_cache_read_emulation_ratio != nil {
 		fields = append(fields, group.FieldKiroCacheReadEmulationRatio)
 	}
-	if m.kiro_cache_source_mode != nil {
-		fields = append(fields, group.FieldKiroCacheSourceMode)
-	}
 	if m.kiro_endpoint_mode != nil {
 		fields = append(fields, group.FieldKiroEndpointMode)
 	}
@@ -26779,8 +26739,6 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.KiroCacheCreationEmulationRatio()
 	case group.FieldKiroCacheReadEmulationRatio:
 		return m.KiroCacheReadEmulationRatio()
-	case group.FieldKiroCacheSourceMode:
-		return m.KiroCacheSourceMode()
 	case group.FieldKiroEndpointMode:
 		return m.KiroEndpointMode()
 	case group.FieldProfitControlEnabled:
@@ -26936,8 +26894,6 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldKiroCacheCreationEmulationRatio(ctx)
 	case group.FieldKiroCacheReadEmulationRatio:
 		return m.OldKiroCacheReadEmulationRatio(ctx)
-	case group.FieldKiroCacheSourceMode:
-		return m.OldKiroCacheSourceMode(ctx)
 	case group.FieldKiroEndpointMode:
 		return m.OldKiroEndpointMode(ctx)
 	case group.FieldProfitControlEnabled:
@@ -27437,13 +27393,6 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetKiroCacheReadEmulationRatio(v)
-		return nil
-	case group.FieldKiroCacheSourceMode:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetKiroCacheSourceMode(v)
 		return nil
 	case group.FieldKiroEndpointMode:
 		v, ok := value.(string)
@@ -28238,9 +28187,6 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldKiroCacheReadEmulationRatio:
 		m.ResetKiroCacheReadEmulationRatio()
-		return nil
-	case group.FieldKiroCacheSourceMode:
-		m.ResetKiroCacheSourceMode()
 		return nil
 	case group.FieldKiroEndpointMode:
 		m.ResetKiroEndpointMode()

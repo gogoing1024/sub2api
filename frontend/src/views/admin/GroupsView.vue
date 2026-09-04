@@ -837,34 +837,6 @@
               />
               <p class="input-hint sm:col-span-2">{{ t("admin.groups.kiroCache.independentRatioHint") }}</p>
             </div>
-            <div class="mt-3">
-              <label class="input-label">{{ t("admin.groups.kiroCache.sourceMode") }}</label>
-              <div class="grid grid-cols-2 gap-1 rounded border border-gray-200 bg-gray-50 p-1 dark:border-dark-600 dark:bg-dark-800">
-                <button
-                  type="button"
-                  :aria-pressed="createForm.kiro_cache_source_mode === 'emulation_only'"
-                  class="h-9 rounded px-3 text-sm font-medium transition-colors"
-                  :class="createForm.kiro_cache_source_mode === 'emulation_only'
-                    ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-700 dark:text-primary-400'
-                    : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-dark-100'"
-                  @click="createForm.kiro_cache_source_mode = 'emulation_only'"
-                >
-                  {{ t("admin.groups.kiroCache.sourceModeEmulationOnly") }}
-                </button>
-                <button
-                  type="button"
-                  :aria-pressed="createForm.kiro_cache_source_mode === 'upstream_first'"
-                  class="h-9 rounded px-3 text-sm font-medium transition-colors"
-                  :class="createForm.kiro_cache_source_mode === 'upstream_first'
-                    ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-700 dark:text-primary-400'
-                    : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-dark-100'"
-                  @click="createForm.kiro_cache_source_mode = 'upstream_first'"
-                >
-                  {{ t("admin.groups.kiroCache.sourceModeUpstreamFirst") }}
-                </button>
-              </div>
-              <p class="input-hint">{{ t("admin.groups.kiroCache.sourceModeHint") }}</p>
-            </div>
           </div>
           <div class="mt-3">
             <label class="input-label">{{ t("admin.groups.kiroCache.endpointMode") }}</label>
@@ -2755,34 +2727,6 @@
                 :label="t('admin.groups.kiroCache.readRatio')"
               />
               <p class="input-hint sm:col-span-2">{{ t("admin.groups.kiroCache.independentRatioHint") }}</p>
-            </div>
-            <div class="mt-3">
-              <label class="input-label">{{ t("admin.groups.kiroCache.sourceMode") }}</label>
-              <div class="grid grid-cols-2 gap-1 rounded border border-gray-200 bg-gray-50 p-1 dark:border-dark-600 dark:bg-dark-800">
-                <button
-                  type="button"
-                  :aria-pressed="editForm.kiro_cache_source_mode === 'emulation_only'"
-                  class="h-9 rounded px-3 text-sm font-medium transition-colors"
-                  :class="editForm.kiro_cache_source_mode === 'emulation_only'
-                    ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-700 dark:text-primary-400'
-                    : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-dark-100'"
-                  @click="editForm.kiro_cache_source_mode = 'emulation_only'"
-                >
-                  {{ t("admin.groups.kiroCache.sourceModeEmulationOnly") }}
-                </button>
-                <button
-                  type="button"
-                  :aria-pressed="editForm.kiro_cache_source_mode === 'upstream_first'"
-                  class="h-9 rounded px-3 text-sm font-medium transition-colors"
-                  :class="editForm.kiro_cache_source_mode === 'upstream_first'
-                    ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-700 dark:text-primary-400'
-                    : 'text-gray-600 hover:text-gray-900 dark:text-dark-300 dark:hover:text-dark-100'"
-                  @click="editForm.kiro_cache_source_mode = 'upstream_first'"
-                >
-                  {{ t("admin.groups.kiroCache.sourceModeUpstreamFirst") }}
-                </button>
-              </div>
-              <p class="input-hint">{{ t("admin.groups.kiroCache.sourceModeHint") }}</p>
             </div>
           </div>
           <div class="mt-3">
@@ -5509,7 +5453,6 @@ const createForm = reactive({
   kiro_sticky_session_ttl_seconds: 3600,
   kiro_cache_emulation_ratio: 1,
   kiro_cache_emulation_mode: "uniform" as "uniform" | "independent",
-  kiro_cache_source_mode: "emulation_only" as "emulation_only" | "upstream_first",
   kiro_cache_creation_emulation_ratio: 1,
   kiro_cache_read_emulation_ratio: 1,
   kiro_endpoint_mode: "q" as "q" | "krs" | "auto",
@@ -5884,7 +5827,6 @@ const editForm = reactive({
   kiro_sticky_session_ttl_seconds: 3600,
   kiro_cache_emulation_ratio: 1,
   kiro_cache_emulation_mode: "uniform" as "uniform" | "independent",
-  kiro_cache_source_mode: "emulation_only" as "emulation_only" | "upstream_first",
   kiro_cache_creation_emulation_ratio: 1,
   kiro_cache_read_emulation_ratio: 1,
   kiro_endpoint_mode: "q" as "q" | "krs" | "auto",
@@ -6337,7 +6279,6 @@ const closeCreateModal = () => {
   createForm.kiro_sticky_session_ttl_seconds = 3600;
   createForm.kiro_cache_emulation_ratio = 1;
   createForm.kiro_cache_emulation_mode = "uniform";
-  createForm.kiro_cache_source_mode = "emulation_only";
   createForm.kiro_cache_creation_emulation_ratio = 1;
   createForm.kiro_cache_read_emulation_ratio = 1;
   createForm.kiro_endpoint_mode = "q";
@@ -6512,7 +6453,6 @@ const handleCreateGroup = async () => {
       requestData.kiro_cache_emulation_mode = "uniform";
       requestData.kiro_cache_creation_emulation_ratio = 0;
       requestData.kiro_cache_read_emulation_ratio = 0;
-      requestData.kiro_cache_source_mode = "emulation_only";
       requestData.kiro_endpoint_mode = "q";
     } else {
       requestData.kiro_sticky_session_ttl_seconds = normalizeKiroStickySessionTTL(
@@ -6680,9 +6620,6 @@ editForm.max_reasoning_effort = normalizeReasoningEffortForPlatform(
     group.kiro_cache_creation_emulation_ratio ?? group.kiro_cache_emulation_ratio ?? 1;
   editForm.kiro_cache_read_emulation_ratio =
     group.kiro_cache_read_emulation_ratio ?? group.kiro_cache_emulation_ratio ?? 1;
-  editForm.kiro_cache_source_mode = group.kiro_cache_source_mode === "upstream_first"
-    ? "upstream_first"
-    : "emulation_only";
   const mode = group.kiro_endpoint_mode;
   editForm.kiro_endpoint_mode = (mode === "krs" || mode === "auto") ? mode : "q";
   resetModelsListState(editModelsListState, group.models_list_config);
@@ -6834,7 +6771,6 @@ const handleUpdateGroup = async () => {
       payload.kiro_cache_emulation_mode = "uniform";
       payload.kiro_cache_creation_emulation_ratio = 0;
       payload.kiro_cache_read_emulation_ratio = 0;
-      payload.kiro_cache_source_mode = "emulation_only";
       payload.kiro_endpoint_mode = "q";
     } else {
       payload.kiro_sticky_session_ttl_seconds = normalizeKiroStickySessionTTL(

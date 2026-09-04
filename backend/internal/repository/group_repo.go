@@ -122,7 +122,6 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetKiroCacheEmulationMode(groupIn.KiroCacheEmulationMode).
 		SetKiroCacheCreationEmulationRatio(groupIn.KiroCacheCreationEmulationRatio).
 		SetKiroCacheReadEmulationRatio(groupIn.KiroCacheReadEmulationRatio).
-		SetKiroCacheSourceMode(groupIn.KiroCacheSourceMode).
 		SetKiroEndpointMode(groupIn.KiroEndpointMode).
 		SetPeakRateEnabled(groupIn.PeakRateEnabled).
 		SetPeakStart(groupIn.PeakStart).
@@ -311,7 +310,6 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetKiroCacheEmulationMode(groupIn.KiroCacheEmulationMode).
 		SetKiroCacheCreationEmulationRatio(groupIn.KiroCacheCreationEmulationRatio).
 		SetKiroCacheReadEmulationRatio(groupIn.KiroCacheReadEmulationRatio).
-		SetKiroCacheSourceMode(groupIn.KiroCacheSourceMode).
 		SetKiroEndpointMode(groupIn.KiroEndpointMode).
 		SetPeakRateEnabled(groupIn.PeakRateEnabled).
 		SetPeakStart(groupIn.PeakStart).

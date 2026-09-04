@@ -154,8 +154,6 @@ const (
 	FieldKiroCacheCreationEmulationRatio = "kiro_cache_creation_emulation_ratio"
 	// FieldKiroCacheReadEmulationRatio holds the string denoting the kiro_cache_read_emulation_ratio field in the database.
 	FieldKiroCacheReadEmulationRatio = "kiro_cache_read_emulation_ratio"
-	// FieldKiroCacheSourceMode holds the string denoting the kiro_cache_source_mode field in the database.
-	FieldKiroCacheSourceMode = "kiro_cache_source_mode"
 	// FieldKiroEndpointMode holds the string denoting the kiro_endpoint_mode field in the database.
 	FieldKiroEndpointMode = "kiro_endpoint_mode"
 	// FieldProfitControlEnabled holds the string denoting the profit_control_enabled field in the database.
@@ -308,7 +306,6 @@ var Columns = []string{
 	FieldKiroCacheEmulationMode,
 	FieldKiroCacheCreationEmulationRatio,
 	FieldKiroCacheReadEmulationRatio,
-	FieldKiroCacheSourceMode,
 	FieldKiroEndpointMode,
 	FieldProfitControlEnabled,
 	FieldProfitMinMargin,
@@ -466,10 +463,6 @@ var (
 	DefaultKiroCacheCreationEmulationRatio float64
 	// DefaultKiroCacheReadEmulationRatio holds the default value on creation for the "kiro_cache_read_emulation_ratio" field.
 	DefaultKiroCacheReadEmulationRatio float64
-	// DefaultKiroCacheSourceMode holds the default value on creation for the "kiro_cache_source_mode" field.
-	DefaultKiroCacheSourceMode string
-	// KiroCacheSourceModeValidator is a validator for the "kiro_cache_source_mode" field. It is called by the builders before save.
-	KiroCacheSourceModeValidator func(string) error
 	// DefaultKiroEndpointMode holds the default value on creation for the "kiro_endpoint_mode" field.
 	DefaultKiroEndpointMode string
 	// KiroEndpointModeValidator is a validator for the "kiro_endpoint_mode" field. It is called by the builders before save.
@@ -798,11 +791,6 @@ func ByKiroCacheCreationEmulationRatio(opts ...sql.OrderTermOption) OrderOption 
 // ByKiroCacheReadEmulationRatio orders the results by the kiro_cache_read_emulation_ratio field.
 func ByKiroCacheReadEmulationRatio(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldKiroCacheReadEmulationRatio, opts...).ToFunc()
-}
-
-// ByKiroCacheSourceMode orders the results by the kiro_cache_source_mode field.
-func ByKiroCacheSourceMode(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldKiroCacheSourceMode, opts...).ToFunc()
 }
 
 // ByKiroEndpointMode orders the results by the kiro_endpoint_mode field.

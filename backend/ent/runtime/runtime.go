@@ -1238,28 +1238,22 @@ func init() {
 	groupDescKiroCacheReadEmulationRatio := groupFields[65].Descriptor()
 	// group.DefaultKiroCacheReadEmulationRatio holds the default value on creation for the kiro_cache_read_emulation_ratio field.
 	group.DefaultKiroCacheReadEmulationRatio = groupDescKiroCacheReadEmulationRatio.Default.(float64)
-	// groupDescKiroCacheSourceMode is the schema descriptor for kiro_cache_source_mode field.
-	groupDescKiroCacheSourceMode := groupFields[66].Descriptor()
-	// group.DefaultKiroCacheSourceMode holds the default value on creation for the kiro_cache_source_mode field.
-	group.DefaultKiroCacheSourceMode = groupDescKiroCacheSourceMode.Default.(string)
-	// group.KiroCacheSourceModeValidator is a validator for the "kiro_cache_source_mode" field. It is called by the builders before save.
-	group.KiroCacheSourceModeValidator = groupDescKiroCacheSourceMode.Validators[0].(func(string) error)
 	// groupDescKiroEndpointMode is the schema descriptor for kiro_endpoint_mode field.
-	groupDescKiroEndpointMode := groupFields[67].Descriptor()
+	groupDescKiroEndpointMode := groupFields[66].Descriptor()
 	// group.DefaultKiroEndpointMode holds the default value on creation for the kiro_endpoint_mode field.
 	group.DefaultKiroEndpointMode = groupDescKiroEndpointMode.Default.(string)
 	// group.KiroEndpointModeValidator is a validator for the "kiro_endpoint_mode" field. It is called by the builders before save.
 	group.KiroEndpointModeValidator = groupDescKiroEndpointMode.Validators[0].(func(string) error)
 	// groupDescProfitControlEnabled is the schema descriptor for profit_control_enabled field.
-	groupDescProfitControlEnabled := groupFields[68].Descriptor()
+	groupDescProfitControlEnabled := groupFields[67].Descriptor()
 	// group.DefaultProfitControlEnabled holds the default value on creation for the profit_control_enabled field.
 	group.DefaultProfitControlEnabled = groupDescProfitControlEnabled.Default.(bool)
 	// groupDescProfitMinMargin is the schema descriptor for profit_min_margin field.
-	groupDescProfitMinMargin := groupFields[69].Descriptor()
+	groupDescProfitMinMargin := groupFields[68].Descriptor()
 	// group.DefaultProfitMinMargin holds the default value on creation for the profit_min_margin field.
 	group.DefaultProfitMinMargin = groupDescProfitMinMargin.Default.(float64)
 	// groupDescProfitSafetyBuffer is the schema descriptor for profit_safety_buffer field.
-	groupDescProfitSafetyBuffer := groupFields[70].Descriptor()
+	groupDescProfitSafetyBuffer := groupFields[69].Descriptor()
 	// group.DefaultProfitSafetyBuffer holds the default value on creation for the profit_safety_buffer field.
 	group.DefaultProfitSafetyBuffer = groupDescProfitSafetyBuffer.Default.(float64)
 	idempotencyrecordMixin := schema.IdempotencyRecord{}.Mixin()

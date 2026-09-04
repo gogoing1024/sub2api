@@ -312,10 +312,6 @@ func (Group) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(5,4)"}).
 			Default(1.0).
 			Comment("Kiro 缓存读取模拟比例，范围 0-1（独立模式生效）"),
-		field.String("kiro_cache_source_mode").
-			MaxLen(24).
-			Default("emulation_only").
-			Comment("Kiro 缓存用量来源：emulation_only=完全用模拟值，upstream_first=优先用上游真实缓存量、模拟兜底"),
 		field.String("kiro_endpoint_mode").
 			MaxLen(8).
 			Default("q").

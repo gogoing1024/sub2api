@@ -948,20 +948,6 @@ func (_c *GroupCreate) SetNillableKiroCacheReadEmulationRatio(v *float64) *Group
 	return _c
 }
 
-// SetKiroCacheSourceMode sets the "kiro_cache_source_mode" field.
-func (_c *GroupCreate) SetKiroCacheSourceMode(v string) *GroupCreate {
-	_c.mutation.SetKiroCacheSourceMode(v)
-	return _c
-}
-
-// SetNillableKiroCacheSourceMode sets the "kiro_cache_source_mode" field if the given value is not nil.
-func (_c *GroupCreate) SetNillableKiroCacheSourceMode(v *string) *GroupCreate {
-	if v != nil {
-		_c.SetKiroCacheSourceMode(*v)
-	}
-	return _c
-}
-
 // SetKiroEndpointMode sets the "kiro_endpoint_mode" field.
 func (_c *GroupCreate) SetKiroEndpointMode(v string) *GroupCreate {
 	_c.mutation.SetKiroEndpointMode(v)
@@ -1335,10 +1321,6 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultKiroCacheReadEmulationRatio
 		_c.mutation.SetKiroCacheReadEmulationRatio(v)
 	}
-	if _, ok := _c.mutation.KiroCacheSourceMode(); !ok {
-		v := group.DefaultKiroCacheSourceMode
-		_c.mutation.SetKiroCacheSourceMode(v)
-	}
 	if _, ok := _c.mutation.KiroEndpointMode(); !ok {
 		v := group.DefaultKiroEndpointMode
 		_c.mutation.SetKiroEndpointMode(v)
@@ -1575,14 +1557,6 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.KiroCacheReadEmulationRatio(); !ok {
 		return &ValidationError{Name: "kiro_cache_read_emulation_ratio", err: errors.New(`ent: missing required field "Group.kiro_cache_read_emulation_ratio"`)}
-	}
-	if _, ok := _c.mutation.KiroCacheSourceMode(); !ok {
-		return &ValidationError{Name: "kiro_cache_source_mode", err: errors.New(`ent: missing required field "Group.kiro_cache_source_mode"`)}
-	}
-	if v, ok := _c.mutation.KiroCacheSourceMode(); ok {
-		if err := group.KiroCacheSourceModeValidator(v); err != nil {
-			return &ValidationError{Name: "kiro_cache_source_mode", err: fmt.Errorf(`ent: validator failed for field "Group.kiro_cache_source_mode": %w`, err)}
-		}
 	}
 	if _, ok := _c.mutation.KiroEndpointMode(); !ok {
 		return &ValidationError{Name: "kiro_endpoint_mode", err: errors.New(`ent: missing required field "Group.kiro_endpoint_mode"`)}
@@ -1903,10 +1877,6 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.KiroCacheReadEmulationRatio(); ok {
 		_spec.SetField(group.FieldKiroCacheReadEmulationRatio, field.TypeFloat64, value)
 		_node.KiroCacheReadEmulationRatio = value
-	}
-	if value, ok := _c.mutation.KiroCacheSourceMode(); ok {
-		_spec.SetField(group.FieldKiroCacheSourceMode, field.TypeString, value)
-		_node.KiroCacheSourceMode = value
 	}
 	if value, ok := _c.mutation.KiroEndpointMode(); ok {
 		_spec.SetField(group.FieldKiroEndpointMode, field.TypeString, value)
@@ -3181,18 +3151,6 @@ func (u *GroupUpsert) UpdateKiroCacheReadEmulationRatio() *GroupUpsert {
 // AddKiroCacheReadEmulationRatio adds v to the "kiro_cache_read_emulation_ratio" field.
 func (u *GroupUpsert) AddKiroCacheReadEmulationRatio(v float64) *GroupUpsert {
 	u.Add(group.FieldKiroCacheReadEmulationRatio, v)
-	return u
-}
-
-// SetKiroCacheSourceMode sets the "kiro_cache_source_mode" field.
-func (u *GroupUpsert) SetKiroCacheSourceMode(v string) *GroupUpsert {
-	u.Set(group.FieldKiroCacheSourceMode, v)
-	return u
-}
-
-// UpdateKiroCacheSourceMode sets the "kiro_cache_source_mode" field to the value that was provided on create.
-func (u *GroupUpsert) UpdateKiroCacheSourceMode() *GroupUpsert {
-	u.SetExcluded(group.FieldKiroCacheSourceMode)
 	return u
 }
 
@@ -4589,20 +4547,6 @@ func (u *GroupUpsertOne) AddKiroCacheReadEmulationRatio(v float64) *GroupUpsertO
 func (u *GroupUpsertOne) UpdateKiroCacheReadEmulationRatio() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateKiroCacheReadEmulationRatio()
-	})
-}
-
-// SetKiroCacheSourceMode sets the "kiro_cache_source_mode" field.
-func (u *GroupUpsertOne) SetKiroCacheSourceMode(v string) *GroupUpsertOne {
-	return u.Update(func(s *GroupUpsert) {
-		s.SetKiroCacheSourceMode(v)
-	})
-}
-
-// UpdateKiroCacheSourceMode sets the "kiro_cache_source_mode" field to the value that was provided on create.
-func (u *GroupUpsertOne) UpdateKiroCacheSourceMode() *GroupUpsertOne {
-	return u.Update(func(s *GroupUpsert) {
-		s.UpdateKiroCacheSourceMode()
 	})
 }
 
@@ -6175,20 +6119,6 @@ func (u *GroupUpsertBulk) AddKiroCacheReadEmulationRatio(v float64) *GroupUpsert
 func (u *GroupUpsertBulk) UpdateKiroCacheReadEmulationRatio() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateKiroCacheReadEmulationRatio()
-	})
-}
-
-// SetKiroCacheSourceMode sets the "kiro_cache_source_mode" field.
-func (u *GroupUpsertBulk) SetKiroCacheSourceMode(v string) *GroupUpsertBulk {
-	return u.Update(func(s *GroupUpsert) {
-		s.SetKiroCacheSourceMode(v)
-	})
-}
-
-// UpdateKiroCacheSourceMode sets the "kiro_cache_source_mode" field to the value that was provided on create.
-func (u *GroupUpsertBulk) UpdateKiroCacheSourceMode() *GroupUpsertBulk {
-	return u.Update(func(s *GroupUpsert) {
-		s.UpdateKiroCacheSourceMode()
 	})
 }
 

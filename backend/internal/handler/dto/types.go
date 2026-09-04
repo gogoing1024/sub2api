@@ -166,7 +166,6 @@ type Group struct {
 	KiroCacheEmulationMode          string  `json:"kiro_cache_emulation_mode"`
 	KiroCacheCreationEmulationRatio float64 `json:"kiro_cache_creation_emulation_ratio"`
 	KiroCacheReadEmulationRatio     float64 `json:"kiro_cache_read_emulation_ratio"`
-	KiroCacheSourceMode             string  `json:"kiro_cache_source_mode"`
 	KiroEndpointMode                string  `json:"kiro_endpoint_mode"`
 
 	CreatedAt time.Time `json:"created_at"`
