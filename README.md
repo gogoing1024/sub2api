@@ -27,52 +27,6 @@ Please read the following carefully before using this project:
 - **📖 Disclaimer**: This project is provided for technical learning and research purposes only. The authors assume no liability for account bans, service interruptions, data loss, or any other direct or indirect damages resulting from the use of this project.
 - **🚫 No Commercial Authorization**: The developers of this project have never authorized any individual or organization to conduct any form of commercial operation based on this project. Any commercial activity conducted in the name of or based on this project is unrelated to this project and its developers, and all resulting disputes, losses, and legal liabilities shall be borne solely by the party conducting such activity.
 
-## Community
-
-- **Telegram**: [Join the group](https://t.me/+Pv3T6ncordwxOTZl)
-- **WeChat**: scan the QR code below
-
-<img src="https://github.com/user-attachments/assets/8f2542ce-eda7-49d4-9520-e5f46d9d4bda" alt="WeChat group QR code" width="280">
-
-## Overview
-
-Sub2API is an AI API gateway platform designed to distribute and manage API quotas from AI product subscriptions. Users can access upstream AI services through platform-generated API Keys, while the platform handles authentication, billing, load balancing, and request forwarding.
-
-## Kiro Support Fork
-
-The official upstream project currently has limited maintenance focus on the Kiro channel, so this repository is maintained as a long-term Kiro-support fork that keeps stable merges from the official branch.
-
-Additional Kiro-focused features in this fork:
-
-- Kiro channel support, including OAuth / AWS Builder ID / token import and API-key-compatible upstream access.
-- Anthropic Prompt Cache usage emulation for Kiro traffic.
-- Per-group Kiro cache emulation controls, including an adjustable emulation ratio.
-
-## Kiro Screenshots
-
-<p align="center">
-  <img src="assets/screenshots/kiro-add-account.png" alt="Add Kiro account" width="58%">
-  <img src="assets/screenshots/kiro-cache-emulation.png" alt="Kiro cache emulation group settings" width="35%">
-</p>
-
-<p align="center">
-  <img src="assets/screenshots/kiro-account-management.png" alt="Kiro account management" width="100%">
-</p>
-
-## Features
-
-- **Multi-Account Management** - Support multiple upstream account types (OAuth, API Key)
-- **API Key Distribution** - Generate and manage API Keys for users
-- **Precise Billing** - Token-level usage tracking and cost calculation
-- **Smart Scheduling** - Intelligent account selection with sticky sessions
-- **Concurrency Control** - Per-user and per-account concurrency limits
-- **Rate Limiting** - Configurable request and token rate limits
-- **Kiro Channel Support** - Long-term Kiro support fork with stable upstream merges
-- **Kiro Cache Emulation** - Simulate Anthropic Prompt Cache usage for Kiro groups with adjustable per-group emulation ratio
-- **Built-in Payment System** - Supports EasyPay, Alipay, WeChat Pay, and Stripe for user self-service top-up, no separate payment service needed ([Configuration Guide](docs/PAYMENT.md))
-- **Admin Dashboard** - Web interface for monitoring and management
-- **External System Integration** - Embed external systems (e.g. ticketing) via iframe to extend the admin dashboard
-
 ## ❤️ Sponsors
 
 > [Want to appear here?](mailto:support@sub2api.org)
@@ -143,34 +97,6 @@ Additional Kiro-focused features in this fork:
 </tr>
 
 <tr>
-<td width="180"><a href="https://apikl.ai"><img src="assets/partners/logos/apikl.png" alt="apikl" width="150"></a></td>
-<td>Thanks to Apikl for sponsoring this project! Built on Sub2API, the platform provides developers with relay services for Codex / Claude series models, focusing on long-term stability, high-speed direct connections, and excellent cost-effectiveness. It offers pay-as-you-go balance billing, enterprise-grade official invoices, and one-on-one dedicated support. <a href="https://apikl.ai">Register now</a> for a 1:1 top-up bonus — double your balance!
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://tokeneum.ai"><img src="assets/partners/logos/tokeneum.png" alt="tokeneum" width="150"></a></td>
-<td>Thanks to TokenEum for sponsoring this project! <a href="https://tokeneum.ai">TokenEum</a> is a comprehensive AI model aggregation platform and intelligent agent development company. It brings together top-tier international models — including Claude, Gemini, and OpenAI — alongside leading open-source models such as GLM, Qwen, and Kimi, offering a wide range of options across different quality and price tiers to suit every need. TokenEum also provides access to cutting-edge video generation models like Seedance2.0 and Happy Horse. Committed to transparency and honest business practices, TokenEum ensures all model information is accurate and reliable. Visit <a href="https://tokeneum.ai">tokeneum.ai</a> to get started.
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://666api.work/sub2api"><img src="assets/partners/logos/666api.jpg" alt="666api" width="150"></a></td>
-<td>Thanks to 666api for sponsoring this project! <a href="https://666api.work/sub2api">666api</a> is an all-in-one platform offering:<br>
-⚡ API Relay — Pay-as-you-go access to global models sourced 100% from official providers, up to 75% off official pricing<br>
-&nbsp;&nbsp;&nbsp;&nbsp;Exclusive: Zhipu GLM 50% off · DeepSeek V4-pro 50% off · Seedance 2.0 8% off (whitelisted) · HappyHorse Overseas 30% off (whitelisted)<br>
-🔑 GPT Subscription Accounts (same-origin IP included) · Global Residential IP <br>
-💰 Invoices supported
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://sui-xiang.com/"><img src="assets/partners/logos/sui-xiang.jpg" alt="sui-xiang" width="150"></a></td>
-<td>Thanks to Suixiang AI Gateway for sponsoring this project! <a href="https://sui-xiang.com/">Suixiang AI Gateway</a> is a reliable and efficient API relay service provider offering relay services for Claude, Codex, Gemini, and more. A privacy-focused relay — no data reselling, no model dilution; privacy, transparency, and lightning-fast after-sales support. New accounts get ¥0.5 in trial credit daily by signing in; top-ups are 1:1, no subscription required, pay-as-you-go. Multi-line redundancy, cross-region disaster recovery, automatic failover, and uninterrupted long-link SSE. 99.9% availability — critical calls never fall behind.
-</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.proxy4free.com/?keyword=4yjqecpc"><img src="assets/partners/logos/proxy4free.png" alt="proxy4free" width="150"></a></td>
 <td>Thanks to Proxy4Free for sponsoring this project! Proxy4Free is a data proxy service provider for developers and AI applications, offering residential proxies, static residential proxies, ISP proxies, and datacenter proxies for scenarios such as Web Scraping, Browser Automation, and AI Agents. With global IP resources, stable connections, and flexible switching, it helps developers improve data collection success rates and reduce the risk of IP bans. Register via <a href="https://www.proxy4free.com/?keyword=4yjqecpc">this link</a> to get started and easily build more stable and efficient automation workflows.
 </td>
@@ -193,11 +119,6 @@ Additional Kiro-focused features in this fork:
 <tr>
 <td width="180"><a href="https://nagora.ai/"><img src="assets/partners/logos/nagora.png" alt="Nagora" width="150"></a></td>
 <td><a href="https://nagora.ai/">Nagora</a> is a multi-model AI API gateway built for developers and teams. With a single account and API key, you can access more than 26 leading text and image models through one unified interface. It is compatible with OpenAI, Anthropic, and Gemini protocols and integrates seamlessly with development tools such as Claude Code, Codex, and Gemini CLI. The platform provides intelligent routing, automatic failover, transparent pricing, and consolidated billing, along with budget management, rate limiting, and concurrency controls. This makes AI usage more reliable and manageable across individual development, team collaboration, and production environments. No changes to your existing application are required. Simply replace the Base URL and API key to complete the integration in as little as one minute.</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://www.novada.com/?sub2api/"><img src="assets/partners/logos/novada.png" alt="Novada" width="150"></a></td>
-<td>Thanks to <a href="https://www.novada.com/?sub2api/">Novada</a> for sponsoring this project! Novada provides residential, ISP, datacenter, and mobile proxies, along with Web Unlocker and Scraper APIs for developers building AI applications and automation workflows. With global IP coverage, flexible rotating and sticky sessions, and precise geo-targeting, Novada helps teams access web data reliably for AI agent workflows, cross-region testing, web research, and browser automation. Explore Novada to build more stable and scalable AI workflows.</td>
 </tr>
 
 <tr>
@@ -375,8 +296,6 @@ Deploy with Docker Compose, including PostgreSQL and Redis containers.
 
 - Docker 20.10+
 - Docker Compose v2+
-
-The Compose files use the upstream `weishaw/sub2api:latest` image by default. For production, pin a release with `SUB2API_IMAGE=weishaw/sub2api:<version>` in `.env`.
 
 #### Quick Start (One-Click Deployment)
 

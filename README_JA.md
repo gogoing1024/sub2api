@@ -27,45 +27,6 @@
 - **📖 免責事項**：本プロジェクトは技術的な学習および研究の目的でのみ提供されます。本プロジェクトの使用により生じたアカウントの停止、サービスの中断、データの損失、その他一切の直接的または間接的な損害について、作者は一切の責任を負いません。
 - **🚫 商用利用の非許諾**：本プロジェクトの開発者は、いかなる個人または組織に対しても、本プロジェクトを利用したいかなる形態の商業運営も一切許諾していません。本プロジェクトの名義で、または本プロジェクトに基づいて行われる商業行為はすべて本プロジェクトおよびその開発者とは無関係であり、それにより生じる一切の紛争、損失、法的責任は行為者自身が負うものとします。
 
-## 概要
-
-Sub2API は、AI 製品のサブスクリプションから API クォータを配分・管理するために設計された AI API ゲートウェイプラットフォームです。ユーザーはプラットフォームが生成した API キーを通じて上流の AI サービスにアクセスでき、プラットフォームは認証、課金、負荷分散、リクエスト転送を処理します。
-
-## Kiro サポート Fork
-
-公式上流プロジェクトでは Kiro チャネルへのメンテナンス優先度が高くないため、このリポジトリでは Kiro を長期的にサポートする fork として、公式ブランチとの安定したマージを継続しています。
-
-この fork で追加されている Kiro 関連機能:
-
-- OAuth / AWS Builder ID / トークンインポート、および API キー互換の上流接続を含む Kiro チャネルサポート。
-- Kiro トラフィック向けの Anthropic Prompt Cache 使用量エミュレーション。
-- グループ単位での Kiro キャッシュエミュレーション設定と、エミュレーション比率の調整。
-
-## Kiro スクリーンショット
-
-<p align="center">
-  <img src="assets/screenshots/kiro-account-management.png" alt="Kiro account management" width="100%">
-</p>
-
-<p align="center">
-  <img src="assets/screenshots/kiro-add-account.png" alt="Add Kiro account" width="58%">
-  <img src="assets/screenshots/kiro-cache-emulation.png" alt="Kiro cache emulation group settings" width="35%">
-</p>
-
-## 機能
-
-- **マルチアカウント管理** - 複数の上流アカウントタイプ（OAuth、APIキー）をサポート
-- **APIキー配布** - ユーザー向けの APIキーの生成と管理
-- **精密な課金** - トークンレベルの使用量追跡とコスト計算
-- **スマートスケジューリング** - スティッキーセッション付きのインテリジェントなアカウント選択
-- **同時実行制御** - ユーザーごと・アカウントごとの同時実行数制限
-- **レート制限** - 設定可能なリクエスト数およびトークンレート制限
-- **Kiro チャネルサポート** - Kiro 対応 fork を長期的に保守し、公式ブランチとの安定したマージを継続
-- **Kiro キャッシュエミュレーション** - Kiro グループ向けに Anthropic Prompt Cache 使用量をエミュレートし、グループ単位で比率を調整可能
-- **内蔵決済システム** - EasyPay、Alipay、WeChat Pay、Stripe に対応。ユーザーのセルフサービスチャージが可能で、別途決済サービスのデプロイは不要（[設定ガイド](docs/PAYMENT.md)）
-- **管理ダッシュボード** - 監視・管理のための Web インターフェース
-- **外部システム連携** - 外部システム（チケット管理など）を iframe 経由で管理ダッシュボードに埋め込み可能
-
 ## ❤️ スポンサー
 
 > [こちらに掲載しませんか？](mailto:support@sub2api.org)
@@ -138,30 +99,6 @@ Sub2API は、AI 製品のサブスクリプションから API クォータを�
 </tr>
 
 <tr>
-<td width="180"><a href="https://apikl.ai"><img src="assets/partners/logos/apikl.png" alt="apikl" width="150"></a></td>
-<td>Apikl のご支援に感謝します！Sub2API をベースに構築された本プラットフォームは、開発者向けに Codex / Claude シリーズモデルの中継サービスを提供しています。長期安定性、高速直結、高いコストパフォーマンスを重視し、従量課金の残高ベース課金、エンタープライズグレードの正規請求書、1対1の専属サポートを提供します。<a href="https://apikl.ai">今すぐ登録</a>でチャージ 1:1 ボーナス — 残高が倍に！
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://tokeneum.ai"><img src="assets/partners/logos/tokeneum.png" alt="tokeneum" width="150"></a></td>
-<td>TokenEum のご支援に感謝します！<a href="https://tokeneum.ai">TokenEum</a> は総合的な AI モデル集約プラットフォームおよびインテリジェントエージェント開発企業です。Claude、Gemini、OpenAI などの世界トップクラスのモデルに加え、GLM、Qwen、Kimi などの主要なオープンソースモデルも集約しており、品質と価格の異なる豊富な選択肢を提供してあらゆるニーズに対応します。また、Seedance2.0 や Happy Horse などの最先端の動画生成モデルも利用可能です。TokenEum は透明性と誠実なビジネスを重視し、すべてのモデル情報の正確性と信頼性を保証します。<a href="https://tokeneum.ai">tokeneum.ai</a> でぜひお試しください。
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://666api.work/sub2api"><img src="assets/partners/logos/666api.jpg" alt="666api" width="150"></a></td>
-<td>666api のご支援に感謝します！<a href="https://666api.work/sub2api">666api</a> はオールインワンプラットフォームで、以下を提供しています：⚡ API 中継 — グローバルモデルへの従量課金アクセス、100% 公式ソースから直接供給、公式価格の最大 75% オフ。独占特典：Zhipu GLM 50% オフ・DeepSeek V4-pro 50% オフ・Seedance2.0 8% オフ（ホワイトリスト）・HappyHorse Overseas 30% オフ（ホワイトリスト）🔑 GPT サブスクリプションアカウント — 同源 IP 込み・グローバル住宅 IP 💰 請求書発行対応
-</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://sui-xiang.com/"><img src="assets/partners/logos/sui-xiang.jpg" alt="sui-xiang" width="150"></a></td>
-<td>随想AI ゲートウェイのご支援に感謝します！<a href="https://sui-xiang.com/">随想AI ゲートウェイ</a> は信頼性と効率に優れた API 中継サービスプロバイダーで、Claude、Codex、Gemini などの中継サービスを提供しています。プライバシー重視の中継ステーション・データ転売なし・モデル水増しなし、プライバシー・透明性・超高速アフターサービス。新規アカウント登録後、毎日サインインで 0.5 元のテストクレジットがもらえ、チャージは 1:1、サブスクリプション不要、従量課金。マルチライン冗長、クロスリージョン災害復旧、自動フェイルオーバー、長時間 SSE 接続が途切れません。99.9% の可用性、重要な呼び出しは決して遅れません。
-</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://www.proxy4free.com/?keyword=4yjqecpc"><img src="assets/partners/logos/proxy4free.png" alt="proxy4free" width="150"></a></td>
 <td>Proxy4Free のご支援に感謝します！Proxy4Free は開発者と AI アプリケーション向けのデータプロキシサービスプロバイダーで、住宅プロキシ、静的住宅プロキシ、ISP プロキシ、データセンタープロキシなど多様なプロキシソリューションを提供しており、Web Scraping、Browser Automation、AI Agent などのシナリオに適しています。グローバル IP リソース、安定した接続、柔軟な切り替えをサポートし、開発者のデータ収集成功率の向上と IP ブロックリスクの低減を支援します。<a href="https://www.proxy4free.com/?keyword=4yjqecpc">こちらのリンクから登録</a>して、より安定した効率的な自動化ワークフローを簡単に構築しましょう。
 </td>
@@ -184,11 +121,6 @@ Sub2API は、AI 製品のサブスクリプションから API クォータを�
 <tr>
 <td width="180"><a href="https://nagora.ai/"><img src="assets/partners/logos/nagora.png" alt="Nagora" width="150"></a></td>
 <td><a href="https://nagora.ai/">Nagora</a>は、開発者やチーム向けに設計されたマルチモデルAI APIゲートウェイです。1つのアカウントと1つのAPIキーだけで、26種類以上の主要なテキストモデルおよび画像モデルを一元的に利用できます。OpenAI、Anthropic、Geminiの各プロトコルに対応し、Claude Code、Codex、Gemini CLIなどの開発ツールにもシームレスに接続できます。 プラットフォームには、インテリジェントルーティング、自動フェイルオーバー、透明性の高い料金体系、請求の一元管理に加え、予算管理、レート制限、同時実行数の制御機能が備わっています。これにより、個人開発、チームでの共同作業、本番環境におけるAI APIの利用を、より安定的かつ柔軟に管理できます。 既存のアプリケーションを改修する必要はありません。Base URLとAPIキーを置き換えるだけで、最短1分で導入を完了できます。</td>
-</tr>
-
-<tr>
-<td width="180"><a href="https://www.novada.com/?sub2api/"><img src="assets/partners/logos/novada.png" alt="Novada" width="150"></a></td>
-<td>Novada のご支援に感謝します！<a href="https://www.novada.com/?sub2api/">Novada</a> は、AI アプリケーションや自動化ワークフローを構築する開発者向けに、レジデンシャル、ISP、データセンター、モバイルプロキシに加え、Web Unlocker と Scraper API を提供しています。グローバルな IP カバレッジ、柔軟なローテーション／スティッキーセッション、精密なジオターゲティングにより、AI エージェントワークフロー、クロスリージョンテスト、Web リサーチ、ブラウザ自動化などのシーンで、チームが Web データへ確実にアクセスできるよう支援します。Novada で、より安定しスケーラブルな AI ワークフローを構築しましょう。</td>
 </tr>
 
 <tr>
@@ -365,8 +297,6 @@ PostgreSQL と Redis のコンテナを含む Docker Compose でデプロイし�
 
 - Docker 20.10+
 - Docker Compose v2+
-
-Compose ファイルは、アップストリームが公開する `weishaw/sub2api:latest` をデフォルトで使用します。本番環境では `.env` に `SUB2API_IMAGE=weishaw/sub2api:<version>` を設定してリリースを固定できます。
 
 #### クイックスタート（ワンクリックデプロイ）
 
