@@ -194,6 +194,16 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	if err := json.Unmarshal(response.Body, &payload); err != nil {
 		return nil, fmt.Errorf("decode OpenAI account models: %w", err)
 	}
+	// 上游目录只保证 id：Codex manifest 分支在标准化时会丢弃 slug 以外的字段，
+	// 而测试弹窗用 display_name 当选项标签，留空会渲染成一排空白项。
+	for i := range payload.Data {
+		if strings.TrimSpace(payload.Data[i].Type) == "" {
+			payload.Data[i].Type = "model"
+		}
+		if strings.TrimSpace(payload.Data[i].DisplayName) == "" {
+			payload.Data[i].DisplayName = payload.Data[i].ID
+		}
+	}
 	return payload.Data, nil
 }
 
