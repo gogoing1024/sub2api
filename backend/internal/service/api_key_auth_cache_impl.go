@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 24 // v24: v23 (Kiro cache fields + group profit control + search/audio/video_model_prices billing fields + long-context + model pricing + CN providers + group force/free_openai_fast) + group codex_models_manifest_config field
+const apiKeyAuthSnapshotVersion = 25 // v25: v24 (Kiro cache fields + group profit control + search/audio/video_model_prices billing fields + long-context + model pricing + CN providers + group force/free_openai_fast + codex_models_manifest_config) + group model_allowlist field (renamed from models_list_config, enforcing semantics)
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -428,7 +428,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			FreeOpenAIFast:                  groupForSnapshot.FreeOpenAIFast,
 			DefaultMappedModel:              groupForSnapshot.DefaultMappedModel,
 			MessagesDispatchModelConfig:     groupForSnapshot.MessagesDispatchModelConfig,
-			ModelsListConfig:                groupForSnapshot.ModelsListConfig,
+			ModelAllowlist:                  groupForSnapshot.ModelAllowlist,
 			CodexModelsManifestConfig:       groupForSnapshot.CodexModelsManifestConfig,
 			RPMLimit:                        groupForSnapshot.RPMLimit,
 			MaxReasoningEffort:              groupForSnapshot.MaxReasoningEffort,
@@ -538,7 +538,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			FreeOpenAIFast:                  snapshot.Group.FreeOpenAIFast,
 			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,
-			ModelsListConfig:                snapshot.Group.ModelsListConfig,
+			ModelAllowlist:                  snapshot.Group.ModelAllowlist,
 			CodexModelsManifestConfig:       snapshot.Group.CodexModelsManifestConfig,
 			RPMLimit:                        snapshot.Group.RPMLimit,
 			MaxReasoningEffort:              snapshot.Group.MaxReasoningEffort,

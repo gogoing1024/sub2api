@@ -1803,6 +1803,14 @@
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <label class="input-label">{{ t('admin.accounts.expiresAt') }}</label>
         <input v-model="expiresAtInput" type="datetime-local" class="input" />
+        <div class="mt-2 flex gap-2">
+          <button type="button" class="btn btn-secondary btn-sm" @click="form.expires_at = getAccountExpiryTimestamp(1)">
+            {{ t('payment.oneMonth') }}
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" @click="form.expires_at = getAccountExpiryTimestamp(12)">
+            {{ t('payment.oneYear') }}
+          </button>
+        </div>
         <p class="input-hint">
           {{ t('admin.accounts.expiresAtHint') }}
           {{ t('admin.accounts.expiresAtTimezoneHint', { timezone: browserTimeZone }) }}
@@ -3019,11 +3027,8 @@
         </div>
       </div>
 
-      <!-- Group Selection - 仅标准模式显示 -->
-      <div
-        v-if="!authStore.isSimpleMode"
-        class="border-t border-gray-200 pt-4 dark:border-dark-600"
-      >
+      <!-- Group Selection -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <GroupSelector
           v-model="form.group_ids"
           :groups="groups"
@@ -3091,7 +3096,7 @@
 import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
-import { useAuthStore } from '@/stores/auth'
+
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import type {
@@ -3148,6 +3153,7 @@ import {
 } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { isKiroDirectApiKeyAccount, isKiroRelayAccount } from '@/utils/kiroAccount'
+import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
 import { VERTEX_LOCATION_SELECT_OPTIONS } from '@/constants/account'
 import { KIRO_REGION_SELECT_OPTIONS } from '@/constants/kiroRegions'
@@ -3185,7 +3191,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
-const authStore = useAuthStore()
 const browserTimeZone = getBrowserTimeZone()
 
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
