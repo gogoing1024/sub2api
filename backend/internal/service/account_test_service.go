@@ -194,11 +194,9 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	if err := json.Unmarshal(response.Body, &payload); err != nil {
 		return nil, fmt.Errorf("decode OpenAI account models: %w", err)
 	}
-	// Upstream catalogs only guarantee id. Codex manifest normalization drops
-	// fields other than slug, and the admin test picker uses display_name as
-	// the option label, so empty values would render as blank rows.
-	// Populate picker fields here without changing the shared discovery
-	// response or cache.
+	// 上游目录只保证 id：Codex manifest 分支在标准化时会丢弃 slug 以外的字段，
+	// 而测试弹窗用 display_name 当选项标签，留空会渲染成一排空白项。
+	// Populate picker fields here without changing the shared discovery response or cache.
 	for i := range payload.Data {
 		model := &payload.Data[i]
 		if strings.TrimSpace(model.DisplayName) == "" {
