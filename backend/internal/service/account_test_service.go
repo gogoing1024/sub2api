@@ -196,12 +196,14 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	}
 	// 上游目录只保证 id：Codex manifest 分支在标准化时会丢弃 slug 以外的字段，
 	// 而测试弹窗用 display_name 当选项标签，留空会渲染成一排空白项。
+	// Populate picker fields here without changing the shared discovery response or cache.
 	for i := range payload.Data {
-		if strings.TrimSpace(payload.Data[i].Type) == "" {
-			payload.Data[i].Type = "model"
+		model := &payload.Data[i]
+		if strings.TrimSpace(model.DisplayName) == "" {
+			model.DisplayName = model.ID
 		}
-		if strings.TrimSpace(payload.Data[i].DisplayName) == "" {
-			payload.Data[i].DisplayName = payload.Data[i].ID
+		if strings.TrimSpace(model.Type) == "" {
+			model.Type = "model"
 		}
 	}
 	return payload.Data, nil
@@ -481,7 +483,9 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 		req.Header.Set("Authorization", "Bearer "+authToken)
 	} else {
 		req.Header.Set("anthropic-beta", claude.APIKeyBetaHeader)
-		setAnthropicAPIKeyAuthHeader(req.Header, account, authToken)
+		// Ollama Cloud Anthropic 兼容端点按实际 base_url 强制 Bearer，
+		// 其余保持 extra/default 行为。
+		setAnthropicAPIKeyAuthHeader(req.Header, account, authToken, account.GetBaseURL())
 	}
 
 	// 账号级请求头覆写：测试请求与真实转发保持一致的最终头
