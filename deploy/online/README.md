@@ -32,6 +32,10 @@ Chromium 将 6666 列为受限端口，直接访问可能出现 `ERR_UNSAFE_PORT
 
 ## 维护
 
+### 短账号登录
+
+登录页支持省略内部邮箱的 `@sub2api.local` 后缀，例如 `pink@sub2api.local` 可直接输入 `pink`。完整邮箱仍可登录。登录页自动补全内部邮箱后使用原有认证接口，不修改数据库邮箱、密码、权限或双重验证；其他邮箱域名的账号仍需输入完整邮箱。直接调用 `/api/v1/auth/login` 的客户端仍应传完整邮箱。
+
 ```sh
 # 日志
 docker compose -f deploy/online/compose.yml --env-file deploy/online/.env logs --tail=100 app
