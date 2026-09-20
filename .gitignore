@@ -144,6 +144,7 @@ deploy/online/*.tar.gz
 .gocache/
 vite.config.js
 docs/*
+!docs/ANTIGRAVITY_ATTRIBUTION_429.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
@@ -159,6 +160,10 @@ docs/screenshots/*
 !docs/screenshots/mobile-account-actions-menu.png
 .serena/
 .codex/
+.zcode/
+.zcodeignore
+.zcloud/
+.zcloudignore
 frontend/coverage/
 aicodex
 output/
