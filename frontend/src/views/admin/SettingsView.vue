@@ -6366,6 +6366,7 @@
               </div>
             </div>
           </div>
+        </div>
 
           <!-- Web Search Test Dialog -->
           <div
