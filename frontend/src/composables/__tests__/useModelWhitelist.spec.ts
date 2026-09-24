@@ -366,6 +366,15 @@ describe('useModelWhitelist', () => {
     }
   })
 
+  // preview 名也在后端默认映射里，白名单同步漏掉它们会让勾了白名单的账号拒掉这些请求。
+  it('adobe 同步列表包含 gemini 生图的 preview 名', () => {
+    const models = getModelsByPlatform('adobe')
+
+    for (const id of ['gemini-3-pro-image-preview', 'gemini-2.5-flash-image-preview', 'gemini-3.1-flash-image-preview']) {
+      expect(models).toContain(id)
+    }
+  })
+
   it('adobe 映射支持通配符前缀，且目标模型不允许带通配符', () => {
     expect(
       buildModelMappingObject('mapping', [], [{ from: 'gpt-image-*', to: 'firefly-gpt-image-2' }])
