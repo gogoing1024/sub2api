@@ -110,9 +110,14 @@ const adobeModels = [
   // sunburst 是 UI 展示名；后端把它映到上游 modelVersion=gpt-image-2.5-prism。
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
+  // preview 名与非 preview 名落同一个 Firefly 族，后端默认映射里都在，
+  // 所以白名单同步也要给出来，否则勾了白名单的账号会把它们挡在门外。
   'gemini-3-pro-image',
+  'gemini-3-pro-image-preview',
   'gemini-2.5-flash-image',
+  'gemini-2.5-flash-image-preview',
   'gemini-3.1-flash-image',
+  'gemini-3.1-flash-image-preview',
   'flux-pro',
   'flux-ultra',
   'imagen-4',
