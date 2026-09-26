@@ -140,6 +140,8 @@ const kiroModels = [
   'claude-opus-4-6-thinking',
   'claude-opus-5',
   'claude-opus-5-thinking',
+  'claude-opus-5-5',
+  'claude-opus-5-5-thinking',
   'claude-sonnet-5',
   'claude-sonnet-5-thinking',
   'claude-sonnet-4-6',
@@ -491,6 +493,8 @@ const kiroPresetMappings = [
   { label: 'Opus 4.6 Thinking', from: 'claude-opus-4-6-thinking', to: 'claude-opus-4.6', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
   { label: 'Opus 5', from: 'claude-opus-5', to: 'claude-opus-5', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
   { label: 'Opus 5 Thinking', from: 'claude-opus-5-thinking', to: 'claude-opus-5', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
+  { label: 'Opus 5.5', from: 'claude-opus-5-5', to: 'claude-opus-5.5', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
+  { label: 'Opus 5.5 Thinking', from: 'claude-opus-5-5-thinking', to: 'claude-opus-5.5', color: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' },
   { label: 'Sonnet 5', from: 'claude-sonnet-5', to: 'claude-sonnet-5', color: 'bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/30 dark:text-orange-300' },
   { label: 'Sonnet 5 Thinking', from: 'claude-sonnet-5-thinking', to: 'claude-sonnet-5', color: 'bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/30 dark:text-orange-300' },
   { label: 'Sonnet 4.6', from: 'claude-sonnet-4-6', to: 'claude-sonnet-4.6', color: 'bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/30 dark:text-orange-300' },
@@ -642,8 +646,99 @@ export interface ModelMappingEntry {
   to: string
 }
 
+export interface ModelMappingBuildOptions {
+  // 直连 Kiro 的白名单不能写成 x → x，要写成推导后的上游 modelId。
+  kiroDirect?: boolean
+  // 同步得到的对外名 → 上游 modelId。未知 Claude 名只认这份，不再猜点号位置。
+  kiroUpstreamIDs?: Record<string, string> | null
+}
+
+// kiroUpstreamModelID 先认默认表和日期别名，再用同步带回的上游 ID。
+// 两边都没有的名字原样保存。
+export function kiroUpstreamModelID(
+  model: string,
+  upstreamIDs?: Record<string, string> | null
+): string {
+  const trimmed = model.trim()
+  const id = trimmed.toLowerCase()
+  const exact: Record<string, string> = {
+    'gpt-5.6-sol': 'gpt-5.6-sol',
+    'gpt-5.6-terra': 'gpt-5.6-terra',
+    'gpt-5.6-luna': 'gpt-5.6-luna',
+    'claude-opus-4-8': 'claude-opus-4.8',
+    'claude-opus-4-8-thinking': 'claude-opus-4.8',
+    'claude-opus-4.8': 'claude-opus-4.8',
+    'claude-opus-4-7': 'claude-opus-4.7',
+    'claude-opus-4-7-thinking': 'claude-opus-4.7',
+    'claude-opus-4.7': 'claude-opus-4.7',
+    'claude-opus-4-6': 'claude-opus-4.6',
+    'claude-opus-4-6-thinking': 'claude-opus-4.6',
+    'claude-opus-4.6': 'claude-opus-4.6',
+    'claude-opus-5': 'claude-opus-5',
+    'claude-opus-5-thinking': 'claude-opus-5',
+    'claude-opus-5-5': 'claude-opus-5.5',
+    'claude-opus-5-5-thinking': 'claude-opus-5.5',
+    'claude-opus-5.5': 'claude-opus-5.5',
+    'claude-opus-5.5-thinking': 'claude-opus-5.5',
+    'claude-sonnet-5': 'claude-sonnet-5',
+    'claude-sonnet-5-thinking': 'claude-sonnet-5',
+    'claude-sonnet-4-6': 'claude-sonnet-4.6',
+    'claude-sonnet-4-6-thinking': 'claude-sonnet-4.6',
+    'claude-sonnet-4.6': 'claude-sonnet-4.6',
+    'claude-opus-4-5-20251101': 'claude-opus-4.5',
+    'claude-opus-4-5-20251101-thinking': 'claude-opus-4.5',
+    'claude-opus-4.5': 'claude-opus-4.5',
+    'claude-sonnet-4-5-20250929': 'claude-sonnet-4.5',
+    'claude-sonnet-4-5-20250929-thinking': 'claude-sonnet-4.5',
+    'claude-sonnet-4.5': 'claude-sonnet-4.5',
+    'claude-haiku-4-5-20251001': 'claude-haiku-4.5',
+    'claude-haiku-4-5-20251001-thinking': 'claude-haiku-4.5',
+    'claude-haiku-4.5': 'claude-haiku-4.5'
+  }
+  const known = exact[id]
+  if (known) return known
+
+  const synced = upstreamIDs?.[trimmed] ?? upstreamIDs?.[id]
+  if (synced && synced.trim()) return synced.trim()
+  return trimmed
+}
+
+export function kiroUpstreamIDsFromMetadata(
+  metadata?: Record<string, { id?: string } | undefined> | null
+): Record<string, string> {
+  const ids: Record<string, string> = {}
+  if (!metadata) return ids
+  for (const [name, entry] of Object.entries(metadata)) {
+    const from = name.trim()
+    const upstreamID = entry?.id?.trim()
+    if (!from || !upstreamID) continue
+    ids[from] = upstreamID
+  }
+  return ids
+}
+
+// appendKiroSyncedMappings 只追加还没有的 from。已知表优先，否则用同步带回的上游 ID。
+export function appendKiroSyncedMappings(
+  rows: ModelMappingEntry[],
+  publicNames: string[],
+  upstreamIDs?: Record<string, string> | null
+): { rows: ModelMappingEntry[]; added: number } {
+  const next = rows.map(row => ({ from: row.from, to: row.to }))
+  const existing = new Set(next.map(row => row.from.trim()).filter(Boolean))
+  let added = 0
+  for (const name of publicNames) {
+    const from = name.trim()
+    if (!from || existing.has(from)) continue
+    existing.add(from)
+    next.push({ from, to: kiroUpstreamModelID(from, upstreamIDs) })
+    added += 1
+  }
+  return { rows: next, added }
+}
+
 export function splitModelMappingObject(
-  modelMapping?: Record<string, unknown> | null
+  modelMapping?: Record<string, unknown> | null,
+  options?: ModelMappingBuildOptions
 ): { allowedModels: string[]; modelMappings: ModelMappingEntry[] } {
   const allowedModels: string[] = []
   const modelMappings: ModelMappingEntry[] = []
@@ -658,7 +753,10 @@ export function splitModelMappingObject(
     const to = rawTo.trim()
     if (!from || !to) continue
 
-    if (from === to) {
+    const isWhitelist = options?.kiroDirect
+      ? to === kiroUpstreamModelID(from, options.kiroUpstreamIDs)
+      : from === to
+    if (isWhitelist) {
       allowedModels.push(from)
     } else {
       modelMappings.push({ from, to })
@@ -671,7 +769,8 @@ export function splitModelMappingObject(
 export function buildModelMappingObject(
   mode: ModelRestrictionMode,
   allowedModels: string[],
-  modelMappings: ModelMappingEntry[]
+  modelMappings: ModelMappingEntry[],
+  options?: ModelMappingBuildOptions
 ): Record<string, string> | null {
   const mapping: Record<string, string> = {}
 
@@ -683,7 +782,9 @@ export function buildModelMappingObject(
       // 写入 model_mapping 会导致 GetMappedModel() 把真实模型映射成 "claude-*"，从而转发失败。
       // 因此这里跳过包含通配符的条目。
       if (!normalizedModel.includes('*')) {
-        mapping[normalizedModel] = normalizedModel
+        mapping[normalizedModel] = options?.kiroDirect
+          ? kiroUpstreamModelID(normalizedModel, options.kiroUpstreamIDs)
+          : normalizedModel
       }
     }
   }

@@ -1541,7 +1541,7 @@
       </div>
 
       <div
-        v-if="form.platform === 'kiro' && (accountCategory === 'apikey' || accountCategory === 'apikey-relay')"
+        v-if="(form.platform === 'kiro' && (accountCategory === 'apikey' || accountCategory === 'apikey-relay')) || (form.platform === 'adobe' && accountCategory === 'apikey-relay')"
         class="flex items-center justify-between gap-4 border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div>
@@ -1768,6 +1768,17 @@
               + {{ preset.label }}
             </button>
           </div>
+
+          <button
+            v-if="accountCategory === 'apikey'"
+            type="button"
+            data-testid="kiro-create-sync-upstream-models"
+            @click="syncKiroCreateUpstreamModels"
+            :disabled="isSyncingKiroUpstream || !apiKeyValue"
+            class="mt-3 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-500 dark:text-gray-300 dark:hover:bg-dark-700"
+          >
+            {{ isSyncingKiroUpstream ? t('admin.accounts.syncUpstreamModelsLoading') : t('admin.accounts.syncUpstreamModels') }}
+          </button>
         </div>
       </div>
 
@@ -4640,7 +4651,9 @@ import {
   buildModelMappingObject,
   fetchAntigravityDefaultMappings,
   fetchKiroDefaultMappings,
-  isValidWildcardPattern
+  isValidWildcardPattern,
+  appendKiroSyncedMappings,
+  kiroUpstreamIDsFromMetadata
 } from '@/composables/useModelWhitelist'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
@@ -5292,6 +5305,7 @@ const kiroImportTokenPlaceholder = computed(() => {
     : '{"accessToken":"...","refreshToken":"...","authMethod":"social","provider":"' + kiroImportProvider.value + '"}'
 })
 const kiroModelMappings = ref<ModelMapping[]>([])
+const isSyncingKiroUpstream = ref(false)
 const kiroCreditUnitPriceUsd = ref(0)
 const kiroPresetMappings = computed(() => getPresetMappingsByPlatform('kiro'))
 const bedrockPresets = computed(() => getPresetMappingsByPlatform('bedrock'))
@@ -5975,6 +5989,42 @@ const addKiroPresetMapping = (from: string, to: string) => {
     return
   }
   kiroModelMappings.value.push({ from, to })
+}
+
+const syncKiroCreateUpstreamModels = async () => {
+  if (isSyncingKiroUpstream.value || !apiKeyValue.value || accountCategory.value !== 'apikey') return
+
+  isSyncingKiroUpstream.value = true
+  try {
+    const result = await adminAPI.accounts.syncUpstreamModelsPreview({
+      platform: 'kiro',
+      type: 'apikey',
+      api_key: apiKeyValue.value
+    })
+    const upstreamModels = result.models.map((model) => model.trim()).filter(Boolean)
+    if (upstreamModels.length === 0) {
+      appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
+      return
+    }
+
+    const applied = appendKiroSyncedMappings(
+      kiroModelMappings.value,
+      upstreamModels,
+      kiroUpstreamIDsFromMetadata(result.metadata)
+    )
+    kiroModelMappings.value = applied.rows
+
+    if (applied.added > 0) {
+      appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: applied.added, total: upstreamModels.length }))
+    } else {
+      appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
+    appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
+  } finally {
+    isSyncingKiroUpstream.value = false
+  }
 }
 
 // Error code warning dialog state

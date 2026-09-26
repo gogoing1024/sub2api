@@ -273,6 +273,8 @@ func MapModel(model string) string {
 		return "claude-opus-4.6"
 	case "claude-opus-5", "claude-opus-5-thinking":
 		return "claude-opus-5"
+	case "claude-opus-5-5", "claude-opus-5-5-thinking", "claude-opus-5.5", "claude-opus-5.5-thinking":
+		return "claude-opus-5.5"
 	case "claude-sonnet-5", "claude-sonnet-5-thinking":
 		return "claude-sonnet-5"
 	case "claude-sonnet-4-6", "claude-sonnet-4-6-thinking", "claude-sonnet-4.6":
@@ -333,13 +335,76 @@ func normalizeClaudeVersionNumber(model string) string {
 // 仅作用于解析阶段;不会触发 system prompt 注入 <thinking_mode> 前缀,
 // 也不会改写 inferenceConfig,避免改变上游请求语义。
 func requiresImplicitThinkingTagStripping(modelID string) bool {
-	switch strings.TrimSpace(strings.ToLower(modelID)) {
-	case "claude-opus-4.7", "claude-opus-4-7", "claude-opus-4-7-thinking",
-		"claude-opus-4.8", "claude-opus-4-8", "claude-opus-4-8-thinking",
-		"claude-opus-5", "claude-opus-5-thinking":
+	return isKiroHighCapabilityClaude(modelID)
+}
+
+// isKiroHighCapabilityClaude 覆盖 Opus 4.7 及以上，以及 Opus/Sonnet 主版本 >= 5。
+// 点号和短横线写法、重复的 -thinking 后缀都认。Opus 4.6 与 Sonnet 4.6 保持原行为。
+func isKiroHighCapabilityClaude(model string) bool {
+	family, major, minor, hasMinor, ok := claudeOpusSonnetVersion(model)
+	if !ok {
+		return false
+	}
+	if major >= 5 {
 		return true
 	}
-	return false
+	return family == "opus" && major == 4 && hasMinor && minor >= 7
+}
+
+var claudeOpusSonnetVersionPattern = regexp.MustCompile(`^(claude-(opus|sonnet))-(\d+)(?:[.-](\d{1,2}))?$`)
+
+func claudeOpusSonnetVersion(model string) (family string, major, minor int, hasMinor, ok bool) {
+	id := normalizeModelAlias(model)
+	matches := claudeOpusSonnetVersionPattern.FindStringSubmatch(id)
+	if matches == nil {
+		return "", 0, 0, false, false
+	}
+	family = matches[2]
+	major, _ = strconv.Atoi(matches[3])
+	if matches[4] != "" {
+		minor, _ = strconv.Atoi(matches[4])
+		hasMinor = true
+	}
+	return family, major, minor, hasMinor, true
+}
+
+// PublicModelID 把 Kiro 上游 modelId 收成客户端使用的短横线名字。
+// 只对 claude- 前缀把全部点号换成短横线：claude-opus-4.8 → claude-opus-4-8。
+// 没有点号的 Claude 名字和非 Claude 名字保持原样。
+func PublicModelID(modelID string) string {
+	id := normalizeModelAlias(modelID)
+	if strings.HasPrefix(id, "claude-") {
+		return strings.ReplaceAll(id, ".", "-")
+	}
+	return id
+}
+
+// ClaudeAliasKey 去掉重复的 -thinking，再把剩余点号全部换成短横线。
+// 只认 claude- 前缀。用来把客户请求和已知上游 ID 的对外名对齐，不猜测点号该落在哪一段。
+func ClaudeAliasKey(model string) (string, bool) {
+	id := normalizeModelAlias(model)
+	if !strings.HasPrefix(id, "claude-") {
+		return "", false
+	}
+	return strings.ReplaceAll(id, ".", "-"), true
+}
+
+// SyncModelAliases 把一条上游 modelId 展开成要写入账号映射的对外名。
+// 值为上游原样 ID。Claude 额外补一行 -thinking，折叠到同一个上游 ID。
+func SyncModelAliases(modelID string) [][2]string {
+	upstream := strings.TrimSpace(modelID)
+	if upstream == "" {
+		return nil
+	}
+	publicID := PublicModelID(upstream)
+	if publicID == "" {
+		return nil
+	}
+	aliases := [][2]string{{publicID, upstream}}
+	if strings.HasPrefix(publicID, "claude-") && !strings.HasSuffix(publicID, "-thinking") {
+		aliases = append(aliases, [2]string{publicID + "-thinking", upstream})
+	}
+	return aliases
 }
 
 func normalizeModelAlias(model string) string {
@@ -368,15 +433,14 @@ func IsKiroGPTModel(modelID string) bool {
 func kiroMaxOutputTokensForModel(model string) int {
 	normalized := normalizeModelAlias(model)
 	switch normalized {
-	// Opus 4.7 / 4.8 / 5 与 Kiro GPT-5.6 精确模型上限 128000（对齐 Kiro 官方规格）。
-	case "claude-opus-4-8", "claude-opus-4.8", "claude-opus-4-7", "claude-opus-4.7",
-		"claude-opus-5",
-		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
 		return 128000
-	default:
-		// 其余 Kiro 模型（opus-4.6 / sonnet-5 / sonnet-4.6 / 各 4.5 及未知兜底）统一 64000。
-		return kiroDefaultMaxOutputTokens
 	}
+	// Opus 4.7+ 与 Opus/Sonnet 主版本 >= 5 上限 128000。其余（含 Opus 4.6）仍是 64000。
+	if isKiroHighCapabilityClaude(normalized) {
+		return 128000
+	}
+	return kiroDefaultMaxOutputTokens
 }
 
 func clampFloat(value, minValue, maxValue float64) float64 {
@@ -1446,28 +1510,26 @@ func thinkingDirectiveFromModel(model string) *thinkingDirective {
 		return nil
 	}
 
-	switch normalizeModelAlias(model) {
+	alias := normalizeModelAlias(model)
+	switch alias {
 	case "claude-opus-4-6", "claude-opus-4.6":
 		return &thinkingDirective{
 			Mode:         "adaptive",
 			BudgetTokens: 20000,
 			Effort:       "high",
 		}
-	// opus 4.7/4.8/5 走 adaptive 高预算,budget 对齐 Antigravity 的 ClaudeAdaptiveHighThinkingBudgetTokens
-	// 避免 thinking 提前耗尽导致流式中途断开
-	case "claude-opus-4-7", "claude-opus-4.7",
-		"claude-opus-4-8", "claude-opus-4.8",
-		"claude-opus-5":
+	}
+	// Opus 4.7+ 与主版本 >= 5 走 adaptive 高预算，避免 thinking 提前耗尽导致流式中途断开。
+	if isKiroHighCapabilityClaude(alias) {
 		return &thinkingDirective{
 			Mode:         "adaptive",
 			BudgetTokens: 24576,
 			Effort:       "high",
 		}
-	default:
-		return &thinkingDirective{
-			Mode:         "enabled",
-			BudgetTokens: 20000,
-		}
+	}
+	return &thinkingDirective{
+		Mode:         "enabled",
+		BudgetTokens: 20000,
 	}
 }
 

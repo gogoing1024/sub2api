@@ -340,6 +340,17 @@
               + {{ preset.label }}
             </button>
           </div>
+
+          <button
+            v-if="!isKiroRelay"
+            type="button"
+            data-testid="kiro-sync-upstream-models"
+            @click="syncKiroUpstreamModels"
+            :disabled="isSyncingKiroUpstream || !account?.id"
+            class="mt-3 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-500 dark:text-gray-300 dark:hover:bg-dark-700"
+          >
+            {{ isSyncingKiroUpstream ? t('admin.accounts.syncUpstreamModelsLoading') : t('admin.accounts.syncUpstreamModels') }}
+          </button>
         </div>
 
         <!-- Model Restriction Section (不适用于 Antigravity / Kiro) -->
@@ -412,7 +423,7 @@
 
             <!-- Whitelist Mode -->
             <div v-if="modelRestrictionMode === 'whitelist'">
-              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+              <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" />
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
                 <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -937,6 +948,16 @@
               + {{ preset.label }}
             </button>
           </div>
+
+          <button
+            type="button"
+            data-testid="kiro-oauth-sync-upstream-models"
+            @click="syncKiroUpstreamModels"
+            :disabled="isSyncingKiroUpstream || !account?.id"
+            class="mt-3 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-dark-500 dark:text-gray-300 dark:hover:bg-dark-700"
+          >
+            {{ isSyncingKiroUpstream ? t('admin.accounts.syncUpstreamModelsLoading') : t('admin.accounts.syncUpstreamModels') }}
+          </button>
         </template>
 
         <template v-else>
@@ -970,7 +991,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -1184,7 +1205,7 @@
 
           <!-- Whitelist Mode -->
           <div v-if="modelRestrictionMode === 'whitelist'">
-            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" />
+            <ModelWhitelistSelector v-model="allowedModels" :platform="account?.platform || 'anthropic'" :account-id="account?.id" :account-type="account?.type" />
             <p class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
               <span v-if="allowedModels.length === 0 && modelMappings.length === 0">{{
@@ -3443,7 +3464,9 @@ import {
   commonErrorCodes,
   buildModelMappingObject,
   splitModelMappingObject,
-  isValidWildcardPattern
+  isValidWildcardPattern,
+  appendKiroSyncedMappings,
+  kiroUpstreamIDsFromMetadata
 } from '@/composables/useModelWhitelist'
 
 interface Props {
@@ -3916,6 +3939,7 @@ const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist'
 const antigravityWhitelistModels = ref<string[]>([])
 const antigravityModelMappings = ref<ModelMapping[]>([])
 const isSyncingAntigravityUpstream = ref(false)
+const isSyncingKiroUpstream = ref(false)
 const tempUnschedEnabled = ref(false)
 const accountSchedulingThresholdOverrideEnabled = ref(false)
 const accountSchedulingThresholdOverrideValue = ref(100)
@@ -5007,6 +5031,52 @@ const confirmAddErrorCode = () => {
     customErrorCodeInput.value = null
   }
   pendingErrorCode.value = null
+}
+
+const syncKiroUpstreamModels = async () => {
+  if (!props.account?.id || isSyncingKiroUpstream.value || isKiroRelay.value) return
+
+  isSyncingKiroUpstream.value = true
+  try {
+    const result = await adminAPI.accounts.syncUpstreamModels(props.account.id)
+    const upstreamModels = result.models.map((model) => model.trim()).filter(Boolean)
+    if (upstreamModels.length === 0) {
+      appStore.showInfo(t('admin.accounts.syncUpstreamModelsEmpty'))
+      return
+    }
+
+    const applied = appendKiroSyncedMappings(
+      modelMappings.value,
+      upstreamModels,
+      kiroUpstreamIDsFromMetadata(result.metadata)
+    )
+    modelMappings.value = applied.rows
+
+    const warnings = result.warnings ?? []
+    const hasPartialMetadata = warnings.some(
+      (warning) => warning.code === 'upstream_model_metadata_partial'
+    )
+    const hasIncompleteMetadata = warnings.some(
+      (warning) => warning.code === 'upstream_model_metadata_incomplete'
+    )
+    if (hasIncompleteMetadata) {
+      appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataIncomplete'))
+      return
+    }
+    if (applied.added > 0) {
+      appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: applied.added, total: upstreamModels.length }))
+    } else {
+      appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
+    }
+    if (hasPartialMetadata) {
+      appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
+    appStore.showError(t('admin.accounts.syncUpstreamModelsError', { message }))
+  } finally {
+    isSyncingKiroUpstream.value = false
+  }
 }
 
 const syncAntigravityUpstreamModels = async () => {

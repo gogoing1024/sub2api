@@ -5,10 +5,12 @@ vi.mock('@/api/admin/accounts', () => ({
 }))
 
 import {
+  appendKiroSyncedMappings,
   buildModelMappingObject,
   fetchKiroDefaultMappings,
   getModelsByPlatform,
   getPresetMappingsByPlatform,
+  kiroUpstreamModelID,
   splitModelMappingObject
 } from '../useModelWhitelist'
 
@@ -146,6 +148,8 @@ describe('useModelWhitelist', () => {
       'claude-opus-4-6-thinking',
       'claude-opus-5',
       'claude-opus-5-thinking',
+      'claude-opus-5-5',
+      'claude-opus-5-5-thinking',
       'claude-sonnet-5',
       'claude-sonnet-5-thinking',
       'claude-sonnet-4-6',
@@ -236,6 +240,8 @@ describe('useModelWhitelist', () => {
       { from: 'claude-opus-4-6-thinking', to: 'claude-opus-4.6' },
       { from: 'claude-opus-5', to: 'claude-opus-5' },
       { from: 'claude-opus-5-thinking', to: 'claude-opus-5' },
+      { from: 'claude-opus-5-5', to: 'claude-opus-5.5' },
+      { from: 'claude-opus-5-5-thinking', to: 'claude-opus-5.5' },
       { from: 'claude-sonnet-5', to: 'claude-sonnet-5' },
       { from: 'claude-sonnet-5-thinking', to: 'claude-sonnet-5' },
       { from: 'claude-sonnet-4-6', to: 'claude-sonnet-4.6' },
@@ -290,6 +296,8 @@ describe('useModelWhitelist', () => {
       { from: 'claude-opus-4-6-thinking', to: 'claude-opus-4.6' },
       { from: 'claude-opus-5', to: 'claude-opus-5' },
       { from: 'claude-opus-5-thinking', to: 'claude-opus-5' },
+      { from: 'claude-opus-5-5', to: 'claude-opus-5.5' },
+      { from: 'claude-opus-5-5-thinking', to: 'claude-opus-5.5' },
       { from: 'claude-sonnet-5', to: 'claude-sonnet-5' },
       { from: 'claude-sonnet-5-thinking', to: 'claude-sonnet-5' },
       { from: 'claude-sonnet-4-6', to: 'claude-sonnet-4.6' },
@@ -301,7 +309,7 @@ describe('useModelWhitelist', () => {
       { from: 'claude-haiku-4-5-20251001', to: 'claude-haiku-4.5' },
       { from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5' }
     ]))
-    expect(mappings).toHaveLength(22)
+    expect(mappings).toHaveLength(24)
     expect(mappings.every(item => !item.from.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.to.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.from.endsWith('-agentic'))).toBe(true)
@@ -399,6 +407,42 @@ describe('useModelWhitelist', () => {
       'gpt-5.4': 'gpt-5.4-mini',
       'gpt-latest': 'gpt-5.4'
     })
+  })
+
+  it('kiro 新模型用同步带回的上游 ID，未知名字不再猜点号', () => {
+    expect(kiroUpstreamModelID('claude-opus-4-8')).toBe('claude-opus-4.8')
+    expect(kiroUpstreamModelID('claude-opus-4-5-20251101')).toBe('claude-opus-4.5')
+    expect(kiroUpstreamModelID('claude-opus-4-9')).toBe('claude-opus-4-9')
+    expect(kiroUpstreamModelID('claude-opus-4-9', { 'claude-opus-4-9': 'claude-opus-4.9' })).toBe('claude-opus-4.9')
+
+    const mapping = buildModelMappingObject(
+      'whitelist',
+      ['claude-opus-4-9', 'claude-opus-4-8'],
+      [],
+      { kiroDirect: true, kiroUpstreamIDs: { 'claude-opus-4-9': 'claude-opus-4.9' } }
+    )
+    expect(mapping).toEqual({
+      'claude-opus-4-9': 'claude-opus-4.9',
+      'claude-opus-4-8': 'claude-opus-4.8'
+    })
+  })
+
+  it('kiro 同步只追加还没有的 from，目标用上游 ID', () => {
+    const applied = appendKiroSyncedMappings(
+      [{ from: 'claude-opus-4-8', to: 'claude-sonnet-4.6' }],
+      ['claude-opus-4-8', 'claude-opus-4-9', 'claude-opus-4-9-thinking'],
+      {
+        'claude-opus-4-9': 'claude-opus-4.9',
+        'claude-opus-4-9-thinking': 'claude-opus-4.9'
+      }
+    )
+
+    expect(applied.added).toBe(2)
+    expect(applied.rows).toEqual([
+      { from: 'claude-opus-4-8', to: 'claude-sonnet-4.6' },
+      { from: 'claude-opus-4-9', to: 'claude-opus-4.9' },
+      { from: 'claude-opus-4-9-thinking', to: 'claude-opus-4.9' }
+    ])
   })
 
   it('splitModelMappingObject 会把身份映射还原成白名单，其余保留为映射', () => {

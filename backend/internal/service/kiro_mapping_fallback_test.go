@@ -10,12 +10,107 @@ import (
 )
 
 func TestAccountKiroDefaultMappingRestrictsUnsupportedModels(t *testing.T) {
-	account := &Account{Platform: PlatformKiro}
+	account := &Account{Platform: PlatformKiro, Type: AccountTypeOAuth}
 
 	require.False(t, account.IsModelSupported("gpt-4o"))
 	require.False(t, account.IsModelSupported("kiro-gpt-4o"))
 	require.False(t, account.IsModelSupported("auto"))
 	require.Equal(t, "claude-sonnet-4.6", account.GetMappedModel("claude-sonnet-4-6"))
+}
+
+func TestKiroDirectClaudeAliasFoldsDotPlacement(t *testing.T) {
+	account := &Account{
+		Platform: PlatformKiro,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"claude-opus-4-8":          "claude-opus-4.8",
+				"claude-opus-4-8-thinking": "claude-opus-4.8",
+				"codex-auto-review":        "gpt-5.6-luna",
+			},
+		},
+	}
+
+	for _, requested := range []string{
+		"claude-opus-4-8",
+		"claude-opus-4.8",
+		"claude-opus.4-8",
+		"claude-opus-4-8-thinking",
+		"claude-opus-4.8-thinking",
+	} {
+		require.True(t, account.IsModelSupported(requested), requested)
+		require.Equal(t, "claude-opus-4.8", account.GetMappedModel(requested), requested)
+	}
+	require.Equal(t, "gpt-5.6-luna", account.GetMappedModel("codex-auto-review"))
+	require.False(t, account.IsModelSupported("gpt-5.6.sol"))
+	require.False(t, account.IsModelSupported("claude-opus-4-5-20251101"))
+	require.False(t, account.IsModelSupported("claude-opus-4-5-20990101"))
+
+	defaults := &Account{Platform: PlatformKiro, Type: AccountTypeOAuth}
+	require.True(t, defaults.IsModelSupported("claude-opus-4-5-20251101"))
+	require.Equal(t, "claude-opus-4.5", defaults.GetMappedModel("claude-opus-4-5-20251101"))
+	require.False(t, defaults.IsModelSupported("claude-opus-4-5-20990101"))
+}
+
+func TestKiroDirectClaudeAliasPrefersExactCustomKey(t *testing.T) {
+	account := &Account{
+		Platform: PlatformKiro,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"claude-opus-4-8": "claude-sonnet-4.6",
+				"my-opus":         "claude-opus-4.8",
+			},
+		},
+	}
+
+	require.Equal(t, "claude-sonnet-4.6", account.GetMappedModel("claude-opus-4.8"))
+	require.Equal(t, "claude-sonnet-4.6", account.GetMappedModel("claude-opus.4-8"))
+	require.Equal(t, "claude-opus-4.8", account.GetMappedModel("my-opus"))
+}
+
+func TestKiroRelayDoesNotFoldClaudeAliases(t *testing.T) {
+	account := &Account{
+		Platform: PlatformKiro,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://relay.example",
+			"model_mapping": map[string]any{
+				"claude-opus-4-8": "claude-opus-4-8",
+			},
+		},
+	}
+
+	require.True(t, account.IsModelSupported("claude-opus-4-8"))
+	require.Equal(t, "claude-opus-4-8", account.GetMappedModel("claude-opus-4-8"))
+	require.False(t, account.IsModelSupported("claude-opus-4.8"))
+	require.False(t, account.IsModelSupported("claude-opus.4-8"))
+}
+
+func TestKiroPublicCatalogKeepsUpstreamModelID(t *testing.T) {
+	names, metadata := kiroPublicCatalog([]string{"claude-opus-4.8.1", "gpt-5.6-sol"})
+	require.Equal(t, []string{
+		"claude-opus-4-8-1",
+		"claude-opus-4-8-1-thinking",
+		"gpt-5.6-sol",
+	}, names)
+	require.Equal(t, "claude-opus-4.8.1", metadata["claude-opus-4-8-1"].ID)
+	require.Equal(t, "claude-opus-4.8.1", metadata["claude-opus-4-8-1-thinking"].ID)
+	require.Equal(t, "gpt-5.6-sol", metadata["gpt-5.6-sol"].ID)
+}
+
+func TestKiroIdentityMappingStillResolvesDottedUpstreamID(t *testing.T) {
+	account := &Account{
+		Platform: PlatformKiro,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"claude-opus-4-8": "claude-opus-4-8",
+			},
+		},
+	}
+
+	require.Equal(t, "claude-opus-4.8", resolveKiroUpstreamModel(account.GetMappedModel("claude-opus-4-8")))
 }
 
 func TestGatewayServiceCalculateTokenCost_KiroAutoUsesConservativeFallback(t *testing.T) {

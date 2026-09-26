@@ -2699,6 +2699,9 @@ func TestMapModel_MatchesKiroReferenceMapping(t *testing.T) {
 		"claude-opus-4.7":                     "claude-opus-4.7",
 		"claude-opus-5":                       "claude-opus-5",
 		"claude-opus-5-thinking":              "claude-opus-5",
+		"claude-opus-5-5":                     "claude-opus-5.5",
+		"claude-opus-5-5-thinking":            "claude-opus-5.5",
+		"claude-opus-5.5":                     "claude-opus-5.5",
 		"claude-sonnet-4-6":                   "claude-sonnet-4.6",
 		"claude-sonnet-4-6-thinking":          "claude-sonnet-4.6",
 		"claude-sonnet-4.6":                   "claude-sonnet-4.6",
@@ -2764,6 +2767,11 @@ func TestKiroMaxOutputTokensForOpus5(t *testing.T) {
 
 	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5"))
 	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5-thinking"))
+	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5-5"))
+	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5.5"))
+	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-sonnet-5"))
+	require.Equal(t, kiroDefaultMaxOutputTokens, kiroMaxOutputTokensForModel("claude-opus-4-6"))
+	require.Equal(t, kiroDefaultMaxOutputTokens, kiroMaxOutputTokensForModel("claude-sonnet-4-6"))
 }
 
 func TestIsOutputConfigPathModelSupportsFutureVersions(t *testing.T) {
@@ -2775,6 +2783,8 @@ func TestIsOutputConfigPathModelSupportsFutureVersions(t *testing.T) {
 		"claude-sonnet-5-0-thinking": true,
 		"claude-opus-5":              true,
 		"claude-opus-5-thinking":     true,
+		"claude-opus-5-5":            true,
+		"claude-opus-5.5":            true,
 		"claude-haiku-4.5":           false,
 		"claude-opus-4-5":            false,
 		"gpt-4o":                     false,
@@ -2783,6 +2793,24 @@ func TestIsOutputConfigPathModelSupportsFutureVersions(t *testing.T) {
 	for modelID, want := range cases {
 		require.Equal(t, want, isOutputConfigPathModel(modelID), modelID)
 	}
+}
+
+func TestPublicModelIDFoldsClaudeDotsFromUpstreamID(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "claude-opus-4-8", PublicModelID("claude-opus-4.8"))
+	require.Equal(t, "claude-opus-4-8-1", PublicModelID("claude-opus-4.8.1"))
+	require.Equal(t, "claude-opus-5", PublicModelID("claude-opus-5"))
+	require.Equal(t, "claude-opus-4-8", PublicModelID("claude-opus-4.8-thinking"))
+	require.Equal(t, "gpt-5.6-sol", PublicModelID("gpt-5.6-sol"))
+
+	require.Equal(t, [][2]string{
+		{"claude-opus-4-8", "claude-opus-4.8"},
+		{"claude-opus-4-8-thinking", "claude-opus-4.8"},
+	}, SyncModelAliases("claude-opus-4.8"))
+	require.Equal(t, [][2]string{
+		{"gpt-5.6-sol", "gpt-5.6-sol"},
+	}, SyncModelAliases("gpt-5.6-sol"))
 }
 
 func TestMapModel_ReturnsEmptyForUnsupportedModels(t *testing.T) {
