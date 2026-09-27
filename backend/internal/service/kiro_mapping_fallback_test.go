@@ -126,6 +126,22 @@ func TestKiroIdentityMappingStillResolvesDottedUpstreamID(t *testing.T) {
 	require.Equal(t, "claude-opus-4.8", resolveKiroUpstreamModel(account.GetMappedModel("claude-opus-4-8")))
 }
 
+func TestKiroGetMappedModelKeepsStoredDottedUpstreamID(t *testing.T) {
+	account := &Account{
+		Platform: PlatformKiro,
+		Type:     AccountTypeOAuth,
+		Credentials: map[string]any{
+			"model_mapping": map[string]any{
+				"claude-opus-4-5":          "claude-opus-4.5",
+				"claude-opus-4-5-thinking": "claude-sonnet-4.6",
+			},
+		},
+	}
+
+	require.Equal(t, "claude-opus-4.5", account.GetMappedModel("claude-opus-4-5"))
+	require.Equal(t, "claude-sonnet-4.6", account.GetMappedModel("claude-opus-4-5-thinking"))
+}
+
 func TestGatewayServiceCalculateTokenCost_KiroAutoUsesConservativeFallback(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Default.RateMultiplier = 1.1

@@ -422,9 +422,100 @@ describe('useModelWhitelist', () => {
       { kiroDirect: true, kiroUpstreamIDs: { 'claude-opus-4-9': 'claude-opus-4.9' } }
     )
     expect(mapping).toEqual({
-      'claude-opus-4-9': 'claude-opus-4.9',
-      'claude-opus-4-8': 'claude-opus-4.8'
+      'claude-opus-4-9': 'claude-opus-4-9',
+      'claude-opus-4-8': 'claude-opus-4-8'
     })
+  })
+
+  it('kiro 直连白名单保存为恒等映射，自定义行盖过同名白名单', () => {
+    const mapping = buildModelMappingObject(
+      'combined',
+      ['claude-opus-4-5', 'claude-sonnet-4-thinking'],
+      [{ from: 'claude-opus-4-5', to: 'claude-sonnet-4.6' }],
+      { kiroDirect: true }
+    )
+    expect(mapping).toEqual({
+      'claude-opus-4-5': 'claude-sonnet-4.6',
+      'claude-sonnet-4-thinking': 'claude-sonnet-4-thinking'
+    })
+  })
+
+  it('kiro 旧的点号行归回白名单，不同模型仍留在映射', () => {
+    const parsed = splitModelMappingObject(
+      {
+        'claude-haiku-4-5': 'claude-haiku-4.5',
+        'claude-haiku-4-5-thinking': 'claude-haiku-4.5',
+        'claude-opus-4-5': 'claude-opus-4.5',
+        'claude-opus-4-5-thinking': 'claude-opus-4.5',
+        'claude-sonnet-4-5': 'claude-sonnet-4.5',
+        'claude-sonnet-4-5-thinking': 'claude-sonnet-4.5',
+        'claude-sonnet-4-thinking': 'claude-sonnet-4',
+        'claude-haiku-4-5-20251001': 'claude-haiku-4.5',
+        'claude-opus-4-8': 'claude-sonnet-4.6'
+      },
+      { kiroDirect: true }
+    )
+    expect(parsed.allowedModels).toEqual([
+      'claude-haiku-4-5',
+      'claude-haiku-4-5-thinking',
+      'claude-opus-4-5',
+      'claude-opus-4-5-thinking',
+      'claude-sonnet-4-5',
+      'claude-sonnet-4-5-thinking',
+      'claude-sonnet-4-thinking',
+      'claude-haiku-4-5-20251001'
+    ])
+    expect(parsed.modelMappings).toEqual([{ from: 'claude-opus-4-8', to: 'claude-sonnet-4.6' }])
+
+    const remapped = splitModelMappingObject(
+      { 'claude-opus-4-5': 'claude-sonnet-4.6' },
+      { kiroDirect: true }
+    )
+    expect(remapped.allowedModels).toEqual([])
+    expect(remapped.modelMappings).toEqual([{ from: 'claude-opus-4-5', to: 'claude-sonnet-4.6' }])
+  })
+
+  it('kiro 后端折不出来的写法差异仍留在映射', () => {
+    const parsed = splitModelMappingObject(
+      {
+        'claude-3-7-sonnet': 'claude-3.7-sonnet',
+        'gpt-5-6-sol': 'gpt-5.6-sol',
+        'claude-opus-4-6': 'claude-opus-4.6-thinking'
+      },
+      { kiroDirect: true }
+    )
+    expect(parsed.allowedModels).toEqual([])
+    expect(parsed.modelMappings).toEqual([
+      { from: 'claude-3-7-sonnet', to: 'claude-3.7-sonnet' },
+      { from: 'gpt-5-6-sol', to: 'gpt-5.6-sol' },
+      { from: 'claude-opus-4-6', to: 'claude-opus-4.6-thinking' }
+    ])
+  })
+
+  it('kiro 同步白名单只在后端折不出来时写上游 ID，往返不变', () => {
+    const options = {
+      kiroDirect: true,
+      kiroUpstreamIDs: {
+        'claude-3-7-sonnet': 'claude-3.7-sonnet',
+        'claude-opus-4-9': 'claude-opus-4.9'
+      }
+    }
+    const mapping = buildModelMappingObject(
+      'combined',
+      ['claude-3-7-sonnet', 'claude-opus-4-9'],
+      [],
+      options
+    )
+    expect(mapping).toEqual({
+      'claude-3-7-sonnet': 'claude-3.7-sonnet',
+      'claude-opus-4-9': 'claude-opus-4-9'
+    })
+
+    const parsed = splitModelMappingObject(mapping, { kiroDirect: true })
+    expect(parsed.allowedModels).toEqual(['claude-opus-4-9'])
+    expect(
+      buildModelMappingObject('combined', parsed.allowedModels, parsed.modelMappings, { kiroDirect: true })
+    ).toEqual(mapping)
   })
 
   it('kiro 同步只追加还没有的 from，目标用上游 ID', () => {

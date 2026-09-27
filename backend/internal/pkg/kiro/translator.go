@@ -285,11 +285,11 @@ func MapModel(model string) string {
 		return "claude-sonnet-4.5"
 	case "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001-thinking", "claude-haiku-4.5":
 		return "claude-haiku-4.5"
+	case "claude-sonnet-4-thinking":
+		return "claude-sonnet-4"
 	default:
-		// P3: 通用 Claude 版本号归一化 — 将 claude-{family}-{major}-{minor} 中的
-		// 最后一段短横线转为点号（如 claude-opus-4-9 → claude-opus-4.9），
-		// 兼容不支持 "." 的客户端（如 Claude Code 会把 "4.6" 写成 "4-6"）。
-		// 仅对 version >= 4.6 做归一化（4.5 及以下有带日期后缀的 case，不应该歧义匹配）。
+		// 不带日期的 claude-{family}-{major}-{minor} 把最后一段短横线收成点号。
+		// 正则是整段匹配，claude-opus-4-5-20251101 这类带日期的名字对不上，仍走上面的明确条目。
 		normalized := normalizeClaudeVersionNumber(strings.TrimSpace(strings.ToLower(model)))
 		if normalized != strings.TrimSpace(strings.ToLower(model)) {
 			return normalized
@@ -299,8 +299,8 @@ func MapModel(model string) string {
 }
 
 // normalizeClaudeVersionNumber 将 claude-{family}-{major}-{minor} 格式中的最后一段
-// 版本短横线转为点号。仅适用于 version >= 4.6（避免歧义匹配 4-5 等旧格式）。
-// 例如：claude-opus-4-9 → claude-opus-4.9, claude-opus-4-9-thinking → claude-opus-4.9
+// 版本短横线转为点号。4.5 及以上都折叠；带日期后缀的名字对不上这条正则。
+// 例如：claude-opus-4-9 → claude-opus-4.9, claude-opus-4-5-thinking → claude-opus-4.5
 var claudeVersionNormalizePattern = regexp.MustCompile(
 	`^(claude-(?:sonnet|haiku|opus))-(\d+)-(\d{1,2})(?:-thinking)?$`,
 )
@@ -318,8 +318,8 @@ func normalizeClaudeVersionNumber(model string) string {
 	}
 	major, _ := strconv.Atoi(matches[2])
 	minor, _ := strconv.Atoi(matches[3])
-	// 仅对 >= 4.6 做归一化；4.5 及以下有带日期后缀的明确 case，不应该在这里歧义匹配
-	if major < 4 || (major == 4 && minor < 6) {
+	// 4.4 及更低不折叠。4.5 的不带日期短名字在这里收成点号；带日期的 ID 匹配不到本正则。
+	if major < 4 || (major == 4 && minor < 5) {
 		return model
 	}
 	return matches[1] + "-" + matches[2] + "." + matches[3]

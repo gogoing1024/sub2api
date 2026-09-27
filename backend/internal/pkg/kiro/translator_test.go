@@ -2724,6 +2724,13 @@ func TestMapModel_MatchesKiroReferenceMapping(t *testing.T) {
 		"claude-haiku-4-5-20251001":           "claude-haiku-4.5",
 		"claude-haiku-4-5-20251001-thinking":  "claude-haiku-4.5",
 		"claude-haiku-4.5":                    "claude-haiku-4.5",
+		"claude-opus-4-5":                     "claude-opus-4.5",
+		"claude-opus-4-5-thinking":            "claude-opus-4.5",
+		"claude-sonnet-4-5":                   "claude-sonnet-4.5",
+		"claude-sonnet-4-5-thinking":          "claude-sonnet-4.5",
+		"claude-haiku-4-5":                    "claude-haiku-4.5",
+		"claude-haiku-4-5-thinking":           "claude-haiku-4.5",
+		"claude-sonnet-4-thinking":            "claude-sonnet-4",
 		"gpt-5.6-sol":                         "gpt-5.6-sol",
 		"gpt-5.6-terra":                       "gpt-5.6-terra",
 		"gpt-5.6-luna":                        "gpt-5.6-luna",
@@ -2744,9 +2751,6 @@ func TestMapModel_MatchesKiroReferenceMapping(t *testing.T) {
 		"claude-3-5-sonnet-20241022",
 		"claude-opus-4-20250514",
 		"claude-sonnet-4",
-		"claude-opus-4-5",
-		"claude-sonnet-4-5",
-		"claude-haiku-4-5",
 	}
 	for _, input := range rejected {
 		if got := MapModel(input); got != "" {
