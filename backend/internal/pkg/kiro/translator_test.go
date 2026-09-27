@@ -2813,6 +2813,12 @@ func TestPublicModelIDFoldsClaudeDotsFromUpstreamID(t *testing.T) {
 	require.Equal(t, [][2]string{
 		{"gpt-5.6-sol", "gpt-5.6-sol"},
 	}, SyncModelAliases("gpt-5.6-sol"))
+	require.Equal(t, [][2]string{
+		{"claude-haiku-4-5", "claude-haiku-4.5"},
+		{"claude-haiku-4-5-thinking", "claude-haiku-4.5"},
+		{"claude-haiku-4-5-20251001", "claude-haiku-4.5"},
+		{"claude-haiku-4-5-20251001-thinking", "claude-haiku-4.5"},
+	}, SyncModelAliases("claude-haiku-4.5"))
 }
 
 func TestMapModel_ReturnsEmptyForUnsupportedModels(t *testing.T) {

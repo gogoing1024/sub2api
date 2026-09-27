@@ -391,6 +391,7 @@ func ClaudeAliasKey(model string) (string, bool) {
 
 // SyncModelAliases 把一条上游 modelId 展开成要写入账号映射的对外名。
 // 值为上游原样 ID。Claude 额外补一行 -thinking，折叠到同一个上游 ID。
+// Haiku 4.5 再补上客户端常用的带日期名，日期不在上游 ID 里，不能从点号折叠得到。
 func SyncModelAliases(modelID string) [][2]string {
 	upstream := strings.TrimSpace(modelID)
 	if upstream == "" {
@@ -403,6 +404,12 @@ func SyncModelAliases(modelID string) [][2]string {
 	aliases := [][2]string{{publicID, upstream}}
 	if strings.HasPrefix(publicID, "claude-") && !strings.HasSuffix(publicID, "-thinking") {
 		aliases = append(aliases, [2]string{publicID + "-thinking", upstream})
+	}
+	if publicID == "claude-haiku-4-5" {
+		aliases = append(aliases,
+			[2]string{"claude-haiku-4-5-20251001", upstream},
+			[2]string{"claude-haiku-4-5-20251001-thinking", upstream},
+		)
 	}
 	return aliases
 }
