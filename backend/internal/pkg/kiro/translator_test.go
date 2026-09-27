@@ -889,7 +889,8 @@ func TestExtractThinkingBlocksParsesRealTags(t *testing.T) {
 	require.Len(t, blocks, 2)
 	require.Equal(t, "thinking", blocks[0]["type"])
 	require.Equal(t, "reason", blocks[0]["thinking"])
-	require.NotEmpty(t, blocks[0]["signature"])
+	_, hasSignature := blocks[0]["signature"]
+	require.False(t, hasSignature)
 	require.Equal(t, "text", blocks[1]["type"])
 	require.Equal(t, "final text", blocks[1]["text"])
 }
@@ -1543,6 +1544,7 @@ func TestStreamEventStreamAsAnthropicClosesThinkingBeforeTool(t *testing.T) {
 	require.NotEqual(t, -1, thinkingStop)
 	require.NotEqual(t, -1, toolStart)
 	require.Less(t, thinkingDelta+thinkingStop, toolStart)
+	require.NotContains(t, output, "signature_delta")
 }
 
 func TestStreamEventStreamAsAnthropicClosesOpenToolAtEOF(t *testing.T) {

@@ -643,10 +643,8 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	stopSequenceMatched := ""
 	stopSequencePendingText := ""
 	thinkingBuffer := ""
-	var currentThinking strings.Builder
 	inThinkingBlock := false
 	stripThinkingLeadingNewline := false
-	currentMessageID := ""
 	var outputTextBuf strings.Builder
 
 	writeEvent := func(event string, data any) error {
@@ -687,9 +685,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 			return err
 		}
 		messageStartSent = true
-		if currentMessageID == "" {
-			currentMessageID = useMsgID
-		}
 		return nil
 	}
 
@@ -703,22 +698,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 	closeThinking := func() error {
 		if !thinkingBlockOpen {
 			return nil
-		}
-		if currentThinking.Len() > 0 {
-			sig := thinkingSignature(currentThinking.String(), model, currentMessageID)
-			currentThinking.Reset()
-			if sig != "" {
-				if err := writeEvent("content_block_delta", map[string]any{
-					"type":  "content_block_delta",
-					"index": thinkingBlockIndex,
-					"delta": map[string]any{
-						"type":      "signature_delta",
-						"signature": sig,
-					},
-				}); err != nil {
-					return err
-				}
-			}
 		}
 		thinkingBlockOpen = false
 		return writeEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": thinkingBlockIndex})
@@ -1084,7 +1063,6 @@ func StreamEventStreamAsAnthropicWithContext(ctx context.Context, body io.Reader
 		}
 		if text != "" {
 			_, _ = outputTextBuf.WriteString(text)
-			_, _ = currentThinking.WriteString(text)
 		}
 		return writeEvent("content_block_delta", map[string]any{
 			"type":  "content_block_delta",
@@ -3153,7 +3131,7 @@ func parseEventStream(body io.Reader) (string, []KiroToolUse, Usage, string, err
 func buildClaudeResponse(content string, toolUses []KiroToolUse, model string, usage Usage, stopReason string, requestCtx KiroRequestContext) []byte {
 	msgID := newClaudeMessageID()
 	var blocks []map[string]any
-	blocks = append(blocks, extractThinkingBlocksWithSignature(content, model, msgID)...)
+	blocks = append(blocks, extractThinkingBlocks(content)...)
 	stopSequence := ""
 	if len(toolUses) == 0 {
 		if nextBlocks, matched := applyStopSequencesToTextBlocks(blocks, requestCtx.StopSequences); matched != "" {
@@ -3409,10 +3387,6 @@ func hasThinkingBlocksOnly(blocks []map[string]any) bool {
 }
 
 func extractThinkingBlocks(content string) []map[string]any {
-	return extractThinkingBlocksWithSignature(content, "claude", newClaudeMessageID())
-}
-
-func extractThinkingBlocksWithSignature(content, model, msgID string) []map[string]any {
 	if content == "" {
 		return nil
 	}
@@ -3425,9 +3399,8 @@ func extractThinkingBlocksWithSignature(content, model, msgID string) []map[stri
 		thinking := pendingThinking.String()
 		if strings.TrimSpace(thinking) != "" {
 			blocks = append(blocks, map[string]any{
-				"type":      "thinking",
-				"thinking":  thinking,
-				"signature": thinkingSignature(thinking, model, msgID),
+				"type":     "thinking",
+				"thinking": thinking,
 			})
 		}
 		pendingThinking.Reset()
