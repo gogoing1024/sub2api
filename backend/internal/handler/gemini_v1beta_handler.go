@@ -60,6 +60,17 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 		return filtered
 	}
 
+	// Adobe 分组只列 Adobe 模型，用不到下面的 Antigravity 映射；先返回，免得白查一次
+	// 账号、查询出错时还把 Adobe 列模型连带成 503。强制平台下 isAdobeGeminiV1Beta 恒为 false。
+	if isAdobeGeminiV1Beta(c, apiKey) {
+		models := service.AdobeGeminiModels()
+		for _, alias := range h.adobeGeminiAccountAliases(c.Request.Context(), apiKey.GroupID) {
+			models = append(models, service.AdobeGeminiModel(alias))
+		}
+		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(models)})
+		return
+	}
+
 	agModelIDs, err := h.geminiCompatService.AntigravityGeminiModelIDs(c.Request.Context(), apiKey.GroupID, forcePlatform != service.PlatformAntigravity)
 	if err != nil {
 		googleError(c, http.StatusServiceUnavailable, "Unable to list Antigravity models")
@@ -71,15 +82,6 @@ func (h *GatewayHandler) GeminiV1BetaListModels(c *gin.Context) {
 	}
 	if forcePlatform == service.PlatformAntigravity {
 		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(agModels)})
-		return
-	}
-
-	if isAdobeGeminiV1Beta(c, apiKey) {
-		models := service.AdobeGeminiModels()
-		for _, alias := range h.adobeGeminiAccountAliases(c.Request.Context(), apiKey.GroupID) {
-			models = append(models, service.AdobeGeminiModel(alias))
-		}
-		c.JSON(http.StatusOK, gemini.ModelsListResponse{Models: filterGeminiModels(models)})
 		return
 	}
 

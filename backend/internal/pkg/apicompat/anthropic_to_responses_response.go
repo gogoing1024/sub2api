@@ -551,6 +551,9 @@ func anthToResHandleContentBlockStop(evt *AnthropicStreamEvent, state *Anthropic
 		return events
 
 	case "custom_tool_call":
+		// 与 function_call 分支同理：中转把完整参数放在 content_block_start 上且不发
+		// delta 时，seed 是唯一来源。custom 工具不向客户端流式发参数 delta，只需把
+		// seed 并入缓冲，否则 input 为空、工具以空参数执行。
 		if state.CurrentArgs.Len() == 0 && state.PendingToolInput != "" {
 			_, _ = state.CurrentArgs.WriteString(state.PendingToolInput)
 		}

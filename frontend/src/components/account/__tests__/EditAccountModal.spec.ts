@@ -2069,8 +2069,10 @@ describe('EditAccountModal Kiro model restriction', () => {
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
+    // 直连 Kiro 白名单的标准存法是恒等（转发时 MapModel 仍折成 claude-opus-4.8），
+    // 老的点号行保存后改写成恒等；自定义映射原样保留。
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
-      'claude-opus-4-8': 'claude-opus-4.8',
+      'claude-opus-4-8': 'claude-opus-4-8',
       'codex-auto-review': 'gpt-5.6-luna'
     })
     wrapper.unmount()
