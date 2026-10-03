@@ -288,7 +288,6 @@ const platformCards = computed<FusedPlatformCard[]>(() => {
   }
 
   const PLATFORM_ORDER = ['anthropic', 'openai', 'gemini', 'antigravity', 'kiro', 'grok', 'typesafe']
->>>>>>> upstream/main
   const cards: FusedPlatformCard[] = []
 
   for (const p of platforms) {
