@@ -278,6 +278,8 @@ func MapModel(model string) string {
 		return "claude-opus-5.5"
 	case "claude-sonnet-5", "claude-sonnet-5-thinking":
 		return "claude-sonnet-5"
+	case "claude-sonnet-5-5", "claude-sonnet-5-5-thinking", "claude-sonnet-5.5", "claude-sonnet-5.5-thinking":
+		return "claude-sonnet-5.5"
 	case "claude-sonnet-4-6", "claude-sonnet-4-6-thinking", "claude-sonnet-4.6":
 		return "claude-sonnet-4.6"
 	case "claude-opus-4-5-20251101", "claude-opus-4-5-20251101-thinking", "claude-opus-4.5":
