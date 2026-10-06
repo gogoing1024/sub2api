@@ -2802,6 +2802,10 @@ func TestMapModel_MatchesKiroReferenceMapping(t *testing.T) {
 		"claude-sonnet-4.6":                   "claude-sonnet-4.6",
 		"claude-sonnet-5":                     "claude-sonnet-5",
 		"claude-sonnet-5-thinking":            "claude-sonnet-5",
+		"claude-sonnet-5-5":                   "claude-sonnet-5.5",
+		"claude-sonnet-5-5-thinking":          "claude-sonnet-5.5",
+		"claude-sonnet-5.5":                   "claude-sonnet-5.5",
+		"claude-sonnet-5.5-thinking":          "claude-sonnet-5.5",
 		"claude-opus-4-9":                     "claude-opus-4.9",
 		"claude-opus-4-9-thinking":            "claude-opus-4.9",
 		"claude-sonnet-5-0-thinking":          "claude-sonnet-5.0",
@@ -2869,6 +2873,7 @@ func TestKiroMaxOutputTokensForOpus5(t *testing.T) {
 	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5-5"))
 	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5.5"))
 	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-sonnet-5"))
+	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-sonnet-5-5"))
 	require.Equal(t, kiroDefaultMaxOutputTokens, kiroMaxOutputTokensForModel("claude-opus-4-6"))
 	require.Equal(t, kiroDefaultMaxOutputTokens, kiroMaxOutputTokensForModel("claude-sonnet-4-6"))
 }
