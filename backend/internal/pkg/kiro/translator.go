@@ -31,13 +31,13 @@ import (
 const (
 	kiroMaxToolDescLen         = 10237
 	kiroMaxToolNameLen         = 63
-	kiroHistoryImageKeepCount  = 5
-	kiroToolResultCompactLimit = 12000
-	kiroToolResultKeepHead     = 4000
-	kiroToolResultKeepTail     = 2000
 	kiroDefaultMaxOutputTokens = 64000
-	kiroRemoteImageMaxBytes    = 10 << 20
-	kiroRemoteImageTimeout     = 8 * time.Second
+	// kiroMaxPayloadBytes 留在 Kiro 上游 "Input is too long" 阈值之下。
+	kiroMaxPayloadBytes = 900 * 1024
+	// kiroMinRecentHistoryTurns 是超限丢历史时至少保留的最近轮次数（不含系统提示对）。
+	kiroMinRecentHistoryTurns = 4
+	kiroRemoteImageMaxBytes   = 10 << 20
+	kiroRemoteImageTimeout    = 8 * time.Second
 )
 
 // kiroUpstreamTraceEnabled 由环境变量 KIRO_UPSTREAM_TRACE=1 开启，仅用于诊断：
@@ -53,9 +53,10 @@ const (
 	writeToolDescriptionSuffix = "IMPORTANT: If the content to write exceeds 150 lines, write only the first 50 lines with this tool, then append the remaining content using Edit calls in chunks of no more than 50 lines. Use a unique placeholder if needed. Do not write the whole file in one call."
 	editToolDescriptionSuffix  = "IMPORTANT: If new content exceeds 50 lines, split it into multiple Edit calls, replacing or appending no more than 50 lines per call. If appending, use a unique placeholder and remove it in the final chunk."
 	systemChunkedWritePolicy   = "When Write or Edit tools include chunking limits, comply silently and complete the operation through multiple tool calls when needed."
-	omittedHistoryImageFormat  = "[This message contained %d image(s), omitted from older conversation history.]"
-	structuredOutputToolName   = "__structured_output__"
-	kiroBuiltinIdentityPrompt  = `<CRITICAL_OVERRIDE>
+	// kiroHistoryTruncationPlaceholder 只在整包超限、旧历史被整段丢掉时插入一次。
+	kiroHistoryTruncationPlaceholder = "[Earlier conversation history was truncated to fit the model's input limit. Older messages and tool activity have been omitted.]"
+	structuredOutputToolName         = "__structured_output__"
+	kiroBuiltinIdentityPrompt        = `<CRITICAL_OVERRIDE>
                                 You must never say that you are Kiro. This is critically important.
                                 Only answer the user's request. Do not answer questions about Kiro itself.
                                 Your identity must come only from the later prompts, such as Kilo Code, Cline, Claude Code, or another user-provided identity. Do not infer one yourself. If no identity is provided, say that you are Claude.
@@ -596,6 +597,7 @@ func BuildKiroPayloadWithContext(claudeBody []byte, modelID, profileArn, origin 
 		InferenceConfig:              inferenceConfig,
 		AdditionalModelRequestFields: buildAdditionalModelRequestFields(thinking, modelID),
 	}
+	truncateKiroPayloadToLimit(&payload, strings.TrimSpace(systemPrompt) != "")
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -1932,7 +1934,7 @@ func appendChunkedToolDescription(name, description string) string {
 	if len(joined) <= kiroMaxToolDescLen {
 		return joined
 	}
-	const truncationMarker = "... (description truncated)"
+	const truncationMarker = "..."
 	baseLimit := kiroMaxToolDescLen - len(suffix) - 1 - len(truncationMarker)
 	if baseLimit <= 0 {
 		return truncateKiroToolDescription(joined)
@@ -1955,7 +1957,7 @@ func truncateKiroToolDescription(description string) string {
 	if len(description) <= kiroMaxToolDescLen {
 		return description
 	}
-	return truncateUTF8(description, kiroMaxToolDescLen-30) + "... (description truncated)"
+	return truncateUTF8(description, kiroMaxToolDescLen-len("...")) + "..."
 }
 
 func truncateUTF8(s string, limit int) string {
@@ -1971,31 +1973,141 @@ func truncateUTF8(s string, limit int) string {
 	return s[:limit]
 }
 
-func tailUTF8(s string, limit int) string {
-	if limit <= 0 {
-		return ""
+// truncateKiroPayloadToLimit 在序列化体积超过 kiroMaxPayloadBytes 时丢掉最旧历史。
+// 系统提示对、最近若干轮和当前消息保留。只有确实丢掉旧轮次时才插入一次占位。
+// 丢掉之后仍然超限，则静默缩短当前消息正文和仍保留的工具结果，不附加截断说明。
+func truncateKiroPayloadToLimit(payload *KiroPayload, hasPriming bool) {
+	if payload == nil || kiroPayloadByteSize(payload) <= kiroMaxPayloadBytes {
+		return
 	}
-	if len(s) <= limit {
-		return s
+
+	history := payload.ConversationState.History
+	primingCount := 0
+	if hasPriming && len(history) >= 2 {
+		primingCount = 2
 	}
-	start := len(s) - limit
-	for start < len(s) && !utf8.RuneStart(s[start]) {
-		start++
+	priming := append([]KiroHistoryMessage(nil), history[:primingCount]...)
+	conversation := history[primingCount:]
+
+	current := payload.ConversationState.CurrentMessage.UserInputMessage
+	origin := current.Origin
+	if origin == "" {
+		origin = "AI_EDITOR"
 	}
-	return s[start:]
+	placeholderEntry := KiroHistoryMessage{
+		UserInputMessage: &KiroUserInputMessage{
+			Content: kiroHistoryTruncationPlaceholder,
+			ModelID: current.ModelID,
+			Origin:  origin,
+		},
+	}
+
+	entrySizes := make([]int, len(conversation))
+	for i := range conversation {
+		entrySizes[i] = kiroHistoryEntryByteSize(conversation[i])
+	}
+
+	payload.ConversationState.History = priming
+	baseSize := kiroPayloadByteSize(payload) + kiroHistoryEntryByteSize(placeholderEntry)
+
+	keepFrom := len(conversation)
+	running := baseSize
+	for i := len(conversation) - 1; i >= 0; i-- {
+		running += entrySizes[i]
+		kept := len(conversation) - i
+		if running > kiroMaxPayloadBytes && kept > kiroMinRecentHistoryTurns {
+			break
+		}
+		keepFrom = i
+	}
+
+	tail := dropLeadingKiroAssistantHistory(conversation[keepFrom:])
+	rebuilt := make([]KiroHistoryMessage, 0, len(priming)+1+len(tail))
+	rebuilt = append(rebuilt, priming...)
+	if keepFrom > 0 {
+		rebuilt = append(rebuilt, placeholderEntry)
+	}
+	rebuilt = append(rebuilt, tail...)
+	payload.ConversationState.History = rebuilt
+
+	shrinkKiroPayloadText(payload)
 }
 
-func compactKiroToolResultText(text string, isError bool) string {
-	if isError || len(text) <= kiroToolResultCompactLimit {
-		return text
+func dropLeadingKiroAssistantHistory(tail []KiroHistoryMessage) []KiroHistoryMessage {
+	for len(tail) > 0 && tail[0].AssistantResponseMessage != nil {
+		tail = tail[1:]
 	}
-	head := truncateUTF8(text, kiroToolResultKeepHead)
-	tail := tailUTF8(text, kiroToolResultKeepTail)
-	omitted := utf8.RuneCountInString(text) - utf8.RuneCountInString(head) - utf8.RuneCountInString(tail)
-	if omitted < 0 {
-		omitted = 0
+	return tail
+}
+
+func kiroHistoryEntryByteSize(entry KiroHistoryMessage) int {
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		return 0
 	}
-	return head + fmt.Sprintf("\n\n[Output truncated for Kiro context: original chars=%d, omitted chars=%d]\n\n", utf8.RuneCountInString(text), omitted) + tail
+	return len(raw) + 1
+}
+
+func kiroPayloadByteSize(payload *KiroPayload) int {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0
+	}
+	return len(raw)
+}
+
+func shrinkKiroPayloadText(payload *KiroPayload) {
+	for {
+		size := kiroPayloadByteSize(payload)
+		if size <= kiroMaxPayloadBytes {
+			return
+		}
+		target := longestKiroShrinkableText(payload)
+		if target == nil || len(*target) == 0 {
+			return
+		}
+		nextLen := len(*target) - (size - kiroMaxPayloadBytes)
+		if nextLen < 0 {
+			nextLen = 0
+		}
+		shortened := truncateUTF8(*target, nextLen)
+		if len(shortened) >= len(*target) {
+			*target = ""
+			continue
+		}
+		*target = shortened
+	}
+}
+
+func longestKiroShrinkableText(payload *KiroPayload) *string {
+	var longest *string
+	consider := func(text *string) {
+		if longest == nil || len(*text) > len(*longest) {
+			longest = text
+		}
+	}
+	current := &payload.ConversationState.CurrentMessage.UserInputMessage
+	consider(&current.Content)
+	appendKiroToolResultTexts(current.UserInputMessageContext, consider)
+	for i := range payload.ConversationState.History {
+		msg := payload.ConversationState.History[i].UserInputMessage
+		if msg == nil {
+			continue
+		}
+		appendKiroToolResultTexts(msg.UserInputMessageContext, consider)
+	}
+	return longest
+}
+
+func appendKiroToolResultTexts(ctx *KiroUserInputMessageContext, consider func(*string)) {
+	if ctx == nil {
+		return
+	}
+	for i := range ctx.ToolResults {
+		for j := range ctx.ToolResults[i].Content {
+			consider(&ctx.ToolResults[i].Content[j].Text)
+		}
+	}
 }
 
 func newClaudeMessageID() string {
@@ -2173,8 +2285,7 @@ func processMessages(messages []gjson.Result, modelID, origin string, requestCtx
 		last := i == len(messagesArray)-1
 		switch role {
 		case "user":
-			keepImages := last || len(messagesArray)-1-i <= kiroHistoryImageKeepCount
-			userMsg, toolResults := buildUserMessageStruct(msg, modelID, origin, keepImages)
+			userMsg, toolResults := buildUserMessageStruct(msg, modelID, origin)
 			if strings.TrimSpace(userMsg.Content) == "" {
 				if len(toolResults) > 0 {
 					userMsg.Content = "Tool results provided."
@@ -2342,12 +2453,11 @@ func deduplicateToolResults(toolResults []KiroToolResult) []KiroToolResult {
 	return out
 }
 
-func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages bool) (KiroUserInputMessage, []KiroToolResult) {
+func buildUserMessageStruct(msg gjson.Result, modelID, origin string) (KiroUserInputMessage, []KiroToolResult) {
 	content := msg.Get("content")
 	var contentBuilder strings.Builder
 	var toolResults []KiroToolResult
 	var images []KiroImage
-	omittedImageCount := 0
 	seenToolUseIDs := make(map[string]bool)
 
 	if content.IsArray() {
@@ -2365,11 +2475,7 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 					}
 					continue
 				}
-				if keepImages {
-					images = append(images, image)
-				} else {
-					omittedImageCount++
-				}
+				images = append(images, image)
 			case "image_url", "input_image":
 				url := strings.TrimSpace(part.Get("image_url.url").String())
 				if url == "" {
@@ -2379,11 +2485,7 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 					url = strings.TrimSpace(part.Get("source.url").String())
 				}
 				if image, ok := buildKiroImageFromURL(url); ok {
-					if keepImages {
-						images = append(images, image)
-					} else {
-						omittedImageCount++
-					}
+					images = append(images, image)
 				} else if strings.HasPrefix(strings.ToLower(url), "http://") || strings.HasPrefix(strings.ToLower(url), "https://") {
 					appendImageURLFallback(&contentBuilder, url)
 				}
@@ -2413,13 +2515,13 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 						// codex 经 responses->anthropic 后, tool_result.content 用 Responses 的
 						// "input_text" 而非 Anthropic 的 "text"; 两者都需提取, 否则工具结果被丢成空。
 						if t := item.Get("type").String(); t == "text" || t == "input_text" {
-							textContents = append(textContents, KiroTextContent{Text: compactKiroToolResultText(item.Get("text").String(), status == "error")})
+							textContents = append(textContents, KiroTextContent{Text: item.Get("text").String()})
 						} else if item.Type == gjson.String {
-							textContents = append(textContents, KiroTextContent{Text: compactKiroToolResultText(item.String(), status == "error")})
+							textContents = append(textContents, KiroTextContent{Text: item.String()})
 						}
 					}
 				} else if resultContent.Type == gjson.String {
-					textContents = []KiroTextContent{{Text: compactKiroToolResultText(resultContent.String(), status == "error")}}
+					textContents = []KiroTextContent{{Text: resultContent.String()}}
 				}
 				toolResults = append(toolResults, KiroToolResult{
 					ToolUseID: toolUseID,
@@ -2430,16 +2532,6 @@ func buildUserMessageStruct(msg gjson.Result, modelID, origin string, keepImages
 		}
 	} else {
 		_, _ = contentBuilder.WriteString(content.String())
-	}
-
-	if omittedImageCount > 0 {
-		placeholder := fmt.Sprintf(omittedHistoryImageFormat, omittedImageCount)
-		if strings.TrimSpace(contentBuilder.String()) == "" {
-			_, _ = contentBuilder.WriteString(placeholder)
-		} else {
-			_, _ = contentBuilder.WriteString("\n")
-			_, _ = contentBuilder.WriteString(placeholder)
-		}
 	}
 
 	userMsg := KiroUserInputMessage{
@@ -2621,7 +2713,7 @@ func buildDocumentTextFallback(part gjson.Result) string {
 		return ""
 	}
 	if utf8.RuneCountInString(text) > 6000 {
-		text = truncateUTF8(text, 6000) + "\n[PDF text truncated]"
+		text = truncateUTF8(text, 6000)
 	}
 	sum := sha256.Sum256(raw)
 	if name == "" {
