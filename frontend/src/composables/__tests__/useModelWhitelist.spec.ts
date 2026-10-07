@@ -340,6 +340,22 @@ describe('useModelWhitelist', () => {
     expect(mappings.some(item => item.to === 'claude-opus-4-7')).toBe(false)
   })
 
+  it('kiro Sonnet 5.5 四种写法解析到同一上游 ID，直连白名单存恒等', () => {
+    for (const name of [
+      'claude-sonnet-5-5',
+      'claude-sonnet-5-5-thinking',
+      'claude-sonnet-5.5',
+      'claude-sonnet-5.5-thinking'
+    ]) {
+      expect(kiroUpstreamModelID(name)).toBe('claude-sonnet-5.5')
+    }
+
+    const mapping = buildModelMappingObject('whitelist', ['claude-sonnet-5-5'], [], {
+      kiroDirect: true
+    })
+    expect(mapping).toEqual({ 'claude-sonnet-5-5': 'claude-sonnet-5-5' })
+  })
+
   // 逐条对齐 backend/internal/domain/constants.go 的 DefaultAdobeModelMapping
   // 与 backend/internal/pkg/adobe 的 externalImageModelAliases。
   //
