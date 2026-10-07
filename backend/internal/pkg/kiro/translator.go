@@ -440,17 +440,34 @@ func IsKiroGPTModel(modelID string) bool {
 	}
 }
 
+// kiroMaxOutputTokensForModel 返回模型在 Kiro 上游允许的最大输出 token 数，
+// 对齐 Kiro 官方模型卡片的「最大输出」一栏：GPT-5.6 三兄弟、Opus 4.7+、
+// Sonnet 5.5+ 是 128000；Sonnet 5、Opus 4.6 与各 4.5 及未知模型统一 64000。
 func kiroMaxOutputTokensForModel(model string) int {
 	normalized := normalizeModelAlias(model)
-	switch normalized {
-	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
-		return 128000
-	}
-	// Opus 4.7+ 与 Opus/Sonnet 主版本 >= 5 上限 128000。其余（含 Opus 4.6）仍是 64000。
-	if isKiroHighCapabilityClaude(normalized) {
+	if IsKiroGPTModel(normalized) || isKiro128KOutputClaude(normalized) {
 		return 128000
 	}
 	return kiroDefaultMaxOutputTokens
+}
+
+// isKiro128KOutputClaude 判断 Claude 模型在 Kiro 上游是否开放 128000 输出上限。
+// Opus 4.7 及以上、Sonnet 5.5 及以上；Sonnet 5 仍是 64000，不能按「主版本 >= 5」
+// 一刀切。与 isKiroHighCapabilityClaude（管 thinking 行为）刻意分开：两者的模型
+// 集合不同，Sonnet 5 属高能力档但输出上限仍是 64000。
+func isKiro128KOutputClaude(model string) bool {
+	family, major, minor, hasMinor, ok := claudeOpusSonnetVersion(model)
+	if !ok {
+		return false
+	}
+	switch family {
+	case "opus":
+		return major >= 5 || (major == 4 && hasMinor && minor >= 7)
+	case "sonnet":
+		return major > 5 || (major == 5 && hasMinor && minor >= 5)
+	default:
+		return false
+	}
 }
 
 func clampFloat(value, minValue, maxValue float64) float64 {
