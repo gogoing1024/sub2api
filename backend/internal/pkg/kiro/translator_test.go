@@ -2856,26 +2856,55 @@ func TestMapModel_MatchesKiroReferenceMapping(t *testing.T) {
 	}
 }
 
-func TestKiroMaxOutputTokensForGPT56Models(t *testing.T) {
+// 逐条对齐 Kiro 官方模型卡片的「最大输出」一栏。DefaultModels 里每个模型都要有
+// 期望值，新增模型忘了归类会立刻失败。
+func TestKiroMaxOutputTokensMatchesOfficialLimits(t *testing.T) {
 	t.Parallel()
 
-	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
-		require.Equal(t, 128000, kiroMaxOutputTokensForModel(model), model)
+	expected := map[string]int{
+		"gpt-5.6-sol":                         128000,
+		"gpt-5.6-terra":                       128000,
+		"gpt-5.6-luna":                        128000,
+		"claude-opus-4-8":                     128000,
+		"claude-opus-4-8-thinking":            128000,
+		"claude-opus-4-7":                     128000,
+		"claude-opus-4-7-thinking":            128000,
+		"claude-opus-4-6":                     kiroDefaultMaxOutputTokens,
+		"claude-opus-4-6-thinking":            kiroDefaultMaxOutputTokens,
+		"claude-opus-5":                       128000,
+		"claude-opus-5-thinking":              128000,
+		"claude-opus-5-5":                     128000,
+		"claude-opus-5-5-thinking":            128000,
+		"claude-sonnet-5":                     kiroDefaultMaxOutputTokens,
+		"claude-sonnet-5-thinking":            kiroDefaultMaxOutputTokens,
+		"claude-sonnet-5-5":                   128000,
+		"claude-sonnet-5-5-thinking":          128000,
+		"claude-sonnet-4-6":                   kiroDefaultMaxOutputTokens,
+		"claude-sonnet-4-6-thinking":          kiroDefaultMaxOutputTokens,
+		"claude-opus-4-5-20251101":            kiroDefaultMaxOutputTokens,
+		"claude-opus-4-5-20251101-thinking":   kiroDefaultMaxOutputTokens,
+		"claude-sonnet-4-5-20250929":          kiroDefaultMaxOutputTokens,
+		"claude-sonnet-4-5-20250929-thinking": kiroDefaultMaxOutputTokens,
+		"claude-haiku-4-5-20251001":           kiroDefaultMaxOutputTokens,
+		"claude-haiku-4-5-20251001-thinking":  kiroDefaultMaxOutputTokens,
 	}
+	for model, want := range expected {
+		require.Equal(t, want, kiroMaxOutputTokensForModel(model), model)
+	}
+
+	// DefaultModels 是对外暴露的完整集合，不能有遗漏。
+	for _, model := range DefaultModels {
+		_, ok := expected[model.ID]
+		require.Truef(t, ok, "model %q 未在本测试中归类，请对照 Kiro 官方模型卡片补上最大输出上限", model.ID)
+	}
+
+	// 点号写法与 -thinking 后缀与短横线写法等价。
+	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-sonnet-5.5"))
+	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-sonnet-5.5-thinking"))
+	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-4.8"))
+	require.Equal(t, kiroDefaultMaxOutputTokens, kiroMaxOutputTokensForModel("claude-sonnet-5.0"))
+	require.Equal(t, kiroDefaultMaxOutputTokens, kiroMaxOutputTokensForModel("claude-sonnet-5.0-thinking"))
 	require.Equal(t, kiroDefaultMaxOutputTokens, kiroMaxOutputTokensForModel("gpt-5.6"))
-}
-
-func TestKiroMaxOutputTokensForOpus5(t *testing.T) {
-	t.Parallel()
-
-	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5"))
-	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5-thinking"))
-	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5-5"))
-	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-opus-5.5"))
-	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-sonnet-5"))
-	require.Equal(t, 128000, kiroMaxOutputTokensForModel("claude-sonnet-5-5"))
-	require.Equal(t, kiroDefaultMaxOutputTokens, kiroMaxOutputTokensForModel("claude-opus-4-6"))
-	require.Equal(t, kiroDefaultMaxOutputTokens, kiroMaxOutputTokensForModel("claude-sonnet-4-6"))
 }
 
 func TestIsOutputConfigPathModelSupportsFutureVersions(t *testing.T) {
