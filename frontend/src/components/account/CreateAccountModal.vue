@@ -70,8 +70,9 @@
       <!-- Platform Selection - Segmented Control Style -->
       <div>
         <label class="input-label">{{ t('admin.accounts.platform') }}</label>
-        <!-- OAuth / API-key platforms + multi-protocol CN providers -->
-        <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-tour="account-form-platform">
+        <!-- 15 个平台：手机 3 列、sm 起 5 列的统一容器（grid 间隙即行间，不再单独留白），
+             Kiro / Adobe 固定在最后一行的最后两格 -->
+        <div class="mt-2 grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-dark-700 sm:grid-cols-5" data-tour="account-form-platform">
           <button
             type="button"
             @click="form.platform = 'anthropic'"
@@ -165,7 +166,7 @@
             type="button"
             @click="selectTypeSafePlatform()"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
               form.platform === 'typesafe'
                 ? 'bg-white text-sky-700 shadow-sm dark:bg-dark-600 dark:text-sky-300'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -174,9 +175,6 @@
             <PlatformIcon platform="typesafe" size="sm" />
             TypeSafe / Jev
           </button>
-        </div>
-        <!-- 国产厂商：Kimi / Zhipu GLM / DeepSeek / MiniMax -->
-        <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-testid="platform-row-cn">
           <button
             type="button"
             @click="selectCNPlatform('kimi')"
@@ -229,10 +227,6 @@
             <PlatformIcon platform="minimax" size="sm" />
             MiniMax
           </button>
-        </div>
-
-        <!-- 多模型聚合平台：OpenCode 与平台清单中登记的其他多协议供应商 -->
-        <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700" data-testid="platform-row-aggregators">
           <button
             type="button"
             data-testid="platform-button-opencode_go"
@@ -247,12 +241,29 @@
             <PlatformIcon platform="opencode_go" size="sm" />
             OpenCode
           </button>
-          <!-- fork 定制：Kiro / Adobe 专属入口 -->
+          <!-- 没有专属界面的多协议供应商：通用表单（模式 / 协议 / 端点来自 profile） -->
+          <button
+            v-for="spec in extraMultiProtocolPlatforms"
+            :key="spec.id"
+            type="button"
+            :data-testid="`platform-button-${spec.id}`"
+            @click="selectGenericMultiProtocolPlatform(spec.id)"
+            :class="[
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
+              form.platform === spec.id
+                ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-600 dark:text-primary-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <PlatformIcon :platform="spec.id" size="sm" />
+            {{ spec.display_name }}
+          </button>
+          <!-- fork 定制：Kiro / Adobe 专属入口，固定最后一行最后两格 -->
           <button
             type="button"
             @click="form.platform = 'kiro'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
               form.platform === 'kiro'
                 ? 'bg-white text-amber-700 shadow-sm dark:bg-dark-600 dark:text-amber-300'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -284,7 +295,7 @@
             type="button"
             @click="form.platform = 'adobe'"
             :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
               form.platform === 'adobe'
                 ? 'bg-white text-red-600 shadow-sm dark:bg-dark-600 dark:text-red-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
@@ -293,23 +304,6 @@
           >
             <PlatformIcon platform="adobe" size="sm" />
             Adobe
-          </button>
-          <!-- 没有专属界面的多协议供应商：通用表单（模式 / 协议 / 端点来自 profile） -->
-          <button
-            v-for="spec in extraMultiProtocolPlatforms"
-            :key="spec.id"
-            type="button"
-            :data-testid="`platform-button-${spec.id}`"
-            @click="selectGenericMultiProtocolPlatform(spec.id)"
-            :class="[
-              'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
-              form.platform === spec.id
-                ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-600 dark:text-primary-400'
-                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
-            ]"
-          >
-            <PlatformIcon :platform="spec.id" size="sm" />
-            {{ spec.display_name }}
           </button>
         </div>
       </div>
