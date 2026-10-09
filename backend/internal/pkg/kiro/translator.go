@@ -616,7 +616,11 @@ func BuildKiroPayloadWithContext(claudeBody []byte, modelID, profileArn, origin 
 		InferenceConfig:              inferenceConfig,
 		AdditionalModelRequestFields: buildAdditionalModelRequestFields(thinking, modelID),
 	}
-	truncateKiroPayloadToLimit(&payload, strings.TrimSpace(systemPrompt) != "")
+	if err := truncateKiroPayloadToLimit(
+		&payload, strings.TrimSpace(systemPrompt) != "",
+	); err != nil {
+		return nil, err
+	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -1995,9 +1999,9 @@ func truncateUTF8(s string, limit int) string {
 // truncateKiroPayloadToLimit 在序列化体积超过 kiroMaxPayloadBytes 时丢掉最旧历史。
 // 系统提示对、最近若干轮和当前消息保留。只有确实丢掉旧轮次时才插入一次占位。
 // 丢掉之后仍然超限，则静默缩短当前消息正文和仍保留的工具结果，不附加截断说明。
-func truncateKiroPayloadToLimit(payload *KiroPayload, hasPriming bool) {
+func truncateKiroPayloadToLimit(payload *KiroPayload, hasPriming bool) error {
 	if payload == nil || kiroPayloadByteSize(payload) <= kiroMaxPayloadBytes {
-		return
+		return nil
 	}
 
 	history := payload.ConversationState.History
@@ -2040,7 +2044,17 @@ func truncateKiroPayloadToLimit(payload *KiroPayload, hasPriming bool) {
 		keepFrom = i
 	}
 
-	tail := dropLeadingKiroAssistantHistory(conversation[keepFrom:])
+	// Preserve the assistant tool_use at the truncation boundary.
+	// Dropping it can orphan a retained user tool_result.
+	tail := conversation[keepFrom:]
+	if keepFrom > 0 && len(tail) > 0 {
+		first := tail[0].UserInputMessage
+		if first != nil && first.UserInputMessageContext != nil &&
+			len(first.UserInputMessageContext.ToolResults) > 0 &&
+			conversation[keepFrom-1].AssistantResponseMessage != nil {
+			tail = conversation[keepFrom-1:]
+		}
+	}
 	rebuilt := make([]KiroHistoryMessage, 0, len(priming)+1+len(tail))
 	rebuilt = append(rebuilt, priming...)
 	if keepFrom > 0 {
@@ -2050,6 +2064,39 @@ func truncateKiroPayloadToLimit(payload *KiroPayload, hasPriming bool) {
 	payload.ConversationState.History = rebuilt
 
 	shrinkKiroPayloadText(payload)
+	if kiroPayloadByteSize(payload) <= kiroMaxPayloadBytes &&
+		kiroTailToolResultsPaired(tail, current) {
+		return nil
+	}
+
+	// If the payload is still too large, discard further old history.
+	// Only accept cuts that preserve tool_result pairing.
+	for cut := keepFrom + 1; cut <= len(conversation); cut++ {
+		if len(conversation)-cut < kiroMinRecentHistoryTurns {
+			break
+		}
+		candidate := conversation[cut:]
+		if !kiroTailToolResultsPaired(candidate, current) {
+			continue
+		}
+
+		rebuilt := append([]KiroHistoryMessage(nil), priming...)
+		if cut > 0 && len(candidate) > 0 {
+			rebuilt = append(rebuilt, placeholderEntry)
+		}
+		rebuilt = append(rebuilt, candidate...)
+		payload.ConversationState.History = rebuilt
+
+		shrinkKiroPayloadText(payload)
+		if kiroPayloadByteSize(payload) <= kiroMaxPayloadBytes {
+			return nil
+		}
+	}
+
+	return fmt.Errorf(
+		"kiro payload exceeds %d bytes without a safe history cut",
+		kiroMaxPayloadBytes,
+	)
 }
 
 func dropLeadingKiroAssistantHistory(tail []KiroHistoryMessage) []KiroHistoryMessage {
