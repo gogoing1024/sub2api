@@ -1218,7 +1218,7 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	}
 
 	if platform == service.PlatformComposite {
-		availableModels := h.compositeAvailableModels(c.Request.Context(), groupID, true)
+		availableModels := h.compositeAvailableModels(c.Request.Context(), groupID, "", true)
 		if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
 			source := availableModels
 			if len(source) == 0 {
@@ -1317,19 +1317,19 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 		platform = group.Platform
 	}
 	if platform == service.PlatformComposite {
-		availableModels := h.compositeAvailableModels(ctx, groupID, false)
+		availableModels := h.compositeAvailableModels(ctx, groupID, service.CompositeRouteEndpointResponses, false)
 		fallbackModels := defaultCodexModelIDsForPlatform(service.PlatformComposite)
+		models := availableModels
+		if len(models) == 0 {
+			models = fallbackModels
+		}
 		if group.ModelAllowlistEnabled() {
-			source := availableModels
-			if len(source) == 0 {
-				source = fallbackModels
-			}
-			return group.ModelAllowlist.FilterForListing(source)
+			models = group.ModelAllowlist.FilterForListing(models)
 		}
-		if len(availableModels) > 0 {
-			return availableModels
+		if filtered, err := h.gatewayService.FilterCompositeCodexModels(ctx, group.ID, models); err == nil {
+			return filtered
 		}
-		return fallbackModels
+		return models
 	}
 
 	availableModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
@@ -1343,39 +1343,27 @@ func (h *GatewayHandler) codexModelIDsForGroup(ctx context.Context, group *servi
 	return fallbackModels
 }
 
-// compositeListedPlatforms is the public /v1/models catalog for composite groups.
-// Kiro is omitted on purpose: its model names collide with Anthropic/OpenAI and
-// cannot be inferred by DetectModelPlatform.
-var compositeListedPlatforms = []string{
-	service.PlatformAnthropic,
-	service.PlatformGemini,
-	service.PlatformOpenAI,
-	service.PlatformAntigravity,
-	service.PlatformGrok,
-	service.PlatformAdobe,
-	service.PlatformKimi,
-	service.PlatformZhipu,
-	service.PlatformDeepseek,
-	service.PlatformMiniMax,
-	service.PlatformOpenCodeGo,
-}
-
 // compositeAvailableModels lists the models the composite group can serve.
 // includeSystemOne adds TypeSafe models, which only work through /v1/systemone;
 // LLM client catalogs (Codex) must exclude them.
-func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64, includeSystemOne bool) []string {
+func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64, endpoint string, includeSystemOne bool) []string {
 	if h == nil || h.gatewayService == nil {
 		return nil
 	}
 	seen := make(map[string]struct{})
 	models := make([]string, 0)
 	schedulablePlatforms := h.gatewayService.GetSchedulablePlatforms(ctx, groupID)
-	platforms := make([]string, 0, len(compositeListedPlatforms)+1)
-	platforms = append(platforms, compositeListedPlatforms...)
-	if includeSystemOne {
-		platforms = append(platforms, service.PlatformTypeSafe)
-	}
-	for _, platform := range platforms {
+	for _, platform := range domain.CompositePrecedencePlatformIDs() {
+		// TypeSafe 仅经 /v1/systemone 提供服务，LLM 客户端目录按需排除。
+		if platform == service.PlatformTypeSafe && !includeSystemOne {
+			continue
+		}
+		// Kiro is omitted on purpose: its model names collide with Anthropic/OpenAI
+		// and cannot be inferred by DetectModelPlatform. Explicit composite_model_routes
+		// rows still surface kiro models via GetCompositeRouteModels below.
+		if platform == service.PlatformKiro {
+			continue
+		}
 		platformModels := h.gatewayService.GetAvailableModels(ctx, groupID, platform)
 		if len(platformModels) == 0 {
 			// CN 供应商没有静态默认模型列表（defaultModelIDsForPlatform 的
@@ -1394,6 +1382,16 @@ func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *
 			}
 			seen[model] = struct{}{}
 			models = append(models, model)
+		}
+	}
+	// A route can expose a public ID that no account model mapping contains.
+	// On lookup failure, retain the existing account-derived catalog only.
+	if routeModels, err := h.gatewayService.GetCompositeRouteModels(ctx, groupID, endpoint, includeSystemOne); err == nil {
+		for _, model := range routeModels {
+			if _, ok := seen[model]; !ok {
+				seen[model] = struct{}{}
+				models = append(models, model)
+			}
 		}
 	}
 	return models
@@ -1583,10 +1581,18 @@ func defaultModelIDsForPlatform(platform string) []string {
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
-		// TypeSafe is deliberately absent: jev-latest only works through
-		// /v1/systemone, so the static fallback never advertises it to LLM
-		// clients. compositeAvailableModels lists it when the group can serve it.
-		for _, concretePlatform := range compositeListedPlatforms {
+		for _, concretePlatform := range domain.CompositePrecedencePlatformIDs() {
+			// TypeSafe is deliberately skipped: jev-latest only works through
+			// /v1/systemone, so the static fallback never advertises it to LLM
+			// clients. compositeAvailableModels lists it when the group can serve it.
+			if concretePlatform == service.PlatformTypeSafe {
+				continue
+			}
+			// Kiro is deliberately skipped as well: its claude-*/gpt-* model names
+			// collide with Anthropic/OpenAI and cannot be inferred by DetectModelPlatform.
+			if concretePlatform == service.PlatformKiro {
+				continue
+			}
 			for _, id := range defaultModelIDsForPlatform(concretePlatform) {
 				if _, ok := seen[id]; ok {
 					continue
