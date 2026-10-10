@@ -556,8 +556,7 @@ func BuildKiroPayloadWithContext(claudeBody []byte, modelID, profileArn, origin 
 	if structuredOutputTool != nil {
 		kiroTools = append(kiroTools, *structuredOutputTool)
 	}
-	currentToolResults, orphanedToolUseIDs := validateToolPairing(history, currentToolResults)
-	removeOrphanedToolUses(history, orphanedToolUseIDs)
+	currentToolResults = repairKiroToolPairing(history, currentToolResults)
 	kiroTools = appendMissingPlaceholderTools(kiroTools, collectHistoryToolNames(history))
 	if currentUserMsg != nil {
 		if len(currentUserMsg.Images) > 0 && strings.TrimSpace(currentUserMsg.Content) == "" {
@@ -2048,6 +2047,7 @@ func truncateKiroPayloadToLimit(payload *KiroPayload, hasPriming bool) {
 	}
 	rebuilt = append(rebuilt, tail...)
 	payload.ConversationState.History = rebuilt
+	repairKiroPayloadToolPairing(payload)
 
 	shrinkKiroPayloadText(payload)
 }
@@ -2339,54 +2339,72 @@ func processMessages(messages []gjson.Result, modelID, origin string, requestCtx
 	return history, currentUserMsg, currentToolResults
 }
 
-func validateToolPairing(history []KiroHistoryMessage, currentToolResults []KiroToolResult) ([]KiroToolResult, map[string]bool) {
-	allToolUseIDs := make(map[string]bool)
-	pairedToolUseIDs := make(map[string]bool)
-	for _, h := range history {
-		if h.AssistantResponseMessage != nil {
-			for _, tu := range h.AssistantResponseMessage.ToolUses {
-				allToolUseIDs[tu.ToolUseID] = true
+// repairKiroToolPairing 按相邻位置修复 toolUses/toolResults 配对，返回修复后的当前消息
+// toolResults。上游要求每条 toolResult 都能在紧邻的上一条 assistant 消息里找到对应
+// toolUse，每条 toolUse 都在紧随其后的 user 消息里有 toolResult；只要 ID 在整段历史里
+// 出现过并不够，不相邻同样会被 400 拒绝（"unexpected tool_use_id found in tool_result
+// blocks"）。历史消息与当前消息都要校验，配不上的一律丢弃。
+func repairKiroToolPairing(history []KiroHistoryMessage, currentToolResults []KiroToolResult) []KiroToolResult {
+	var prev *KiroAssistantResponseMessage
+	for i := range history {
+		user := history[i].UserInputMessage
+		if user != nil && user.UserInputMessageContext != nil {
+			ctx := user.UserInputMessageContext
+			ctx.ToolResults = keepPairedKiroTools(prev, ctx.ToolResults)
+			if len(ctx.ToolResults) == 0 && len(ctx.Tools) == 0 {
+				user.UserInputMessageContext = nil
 			}
+		} else {
+			keepPairedKiroTools(prev, nil)
 		}
-		if h.UserInputMessage != nil && h.UserInputMessage.UserInputMessageContext != nil {
-			for _, tr := range h.UserInputMessage.UserInputMessageContext.ToolResults {
-				pairedToolUseIDs[tr.ToolUseID] = true
-			}
-		}
+		prev = history[i].AssistantResponseMessage
 	}
-
-	filtered := currentToolResults[:0]
-	for _, tr := range currentToolResults {
-		if allToolUseIDs[tr.ToolUseID] && !pairedToolUseIDs[tr.ToolUseID] {
-			filtered = append(filtered, tr)
-			pairedToolUseIDs[tr.ToolUseID] = true
-		}
-	}
-	orphaned := make(map[string]bool)
-	for toolUseID := range allToolUseIDs {
-		if !pairedToolUseIDs[toolUseID] {
-			orphaned[toolUseID] = true
-		}
-	}
-	return filtered, orphaned
+	return keepPairedKiroTools(prev, currentToolResults)
 }
 
-func removeOrphanedToolUses(history []KiroHistoryMessage, orphaned map[string]bool) {
-	if len(orphaned) == 0 {
-		return
+// keepPairedKiroTools 只保留 assistant.ToolUses 与紧随其后的 toolResults 的交集：
+// 没有对应 toolUse 的 toolResult 被丢弃（重复 ID 只留第一条），没被应答的 toolUse 从
+// assistant 上摘掉。assistant 为 nil 表示前一条不是 assistant 消息。
+func keepPairedKiroTools(assistant *KiroAssistantResponseMessage, toolResults []KiroToolResult) []KiroToolResult {
+	if assistant == nil || len(assistant.ToolUses) == 0 {
+		return toolResults[:0]
 	}
-	for i := range history {
-		msg := history[i].AssistantResponseMessage
-		if msg == nil || len(msg.ToolUses) == 0 {
-			continue
+	announced := make(map[string]bool, len(assistant.ToolUses))
+	for _, toolUse := range assistant.ToolUses {
+		announced[toolUse.ToolUseID] = true
+	}
+	answered := make(map[string]bool, len(toolResults))
+	keptResults := toolResults[:0]
+	for _, tr := range toolResults {
+		if announced[tr.ToolUseID] && !answered[tr.ToolUseID] {
+			answered[tr.ToolUseID] = true
+			keptResults = append(keptResults, tr)
 		}
-		filtered := msg.ToolUses[:0]
-		for _, toolUse := range msg.ToolUses {
-			if !orphaned[toolUse.ToolUseID] {
-				filtered = append(filtered, toolUse)
-			}
+	}
+	keptUses := assistant.ToolUses[:0]
+	for _, toolUse := range assistant.ToolUses {
+		if answered[toolUse.ToolUseID] {
+			keptUses = append(keptUses, toolUse)
 		}
-		msg.ToolUses = filtered
+	}
+	assistant.ToolUses = keptUses
+	return keptResults
+}
+
+// repairKiroPayloadToolPairing 对已组装好的 payload 重新修复配对。历史被截断时，
+// 截断点可能正好落在一对 toolUses/toolResults 中间。
+func repairKiroPayloadToolPairing(payload *KiroPayload) {
+	current := &payload.ConversationState.CurrentMessage.UserInputMessage
+	var currentToolResults []KiroToolResult
+	if current.UserInputMessageContext != nil {
+		currentToolResults = current.UserInputMessageContext.ToolResults
+	}
+	currentToolResults = repairKiroToolPairing(payload.ConversationState.History, currentToolResults)
+	if ctx := current.UserInputMessageContext; ctx != nil {
+		ctx.ToolResults = currentToolResults
+		if len(ctx.ToolResults) == 0 && len(ctx.Tools) == 0 {
+			current.UserInputMessageContext = nil
+		}
 	}
 }
 
