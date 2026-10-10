@@ -2434,7 +2434,7 @@ func TestBuildKiroPayloadKeepsToolPairingWhenHistoryIsTruncated(t *testing.T) {
 	require.GreaterOrEqual(t, strings.Count(string(payload), `"toolResults"`), 2)
 }
 
-func TestTruncateKiroPayloadToLimitDropsCurrentToolResultWhenToolUseIsDropped(t *testing.T) {
+func TestTruncateKiroPayloadToLimitKeepsCurrentToolPairWhenHistoryStartsWithAssistant(t *testing.T) {
 	payload := &KiroPayload{ConversationState: KiroConversationState{
 		History: []KiroHistoryMessage{{
 			AssistantResponseMessage: &KiroAssistantResponseMessage{
@@ -2452,13 +2452,15 @@ func TestTruncateKiroPayloadToLimitDropsCurrentToolResultWhenToolUseIsDropped(t 
 		}},
 	}}
 
-	truncateKiroPayloadToLimit(payload, false)
+	require.NoError(t, truncateKiroPayloadToLimit(payload, false))
 
 	raw, err := json.Marshal(payload)
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(raw), kiroMaxPayloadBytes)
 	requireKiroToolPairing(t, raw)
-	require.Nil(t, payload.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext)
+	// 开头的 assistant 不能被丢：它带着当前消息 toolResult 对应的 toolUse。
+	require.Equal(t, "toolu_1", gjson.GetBytes(raw, "conversationState.history.0.assistantResponseMessage.toolUses.0.toolUseId").String())
+	require.NotEmpty(t, gjson.GetBytes(raw, "conversationState.currentMessage.userInputMessage.userInputMessageContext.toolResults.0.content.0.text").String())
 }
 
 func TestMergeAdjacentMessagesUsesDoubleNewline(t *testing.T) {
