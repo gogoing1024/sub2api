@@ -602,6 +602,7 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	svc.StartOpenAICodexTicketHarvester()
+	svc.StartBPS403Recovery()
 	return svc
 }
 
