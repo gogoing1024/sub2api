@@ -2503,6 +2503,108 @@
         </div>
       </div>
 
+      <!-- Excel / BPS 协议区 -->
+      <div
+        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="excel-bps-section"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.excelBPS') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.excelBPSDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="excel-bps-toggle"
+            role="switch"
+            :aria-checked="excelBPSEnabled"
+            @click="excelBPSEnabled = !excelBPSEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              excelBPSEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                excelBPSEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <div v-if="excelBPSEnabled" class="mt-3 space-y-3">
+          <label class="flex items-center gap-2 text-sm" data-testid="excel-bps-all-models-label">
+            <input v-model="excelBPSAllModels" type="checkbox" data-testid="excel-bps-all-models" />
+            <span>{{ t('admin.accounts.openai.excelBPSAllModels') }}</span>
+          </label>
+          <div v-if="!excelBPSAllModels" data-testid="excel-bps-model-selection">
+            <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
+            <ModelWhitelistSelector v-model="excelBPSModels" platform="openai" />
+          </div>
+          <div class="mt-3">
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSOmitUnsupportedTools" type="checkbox" data-testid="excel-bps-omit-unsupported-tools" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedTools') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedToolsDesc') }}</p>
+          </div>
+          <div class="mt-3">
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSIgnoreEncryptedContent" type="checkbox" data-testid="excel-bps-ignore-encrypted-content" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContent') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContentDesc') }}</p>
+          </div>
+          <div class="mt-3">
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSCacheCreationAsInput" type="checkbox" data-testid="excel-bps-cache-creation-as-input" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSCacheCreationAsInput') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSCacheCreationAsInputDesc') }}</p>
+          </div>
+          <div class="mt-3">
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSAutoDisableOn403" type="checkbox" data-testid="excel-bps-auto-disable-on-403" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSAutoDisableOn403') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSAutoDisableOn403Desc') }}</p>
+          </div>
+          <div v-if="excelBPSAutoDisableOn403" class="mt-2">
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSAutoRecoverOn403" type="checkbox" :disabled="!excelBPSAutoDisableOn403" data-testid="excel-bps-auto-recover-on-403" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSAutoRecoverOn403') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSAutoRecoverOn403Desc') }}</p>
+            <div v-if="excelBPSAutoRecoverOn403" class="mt-2">
+              <label class="flex items-center gap-2">
+                <span class="text-sm">{{ t('admin.accounts.openai.excelBPS403RecoveryInterval') }}</span>
+                <input v-model="excelBPSRecoveryIntervalMinutes" type="number" min="1" max="10080"
+                  data-testid="excel-bps-recovery-interval" class="input w-40" />
+              </label>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPS403RecoveryIntervalHint') }}</p>
+            </div>
+          </div>
+          <div class="mt-3">
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSAutoMoveOn403" type="checkbox" data-testid="excel-bps-auto-move-on-403" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSAutoMoveOn403') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSAutoMoveOn403Desc') }}</p>
+            <div v-if="excelBPSAutoMoveOn403" class="mt-2">
+              <label class="input-label">{{ t('admin.accounts.openai.excelBPS403TargetGroup') }}</label>
+              <select v-model="excelBPS403TargetGroupID" data-testid="excel-bps-403-target-group" class="input">
+                <option value="">{{ t('admin.accounts.openai.excelBPS403TargetGroupNone') }}</option>
+                <option v-for="option in excelBPS403GroupOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </div>
+          </div>
+          <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.excelBPSNotice') }}</p>
+        </div>
+      </div>
+
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
@@ -3477,7 +3579,8 @@ import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { isKiroDirectApiKeyAccount, isKiroRelayAccount } from '@/utils/kiroAccount'
 import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
-import { VERTEX_LOCATION_SELECT_OPTIONS } from '@/constants/account'
+import { DEFAULT_EXCEL_BPS_MODELS, VERTEX_LOCATION_SELECT_OPTIONS } from '@/constants/account'
+import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, bpsRecoveryIntervalOrDefault } from '@/utils/excelBPSRecovery'
 import { KIRO_REGION_SELECT_OPTIONS } from '@/constants/kiroRegions'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -4085,6 +4188,22 @@ const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
+const excelBPSEnabled = ref(false)
+const excelBPSAllModels = ref(false)
+const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
+const excelBPSOmitUnsupportedTools = ref(false)
+const excelBPSIgnoreEncryptedContent = ref(false)
+const excelBPSCacheCreationAsInput = ref(false)
+const excelBPSAutoDisableOn403 = ref(false)
+const excelBPSAutoRecoverOn403 = ref(false)
+const excelBPSRecoveryIntervalMinutes = ref<number | string>(DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES)
+const excelBPSAutoMoveOn403 = ref(false)
+const excelBPS403TargetGroupID = ref<number | string>('')
+const excelBPS403GroupOptions = computed(() =>
+  props.groups
+    .filter(group => group.platform === 'openai')
+    .map(group => ({ value: group.id, label: group.name }))
+)
 // OpenAI 订阅档位（Plus / Pro 20x / Pro 5x / Business Standard / Business Premium / Free）手动覆盖值,
 // 存于 credentials.plan_type;'' 表示清空/自动识别
 const editPlanType = ref<string>('')
@@ -4604,6 +4723,17 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
+  excelBPSEnabled.value = false
+  excelBPSAllModels.value = false
+  excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
+  excelBPSOmitUnsupportedTools.value = false
+  excelBPSIgnoreEncryptedContent.value = false
+  excelBPSCacheCreationAsInput.value = false
+  excelBPSAutoDisableOn403.value = false
+  excelBPSAutoRecoverOn403.value = false
+  excelBPSRecoveryIntervalMinutes.value = DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES
+  excelBPSAutoMoveOn403.value = false
+  excelBPS403TargetGroupID.value = ''
   editPlanType.value = ''
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
@@ -4625,6 +4755,21 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       newAccount.type === 'oauth' && extra?.openai_responses_flatten_namespaces === true
     const longContextBillingValue = extra?.openai_long_context_billing_enabled
     openAILongContextBillingEnabled.value = longContextBillingValue === true
+    excelBPSEnabled.value = extra?.openai_excel_bps === true
+    const bpsModels = extra?.openai_excel_bps_models
+    excelBPSAllModels.value = !Array.isArray(bpsModels)
+    excelBPSModels.value = Array.isArray(bpsModels)
+      ? bpsModels.filter((m): m is string => typeof m === 'string' && m.trim() !== '')
+      : [...DEFAULT_EXCEL_BPS_MODELS]
+    excelBPSOmitUnsupportedTools.value = extra?.openai_excel_bps_omit_unsupported_tools === true
+    excelBPSIgnoreEncryptedContent.value = extra?.openai_excel_bps_ignore_encrypted_content === true
+    excelBPSCacheCreationAsInput.value = extra?.openai_excel_bps_cache_creation_as_input === true
+    excelBPSAutoDisableOn403.value = extra?.openai_excel_bps_auto_disable_on_403 === true
+    excelBPSAutoRecoverOn403.value = extra?.openai_excel_bps_auto_recover_on_403 === true
+    excelBPSRecoveryIntervalMinutes.value = bpsRecoveryIntervalOrDefault(extra?.openai_excel_bps_403_recovery_interval_minutes)
+    excelBPSAutoMoveOn403.value = extra?.openai_excel_bps_auto_move_on_403 === true
+    const bpsTargetGroup = extra?.openai_excel_bps_403_target_group_id
+    excelBPS403TargetGroupID.value = typeof bpsTargetGroup === 'number' ? bpsTargetGroup : 
     // plan_type 手动覆盖仅 OAuth 有实际调度语义(IsOpenAIChatGPTSubscription 要求 oauth),故只对 oauth 回填
     editPlanType.value = newAccount.type === 'oauth'
       ? readPlanType(newAccount.credentials as Record<string, unknown> | undefined)
@@ -6280,6 +6425,68 @@ const handleSubmit = async () => {
         delete newExtra.openai_long_context_billing_enabled
       } else {
         newExtra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
+      }
+      if (props.account?.platform === 'openai' && props.account?.type === 'oauth' && !isSparkShadow) {
+        newExtra.openai_excel_bps = excelBPSEnabled.value
+        if (!excelBPSEnabled.value) {
+          delete newExtra.openai_excel_bps_models
+          delete newExtra.openai_excel_bps_omit_unsupported_tools
+          delete newExtra.openai_excel_bps_ignore_encrypted_content
+          delete newExtra.openai_excel_bps_cache_creation_as_input
+          delete newExtra.openai_excel_bps_auto_disable_on_403
+          delete newExtra.openai_excel_bps_auto_recover_on_403
+          delete newExtra.openai_excel_bps_403_recovery_interval_minutes
+          delete newExtra.openai_excel_bps_auto_move_on_403
+          delete newExtra.openai_excel_bps_403_target_group_id
+        } else {
+          if (excelBPSAllModels.value) {
+            delete newExtra.openai_excel_bps_models
+          } else {
+            newExtra.openai_excel_bps_models = [...new Set(excelBPSModels.value.map(m => m.trim()).filter(Boolean))]
+          }
+          if (excelBPSOmitUnsupportedTools.value) {
+            newExtra.openai_excel_bps_omit_unsupported_tools = true
+          } else {
+            delete newExtra.openai_excel_bps_omit_unsupported_tools
+          }
+          if (excelBPSIgnoreEncryptedContent.value) {
+            newExtra.openai_excel_bps_ignore_encrypted_content = true
+          } else {
+            delete newExtra.openai_excel_bps_ignore_encrypted_content
+          }
+          if (excelBPSCacheCreationAsInput.value) {
+            newExtra.openai_excel_bps_cache_creation_as_input = true
+          } else {
+            delete newExtra.openai_excel_bps_cache_creation_as_input
+          }
+          if (excelBPSAutoDisableOn403.value) {
+            newExtra.openai_excel_bps_auto_disable_on_403 = true
+            if (excelBPSAutoRecoverOn403.value) {
+              newExtra.openai_excel_bps_auto_recover_on_403 = true
+              const interval = Number(excelBPSRecoveryIntervalMinutes.value)
+              if (Number.isFinite(interval) && interval >= 1 && interval <= 10080) {
+                newExtra.openai_excel_bps_403_recovery_interval_minutes = Math.floor(interval)
+              } else {
+                delete newExtra.openai_excel_bps_403_recovery_interval_minutes
+              }
+            } else {
+              delete newExtra.openai_excel_bps_auto_recover_on_403
+              delete newExtra.openai_excel_bps_403_recovery_interval_minutes
+            }
+          } else {
+            delete newExtra.openai_excel_bps_auto_disable_on_403
+            delete newExtra.openai_excel_bps_auto_recover_on_403
+            delete newExtra.openai_excel_bps_403_recovery_interval_minutes
+          }
+          if (excelBPSAutoMoveOn403.value) {
+            newExtra.openai_excel_bps_auto_move_on_403 = true
+            const targetGroup = Number(excelBPS403TargetGroupID.value)
+            newExtra.openai_excel_bps_403_target_group_id = Number.isFinite(targetGroup) && targetGroup > 0 ? Math.floor(targetGroup) : 0
+          } else {
+            delete newExtra.openai_excel_bps_auto_move_on_403
+            delete newExtra.openai_excel_bps_403_target_group_id
+          }
+        }
       }
       if (openAICompactMode.value === 'auto') {
         delete newExtra.openai_compact_mode

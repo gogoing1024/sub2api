@@ -193,6 +193,72 @@
         </p>
       </div>
 
+      <!-- Excel / BPS 协议 -->
+      <div
+        v-if="allOpenAIOAuthOnly"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between gap-4">
+          <div class="flex-1">
+            <label class="input-label mb-0" for="bulk-edit-excel-bps-enabled">
+              {{ t('admin.accounts.openai.excelBPS') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.excelBPSDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="applyExcelBPS"
+            id="bulk-edit-excel-bps-enabled"
+            type="checkbox"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div :class="!applyExcelBPS && 'pointer-events-none opacity-50'">
+          <button
+            type="button"
+            data-testid="bulk-edit-excel-bps-toggle"
+            role="switch"
+            :disabled="!applyExcelBPS"
+            :aria-checked="excelBPSEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              excelBPSEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="excelBPSEnabled = !excelBPSEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                excelBPSEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <div v-if="applyExcelBPS && excelBPSEnabled" class="mt-3 space-y-3">
+          <label class="flex items-center gap-2 text-sm">
+            <input v-model="excelBPSAllModels" type="checkbox" data-testid="bulk-edit-excel-bps-all-models" />
+            <span>{{ t('admin.accounts.openai.excelBPSAllModels') }}</span>
+          </label>
+          <div v-if="!excelBPSAllModels">
+            <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
+            <ModelWhitelistSelector v-model="excelBPSModels" platform="openai" />
+          </div>
+          <label class="flex items-center gap-2">
+            <input v-model="excelBPSOmitUnsupportedTools" type="checkbox" data-testid="bulk-edit-excel-bps-omit-unsupported-tools" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedTools') }}</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input v-model="excelBPSIgnoreEncryptedContent" type="checkbox" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContent') }}</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input v-model="excelBPSAutoDisableOn403" type="checkbox" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSAutoDisableOn403') }}</span>
+          </label>
+        </div>
+      </div>
+
       <!-- Base URL (API Key only) -->
       <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
         <div class="mb-3 flex items-center justify-between">
@@ -1538,6 +1604,7 @@ import Select from '@/components/common/Select.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import { DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
 import Icon from '@/components/icons/Icon.vue'
 import {
   buildModelMappingObject as buildModelMappingPayload,
@@ -1707,6 +1774,13 @@ const enableGroups = ref(false)
 const enableOpenAIPassthrough = ref(false)
 const enableOpenAIFlattenNamespaces = ref(false)
 const enableOpenAILongContextBilling = ref(false)
+const applyExcelBPS = ref(false)
+const excelBPSEnabled = ref(false)
+const excelBPSAllModels = ref(false)
+const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
+const excelBPSOmitUnsupportedTools = ref(false)
+const excelBPSIgnoreEncryptedContent = ref(false)
+const excelBPSAutoDisableOn403 = ref(false)
 const enableOpenAIEndpointCapabilities = ref(false)
 const enableOpenAIResponsesMode = ref(false)
 const enableOpenAIWSMode = ref(false)
@@ -2057,6 +2131,21 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   if (applyOpenAILongContextBilling) {
     const extra = ensureExtra()
     extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
+  }
+
+  if (applyExcelBPS.value && allOpenAIOAuthOnly.value) {
+    const extra = ensureExtra()
+    extra.openai_excel_bps = excelBPSEnabled.value
+    if (excelBPSEnabled.value) {
+      if (excelBPSAllModels.value) {
+        extra.openai_excel_bps_models = null
+      } else {
+        extra.openai_excel_bps_models = [...new Set(excelBPSModels.value.map(m => m.trim()).filter(Boolean))]
+      }
+      if (excelBPSOmitUnsupportedTools.value) extra.openai_excel_bps_omit_unsupported_tools = true
+      if (excelBPSIgnoreEncryptedContent.value) extra.openai_excel_bps_ignore_encrypted_content = true
+      if (excelBPSAutoDisableOn403.value) extra.openai_excel_bps_auto_disable_on_403 = true
+    }
   }
 
   if (applyOpenAIEndpointCapabilities) {
@@ -2457,6 +2546,13 @@ watch(
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAILongContextBillingEnabled.value = false
+      applyExcelBPS.value = false
+      excelBPSEnabled.value = false
+      excelBPSAllModels.value = false
+      excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
+      excelBPSOmitUnsupportedTools.value = false
+      excelBPSIgnoreEncryptedContent.value = false
+      excelBPSAutoDisableOn403.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openAIResponsesMode.value = 'auto'
       modelRestrictionMode.value = 'whitelist'

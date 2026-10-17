@@ -5845,6 +5845,19 @@
                 <Toggle v-model="form.openai_codex_version_auto_sync_enabled" />
               </div>
 
+              <!-- Excel / BPS 协议总开关 -->
+              <div class="flex items-center justify-between gap-4">
+                <div class="min-w-0">
+                  <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                    {{ t("admin.settings.gatewayForwarding.excelBPSEnabled") }}
+                  </h3>
+                  <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayForwarding.excelBPSEnabledDesc") }}
+                  </p>
+                </div>
+                <Toggle v-model="form.excel_bps_enabled" />
+              </div>
+
               <!-- Codex 292 门票打票 -->
               <div class="flex items-center justify-between gap-4">
                 <div class="min-w-0">
@@ -10218,6 +10231,7 @@ const form = reactive<SettingsForm>({
   // 只读展示：自动同步任务写入的官方最新稳定版，不参与提交（提交载荷按字段显式构造）
   openai_codex_client_version_synced: "",
   openai_codex_version_auto_sync_enabled: true,
+  excel_bps_enabled: true,
 	openai_codex_ticket_enabled: false,
   openai_codex_ticket_fail_closed: true,
   openai_codex_ticket_harvest_proxy_url: "",
@@ -12011,6 +12025,7 @@ async function saveSettings() {
       channel_monitor_hide_user_ranking: Boolean(form.channel_monitor_hide_user_ranking),
       // Available Channels feature switch
       available_channels_enabled: form.available_channels_enabled,
+      excel_bps_enabled: form.excel_bps_enabled,
       // Subscription feature switch
       subscription_enabled: form.subscription_enabled,
       // Model Plaza feature switches + description

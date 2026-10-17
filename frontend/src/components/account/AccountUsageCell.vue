@@ -909,6 +909,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   kiroUsageMeta: [meta: { plan_type?: string }]
+  leonardoUsageMeta: [meta: { plan_type?: string }]
   'account-updated': [account: Account]
   'usage-loaded': [usage: AccountUsageInfo]
 }>()
@@ -1715,6 +1716,26 @@ const syncKiroUsageMeta = (info?: AccountUsageInfo | null) => {
   })
 }
 
+// Leonardo 套餐与 Kiro 同源（用量接口），优先展示名（如 Ultimate），回退原始 plan 码。
+const syncLeonardoUsageMeta = (info?: AccountUsageInfo | null) => {
+  if (!isLeonardoUsageAccount.value) return
+
+  const planType = (
+    info?.leonardo_plan_name ||
+    info?.leonardo_plan ||
+    ''
+  ).trim()
+
+  emit('leonardoUsageMeta', {
+    ...(planType ? { plan_type: planType } : {})
+  })
+}
+
+const syncUsagePlanMeta = (info?: AccountUsageInfo | null) => {
+  syncKiroUsageMeta(info)
+  syncLeonardoUsageMeta(info)
+}
+
 const clampPercent = (value?: number | null) => {
   if (value == null || !Number.isFinite(value)) return 0
   return Math.max(0, Math.min(100, value))
@@ -1845,7 +1866,7 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
     const cached = _usageCache.get(props.account.id)
     if (cached && Date.now() - cached.ts < USAGE_CACHE_TTL) {
       usageInfo.value = cached.data
-      syncKiroUsageMeta(cached.data)
+      syncUsagePlanMeta(cached.data)
       loading.value = false
       return
     }
@@ -1861,7 +1882,7 @@ const loadUsage = async (options?: { source?: 'passive' | 'active'; bypassCache?
     const result = await enqueueUsageRequest(props.account, fetchFn)
     if (!unmounted.value) {
       usageInfo.value = result
-      syncKiroUsageMeta(result)
+      syncUsagePlanMeta(result)
       _usageCache.set(props.account.id, { data: result, ts: Date.now() })
     }
   } catch (e: any) {
@@ -1929,7 +1950,7 @@ const loadActiveUsage = async () => {
   try {
     const result = await adminAPI.accounts.getUsage(props.account.id, 'active', true)
     usageInfo.value = result
-    syncKiroUsageMeta(result)
+    syncUsagePlanMeta(result)
     _usageCache.set(props.account.id, { data: result, ts: Date.now() })
   } catch (e: any) {
     console.error('Failed to load active usage:', e)
