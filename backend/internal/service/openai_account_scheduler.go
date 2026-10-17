@@ -544,6 +544,19 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		clearBinding()
 		return nil, false, nil
 	}
+	// A sticky binding created before BPS was enabled may still point at a
+	// native account. Do not let that old binding bypass the explicit BPS route
+	// while an eligible BPS account is available for this model.
+	if req.Platform == PlatformOpenAI && strings.TrimSpace(req.RequestedModel) != "" && !account.IsExcelBPSEnabledForModel(req.RequestedModel) {
+		if candidates, listErr := s.service.listSchedulableAccounts(ctx, req.GroupID, req.Platform); listErr == nil {
+			for i := range candidates {
+				if candidates[i].ID != account.ID && candidates[i].IsExcelBPSEnabledForModel(req.RequestedModel) {
+					clearBinding()
+					return nil, false, nil
+				}
+			}
+		}
+	}
 	// Free-tier soft gate: sticky session must not pin an over-quota free OAuth account.
 	// Admin QueryQuota / import probes do not use this path.
 	if account != nil && len(s.filterGrokFreeQuotaAccounts(ctx, []Account{*account})) == 0 {
@@ -1105,6 +1118,34 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		return append(primary, overflow...)
 	}
 
+	// Excel/BPS is a per-account protocol. Once a request model has a BPS
+	// candidate, try those accounts before native Codex accounts so a pool of
+	// accounts does not randomly send the same model to /v1/responses. Native
+	// candidates remain as a last resort for pools where BPS accounts cannot be
+	// acquired; Forward still enforces BPS whenever the selected account has it
+	// enabled.
+	buildBPSPreferredOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
+		if req.Platform != PlatformOpenAI || strings.TrimSpace(req.RequestedModel) == "" || len(pool) < 2 {
+			return buildSelectionOrder(pool)
+		}
+		bps := make([]openAIAccountCandidateScore, 0, len(pool))
+		native := make([]openAIAccountCandidateScore, 0, len(pool))
+		for _, candidate := range pool {
+			if candidate.account != nil && candidate.account.IsExcelBPSEnabledForModel(req.RequestedModel) {
+				bps = append(bps, candidate)
+			} else {
+				native = append(native, candidate)
+			}
+		}
+		if len(bps) == 0 || len(native) == 0 {
+			return buildSelectionOrder(pool)
+		}
+		ordered := make([]openAIAccountCandidateScore, 0, len(pool))
+		ordered = append(ordered, buildSelectionOrder(bps)...)
+		ordered = append(ordered, buildSelectionOrder(native)...)
+		return ordered
+	}
+
 	if req.RequireCompact {
 		supported := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
 		unknown := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
@@ -1117,15 +1158,15 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			}
 		}
 		selectionOrder := make([]openAIAccountCandidateScore, 0, len(plan.allCandidates))
-		selectionOrder = append(selectionOrder, buildSelectionOrder(supported)...)
-		selectionOrder = append(selectionOrder, buildSelectionOrder(unknown)...)
+		selectionOrder = append(selectionOrder, buildBPSPreferredOrder(supported)...)
+		selectionOrder = append(selectionOrder, buildBPSPreferredOrder(unknown)...)
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
 		return selectionOrder
 	}
 
-	return buildSelectionOrder(plan.candidates)
+	return buildBPSPreferredOrder(plan.candidates)
 }
 
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
@@ -1457,6 +1498,14 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("platform_mismatch")
 			continue
 		}
+		if s.service.isExcelBPSModelCoolingDown(account, req.RequestedModel) {
+			filterStats.exclude(excelBPSModelPermissionFilterReason)
+			continue
+		}
+		if s.service.isExcelBPSCoolingDown(account, req.RequestedModel) {
+			filterStats.exclude(excelBPSRateLimitedFilterReason)
+			continue
+		}
 		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel, req.RequireCompact) {
 			filterStats.exclude("runtime_blocked")
 			continue
@@ -1490,6 +1539,36 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if s.service.concurrencyService != nil {
 		if batchLoad, loadErr := s.service.concurrencyService.GetAccountsLoadBatch(ctx, loadReq); loadErr == nil {
 			loadMap = batchLoad
+		}
+	}
+
+	// Preserve BPS preference across the subscription/compact priority partitions:
+	// try to acquire a BPS account first, but let native capacity handle the
+	// request when BPS is busy instead of committing to a BPS wait plan.
+	if req.Platform == PlatformOpenAI && strings.TrimSpace(req.RequestedModel) != "" {
+		var bps, native []*Account
+		for _, account := range filtered {
+			if account.IsExcelBPSEnabledForModel(req.RequestedModel) {
+				bps = append(bps, account)
+			} else {
+				native = append(native, account)
+			}
+		}
+		if len(bps) > 0 && len(native) > 0 {
+			bpsAttempt := s.trySelectByLoadBalancePool(ctx, req, bps, loadMap, budget)
+			if bpsAttempt.result != nil && bpsAttempt.result.Acquired {
+				return bpsAttempt.result, bpsAttempt.candidateCount, bpsAttempt.topK, bpsAttempt.loadSkew, nil
+			}
+			if bpsAttempt.err != nil && !bpsAttempt.noCompactCandidates {
+				return nil, bpsAttempt.candidateCount, bpsAttempt.topK, bpsAttempt.loadSkew, bpsAttempt.err
+			}
+			nativeAttempt := s.trySelectByLoadBalancePool(ctx, req, native, loadMap, budget)
+			if nativeAttempt.result != nil && nativeAttempt.result.Acquired {
+				return nativeAttempt.result, nativeAttempt.candidateCount, nativeAttempt.topK, nativeAttempt.loadSkew, nil
+			}
+			if nativeAttempt.err != nil && !nativeAttempt.noCompactCandidates {
+				return nil, nativeAttempt.candidateCount, nativeAttempt.topK, nativeAttempt.loadSkew, nativeAttempt.err
+			}
 		}
 	}
 
@@ -1776,6 +1855,11 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if account == nil {
 		return false, "account_nil"
 	}
+	// Excel-only accounts have no native Codex route: they become ineligible as
+	// soon as the admin disables the BPS protocol globally.
+	if account.IsExcelOAuth() && s != nil && s.service != nil && !s.service.excelBPSGloballyEnabled(ctx) {
+		return false, "excel_bps_disabled"
+	}
 	if source, ok := CompositeRouteSourceFromContext(ctx); ok && source == CompositeRouteSourceAccount {
 		if publicModel, modelOK := RequestedPublicModelFromContext(ctx); modelOK && !explicitModelMappingClaims(*account, publicModel) {
 			return false, "account_model_not_owned"
@@ -1820,7 +1904,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 		s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact) {
 		return false, "channel_upstream_restricted"
 	}
-	if !accountSupportsOpenAICapabilities(account, req.RequiredCapability, req.RequiredImageCapability) {
+	if !accountSupportsOpenAICapabilitiesForRequest(account, req.RequestedModel, req.RequiredCapability, req.RequiredImageCapability) {
 		return false, "capability_mismatch"
 	}
 	// 分组利润控制：不合格账号在候选过滤与抢槽后终检阶段即被排除，
@@ -2384,7 +2468,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 				if selection == nil || selection.Account == nil {
 					return selection, decision, nil
 				}
-				if accountSupportsOpenAICapabilities(selection.Account, requiredCapability, requiredImageCapability) {
+				if accountSupportsOpenAICapabilitiesForRequest(selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
 					applyLegacySelectionDecision(&decision, selection)
 					return selection, decision, nil
 				}
@@ -2411,7 +2495,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 				return selection, decision, nil
 			}
 			if s.isOpenAIAccountTransportCompatible(selection.Account, requiredTransport) &&
-				accountSupportsOpenAICapabilities(selection.Account, requiredCapability, requiredImageCapability) {
+				accountSupportsOpenAICapabilitiesForRequest(selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
 				applyLegacySelectionDecision(&decision, selection)
 				return selection, decision, nil
 			}
@@ -2477,6 +2561,20 @@ func accountSupportsOpenAICapabilities(account *Account, requiredCapability Open
 	}
 	return account.SupportsOpenAIEndpointCapability(requiredCapability) &&
 		account.SupportsOpenAIImageCapability(requiredImageCapability)
+}
+
+// accountSupportsOpenAICapabilitiesForRequest short-circuits the capability
+// set for Excel BPS routes: those accounts answer Responses via the Excel
+// plugin protocol and never run the Codex endpoint probes that populate the
+// stored capability set.
+func accountSupportsOpenAICapabilitiesForRequest(account *Account, requestedModel string, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
+	if account != nil && requiredImageCapability == "" && account.IsExcelBPSEnabledForModel(requestedModel) {
+		switch requiredCapability {
+		case OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses:
+			return true
+		}
+	}
+	return accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability)
 }
 
 func cloneExcludedAccountIDs(excludedIDs map[int64]struct{}) map[int64]struct{} {

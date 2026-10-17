@@ -814,6 +814,9 @@ func prioritizeOpenAICompactAccounts(accounts []*Account) []*Account {
 // would be sent for a given request, honoring the legacy compact-only mapping
 // when the caller is on the /responses/compact path.
 func resolveOpenAIAccountUpstreamModelForRequest(account *Account, requestedModel string, requireCompact bool) string {
+	if account.IsExcelBPSEnabledForModel(requestedModel) {
+		return account.GetMappedModel(requestedModel)
+	}
 	// Forward checks the raw Chat Completions fallback before passthrough.
 	// These API-key accounts therefore apply normal account model_mapping and
 	// upstream normalization, but never compact_model_mapping.
@@ -982,6 +985,19 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
+	// A stale sticky binding must not bypass BPS after it is enabled on the
+	// requested model. Clear it and let normal selection choose an eligible BPS
+	// account instead of silently forwarding this turn to /v1/responses.
+	if platform == PlatformOpenAI && strings.TrimSpace(requestedModel) != "" && !account.IsExcelBPSEnabledForModel(requestedModel) {
+		if candidates, listErr := s.listSchedulableAccounts(ctx, groupID, platform); listErr == nil {
+			for i := range candidates {
+				if candidates[i].ID != account.ID && candidates[i].IsExcelBPSEnabledForModel(requestedModel) {
+					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+					return nil
+				}
+			}
+		}
+	}
 
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
@@ -1067,6 +1083,14 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 				continue
 			}
 		}
+		if s.isExcelBPSModelCoolingDown(fresh, requestedModel) {
+			filterStats.exclude(excelBPSModelPermissionFilterReason)
+			continue
+		}
+		if s.isExcelBPSCoolingDown(fresh, requestedModel) {
+			filterStats.exclude(excelBPSRateLimitedFilterReason)
+			continue
+		}
 
 		eligible = append(eligible, fresh)
 		compactTiers[fresh.ID] = compactTier
@@ -1079,8 +1103,16 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	if preferLowUpstreamRate {
 		rateOrder = newOpenAILegacyUpstreamRateOrder(eligible, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx))
 	}
+	bpsPreferred := strings.TrimSpace(requestedModel) != ""
 	sort.SliceStable(eligible, func(i, j int) bool {
 		a, b := eligible[i], eligible[j]
+		if bpsPreferred {
+			aBPS := a.IsExcelBPSEnabledForModel(requestedModel)
+			bBPS := b.IsExcelBPSEnabledForModel(requestedModel)
+			if aBPS != bBPS {
+				return aBPS
+			}
+		}
 		if requireCompact && compactTiers[a.ID] != compactTiers[b.ID] {
 			return compactTiers[a.ID] > compactTiers[b.ID]
 		}
@@ -1292,6 +1324,14 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		}
 		if s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel, requireCompact) {
 			filterStats.exclude("runtime_blocked")
+			continue
+		}
+		if s.isExcelBPSModelCoolingDown(acc, requestedModel) {
+			filterStats.exclude(excelBPSModelPermissionFilterReason)
+			continue
+		}
+		if s.isExcelBPSCoolingDown(acc, requestedModel) {
+			filterStats.exclude(excelBPSRateLimitedFilterReason)
 			continue
 		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel, requireCompact) {
