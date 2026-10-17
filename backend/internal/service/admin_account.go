@@ -549,6 +549,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateExcelBPS403GroupSettings(ctx, account); err != nil {
+		return nil, err
+	}
 	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
 		return nil, err
 	}
@@ -618,6 +621,12 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			return nil, err
 		}
 		if err := ValidateUpstreamRequestIDHeaderExtra(normalizedExtra); err != nil {
+			return nil, err
+		}
+	}
+	if bpsValidateTarget := *account; normalizedExtra != nil {
+		bpsValidateTarget.Extra = normalizedExtra
+		if err := s.validateExcelBPS403GroupSettings(ctx, &bpsValidateTarget); err != nil {
 			return nil, err
 		}
 	}
@@ -977,6 +986,22 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 			return err
 		}
 	}
+	_, bpsMoveChanged := updates[ExcelBPSAutoMoveOn403Key]
+	_, bpsTargetChanged := updates[ExcelBPS403TargetGroupIDKey]
+	_, bpsToggleChanged := updates["openai_excel_bps"]
+	if bpsMoveChanged || bpsTargetChanged || bpsToggleChanged {
+		account, err := s.accountRepo.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		merged := *account
+		merged.Extra = make(map[string]any, len(account.Extra)+len(updates))
+		maps.Copy(merged.Extra, account.Extra)
+		maps.Copy(merged.Extra, updates)
+		if err := s.validateExcelBPS403GroupSettings(ctx, &merged); err != nil {
+			return err
+		}
+	}
 	if len(updates) == 0 {
 		return nil
 	}
@@ -1032,8 +1057,12 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	needMixedChannelCheck := input.GroupIDs != nil && !input.SkipMixedChannelCheck
 
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
+	_, bpsBulkMoveChanged := input.Extra[ExcelBPSAutoMoveOn403Key]
+	_, bpsBulkTargetChanged := input.Extra[ExcelBPS403TargetGroupIDKey]
+	_, bpsBulkToggleChanged := input.Extra["openai_excel_bps"]
+	bpsBulkChanged := bpsBulkMoveChanged || bpsBulkTargetChanged || bpsBulkToggleChanged
 	var cachedTargets []*Account
-	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
+	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil || bpsBulkChanged {
 		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
 		if err != nil {
 			return nil, err
@@ -1052,6 +1081,20 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 			return nil, err
 		}
 		result.LongContextInheritedCount = inheritedCount
+	}
+	if bpsBulkChanged {
+		for _, account := range cachedTargets {
+			if account == nil {
+				continue
+			}
+			merged := *account
+			merged.Extra = make(map[string]any, len(account.Extra)+len(input.Extra))
+			maps.Copy(merged.Extra, account.Extra)
+			maps.Copy(merged.Extra, input.Extra)
+			if err := s.validateExcelBPS403GroupSettings(ctx, &merged); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if input.ProbeEnabled != nil {
 		for _, accountID := range input.AccountIDs {

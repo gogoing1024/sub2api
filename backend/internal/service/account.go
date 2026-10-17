@@ -945,6 +945,10 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 }
 
 func (a *Account) isModelMappingSupported(requestedModel string) bool {
+	// Excel-only 账号没有原生 Codex 通道：未启用 BPS 的模型一律不参与映射放行。
+	if a.IsExcelOAuth() && !a.IsExcelBPSEnabledForModel(requestedModel) {
+		return false
+	}
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
 	// 该短路必须在 model_mapping 判定之前：账号从"白名单模式"切换到透传后，
 	// credentials 里常残留旧的非空 model_mapping，若不在此放行，透传账号会被
@@ -2215,7 +2219,104 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 // 优先级：
 // 1. 按账号类型读取分类型字段
 // 2. 分类型字段缺失时，回退兼容字段
+// IsExcelBPSEnabled routes an existing ChatGPT OAuth account to the Excel gateway
+// (bps.openai.com). Credentials and refresh remain on the original account; no
+// sidecar is involved. Free-plan accounts are never eligible.
+func (a *Account) IsExcelBPSEnabled() bool {
+	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.IsOpenAIAgentIdentity() || a.IsOpenAIPersonalAccessToken() {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(a.GetCredential("plan_type")), "free") {
+		return false
+	}
+	enabled, _ := a.Extra["openai_excel_bps"].(bool)
+	return enabled
+}
+
+const ExcelBPSIgnoreEncryptedContentKey = "openai_excel_bps_ignore_encrypted_content"
+
+// IsExcelBPSIgnoreEncryptedContentEnabled opts into replacing ciphertext that
+// BPS cannot forward, such as sub-agent messages in an old Codex conversation,
+// with an omission notice instead of rejecting the whole request.
+func (a *Account) IsExcelBPSIgnoreEncryptedContentEnabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	enabled, _ := a.Extra[ExcelBPSIgnoreEncryptedContentKey].(bool)
+	return enabled
+}
+
+// IsExcelBPSCacheCreationAsInputEnabled controls local billing and downstream usage.
+// The setting has no effect unless this account uses the Excel/BPS protocol.
+func (a *Account) IsExcelBPSCacheCreationAsInputEnabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	enabled, _ := a.Extra["openai_excel_bps_cache_creation_as_input"].(bool)
+	return enabled
+}
+
+// IsExcelBPSAutoDisableOn403Enabled opts into disabling BPS after a generic 403.
+func (a *Account) IsExcelBPSAutoDisableOn403Enabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	enabled, _ := a.Extra["openai_excel_bps_auto_disable_on_403"].(bool)
+	return enabled
+}
+
+// isExcelBPSAllModelsEnabled preserves legacy account-wide routing. An explicit
+// list, including an empty or malformed list, never enables BPS for all models.
+func (a *Account) isExcelBPSAllModelsEnabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	_, scoped := a.Extra["openai_excel_bps_models"]
+	return !scoped
+}
+
+// IsExcelBPSEnabledForModel selects the protocol after account model mapping.
+// The list selects a protocol; it does not restrict access to other models.
+func (a *Account) IsExcelBPSEnabledForModel(requestedModel string) bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	return a.isExcelBPSUpstreamModelEnabled(a.GetMappedModel(requestedModel))
+}
+
+func (a *Account) isExcelBPSUpstreamModelEnabled(model string) bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	raw, scoped := a.Extra["openai_excel_bps_models"]
+	if !scoped {
+		return true
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+	switch models := raw.(type) {
+	case []string:
+		for _, selected := range models {
+			if strings.TrimSpace(selected) == model {
+				return true
+			}
+		}
+	case []any:
+		for _, selected := range models {
+			if name, ok := selected.(string); ok && strings.TrimSpace(name) == model {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (a *Account) IsOpenAIResponsesWebSocketV2Enabled() bool {
+	if a.isExcelBPSAllModelsEnabled() {
+		return false
+	}
 	if a == nil || !a.IsOpenAI() || a.Extra == nil {
 		return false
 	}
