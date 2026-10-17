@@ -677,6 +677,7 @@ export default {
         flattenNamespaces: 'Flatten Codex namespace tools (compatibility)',
         flattenNamespacesDesc:
           'Disabled by default: Codex namespace tool declarations are forwarded as-is on /responses, which is what the ChatGPT Codex backend expects. Enable only when this OAuth account is routed to a relay that rejects namespace tools — flattening renames them to namespace__tool, which breaks models that address collaboration tools as functions.<namespace>.<tool>. Compaction requests always flatten regardless of this switch.',
+        excelBPSModels: 'Select models for Excel / BPS',
         longContextBilling: 'API long-context pricing',
         longContextBillingDesc:
           'Disabled by default. Enable only when this account\'s upstream charges OpenAI API long-context rates above the model threshold.',
@@ -1283,6 +1284,10 @@ export default {
           refreshTokenAuth: 'Manual RT Input',
           refreshTokenDesc: 'Enter your existing OpenAI Refresh Token(s). Supports batch input (one per line). The system will automatically validate and create accounts.',
           refreshTokenPlaceholder: 'Paste your OpenAI Refresh Token...\nSupports multiple, one per line',
+          excelTypeDesc: 'Official Excel sign-in',
+          excelSessionMismatch: 'No official Excel OAuth session was returned. Please authorize again.',
+          excelModelsRequired: 'Select at least one BPS model.',
+          excelLoginHint: 'Create a BPS session account via the official Excel sign-in. Existing Codex tokens cannot be converted by changing the client ID. After authorizing, copy the full bps.openai.com callback URL (containing code and state) from the address bar and paste it below to finish the exchange. BPS availability still needs a real request to verify.',
           mobileRefreshTokenAuth: 'Manual Mobile RT Input',
           accessTokenAuth: 'Manual AT Input',
           codexSessionAuth: 'Codex OAuth auth.json / AT Import',

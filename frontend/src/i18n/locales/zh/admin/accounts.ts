@@ -815,6 +815,7 @@ export default {
         flattenNamespaces: '摊平 Codex namespace 工具（兼容）',
         flattenNamespacesDesc:
           '默认关闭：/responses 上的 namespace 工具声明原样转发，这正是 ChatGPT Codex 后端期望的形态。仅当该 OAuth 账号指向不认识 namespace 的兼容上游时才开启——摊平会把工具改名为 namespace__tool，使按 functions.<命名空间>.<工具> 寻址的模型（如 gpt-5.6 多智能体）无法调用。压缩（compact）请求不受该开关影响，始终摊平。',
+        excelBPSModels: '勾选使用 Excel / BPS 的模型',
         longContextBilling: 'API 长上下文计费',
         longContextBillingDesc: '默认关闭。仅当该账号的上游会按模型阈值收取 OpenAI API 长上下文费率时开启。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
@@ -1398,6 +1399,10 @@ export default {
           refreshTokenAuth: '手动输入 RT',
           refreshTokenDesc: '输入您已有的 OpenAI Refresh Token，支持批量输入（每行一个），系统将自动验证并创建账号。',
           refreshTokenPlaceholder: '粘贴您的 OpenAI Refresh Token...\n支持多个，每行一个',
+          excelTypeDesc: '官方 Excel 登录',
+          excelSessionMismatch: '未取得官方 Excel OAuth 会话，请重新授权。',
+          excelModelsRequired: '请选择至少一个 BPS 模型。',
+          excelLoginHint: '通过官方 Excel 登录创建 BPS 会话账号。已有 Codex Token 不能通过修改客户端 ID 转换。授权后复制 bps.openai.com 地址栏包含 code 与 state 的完整回调 URL 粘贴到下方完成兑换。BPS 可用性仍需实际请求验证。',
           mobileRefreshTokenAuth: '手动输入 Mobile RT',
           accessTokenAuth: '手动输入 AT',
           codexSessionAuth: 'Codex OAuth auth.json / AT 导入',
