@@ -52,12 +52,18 @@ const (
 
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Code     string `json:"code,omitempty"`
-	ImageURL string `json:"image_url,omitempty"`
+	Type   string `json:"type"`
+	Text   string `json:"text,omitempty"`
+	Model  string `json:"model,omitempty"`
+	Status string `json:"status,omitempty"`
+	Code   string `json:"code,omitempty"`
+	// BPS evidence: upstream HTTP status, model, request ID and error code
+	// captured during an admin account test round trip.
+	UpstreamStatus    int    `json:"upstream_status,omitempty"`
+	UpstreamModel     string `json:"upstream_model,omitempty"`
+	RequestID         string `json:"request_id,omitempty"`
+	UpstreamErrorCode string `json:"upstream_error_code,omitempty"`
+	ImageURL          string `json:"image_url,omitempty"`
 	// AudioURL / VideoURL are data: or https URLs for in-browser media players.
 	AudioURL string `json:"audio_url,omitempty"`
 	VideoURL string `json:"video_url,omitempty"`
@@ -164,6 +170,8 @@ type AccountTestService struct {
 	leonardoTokenProvider *LeonardoTokenProvider
 	// leonardoImageService 为 nil 时用测试专用的出图服务实例（单测注入用）。
 	leonardoImageService *LeonardoImageService
+	bpsProbeMu           sync.Mutex
+	bpsProbeAccounts     map[int64]struct{}
 }
 
 func (s *AccountTestService) SetSettingService(settingService *SettingService) {

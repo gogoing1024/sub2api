@@ -24,6 +24,9 @@ func (s *OpenAIGatewayService) FetchOpenAIModelsList(ctx context.Context, accoun
 	if err != nil {
 		return nil, fmt.Errorf("resolve model list credentials: %w", err)
 	}
+	if credentialAccount.IsExcelBPSEnabled() {
+		return s.fetchExcelBPSAccountModels(ctx, account)
+	}
 	if credentialAccount.IsOpenAIOAuth() {
 		clientVersion := CodexCanonicalClientVersion()
 		if s.settingService != nil {

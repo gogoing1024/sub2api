@@ -116,4 +116,3 @@ func TestUpstreamFailureWithholdsPendingToolsAndNeverRepairs(t *testing.T) {
 	require.NotContains(t, string(raw), "function_call")
 	require.Contains(t, string(raw), "invalid_value")
 }
-

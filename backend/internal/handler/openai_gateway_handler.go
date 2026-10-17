@@ -3561,6 +3561,13 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		h.handleStreamingAwareError(c, http.StatusBadRequest, "invalid_request_error", message, streamStarted)
 		return
 	}
+	// BPS rejections may echo request data: keep the fixed code and message
+	// instead of passthrough rules or the upstream body.
+	if failoverErr.Reason == service.ExcelBPSRateLimitedReason {
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.ClientMessage, "")
+		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, "rate_limit_error", string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
+		return
+	}
 	if failoverErr.Reason == service.OpenAIImagesInsufficientBalanceReason {
 		status := failoverErr.ClientStatusCode
 		if status <= 0 {

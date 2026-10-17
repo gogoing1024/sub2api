@@ -12,6 +12,7 @@ const (
 	HTTPUpstreamProfileOpenAIHarvest HTTPUpstreamProfile = "openai_harvest"
 	HTTPUpstreamProfileGrok          HTTPUpstreamProfile = "grok"
 	HTTPUpstreamProfileLongStream    HTTPUpstreamProfile = "long_stream"
+	HTTPUpstreamProfileExcelBPS      HTTPUpstreamProfile = "excel_bps"
 )
 
 type httpUpstreamProfileContextKey struct{}

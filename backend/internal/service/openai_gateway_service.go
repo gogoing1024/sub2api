@@ -503,6 +503,13 @@ type OpenAIGatewayService struct {
 	responseHeaderFilter                *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle               *accountWriteThrottle
 	openAIModelsCache                   openAIModelsCache
+	excelBPSModelsCache                 openAIModelsCache
+	excelBPSModelCooldowns              excelBPSModelCooldowns
+	excelBPSCooldownUntil               sync.Map // key: int64(accountID), value: time.Time
+	excelBPSRecoveryMu                  sync.Mutex
+	excelBPSRecoveryCancel              context.CancelFunc
+	excelBPSRecoveryDone                chan struct{}
+	excelBPSRecoveryStopped             bool
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
 	// openaiCodexTurnStateOrigins: 下游会话 seed → openAICodexTurnStateOrigin，

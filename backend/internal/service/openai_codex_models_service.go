@@ -211,6 +211,11 @@ func (s *OpenAIGatewayService) MergeGroupConfiguredCodexModels(
 		}
 		changed = true
 	}
+	body, restricted, err := restrictExcelBPSCodexModelsManifest(body, accounts, group)
+	if err != nil {
+		return fmt.Errorf("restrict group BPS capabilities: %w", err)
+	}
+	changed = changed || restricted
 	filtered, retired, err := filterRetiredOpenAIPublicModelsBody(body, accounts, true)
 	if err != nil {
 		return fmt.Errorf("filter retired Codex models: %w", err)
@@ -956,7 +961,14 @@ func buildCodexModelsManifestForAccounts(
 			modelMetadata[modelID] = metadata
 		}
 	}
-	return buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, metadataModels, modelMetadata)
+	body, err := buildCodexModelsManifest(modelIDs, imageInputModels, searchToolModels, metadataModels, modelMetadata)
+	if err != nil || effectivePlatform != PlatformOpenAI {
+		return body, err
+	}
+	// Conflicting aliases can intentionally omit synced metadata. Do not let
+	// the bundled defaults reintroduce v2 for a possible BPS route.
+	body, _, err = restrictExcelBPSCodexModelsManifest(body, accounts, group)
+	return body, err
 }
 
 func buildCodexModelsManifest(
@@ -1696,6 +1708,9 @@ func (c *openAIModelsCache) set(key string, manifest *OpenAIModelsResponse, now 
 func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*OpenAIModelsResponse, error) {
 	if account == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_ACCOUNT_REQUIRED", "account is required")
+	}
+	if account.IsExcelBPSEnabled() {
+		return s.fetchExcelBPSCodexManifest(ctx, account, ifNoneMatch)
 	}
 	credAccount, err := resolveCredentialAccount(ctx, s.accountRepo, account)
 	if err != nil {

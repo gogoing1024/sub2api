@@ -985,6 +985,12 @@ type GatewayConfig struct {
 	// KiroCacheEmulationRedisEnabled shares Kiro cache emulation prefix state
 	// via Redis across instances instead of per-process memory. Default false.
 	KiroCacheEmulationRedisEnabled bool `mapstructure:"kiro_cache_emulation_redis_enabled"`
+	// ExcelBPSStateRedisEnabled shares basispoints replay/catalog state via
+	// Redis across instances instead of per-process memory. Default false.
+	ExcelBPSStateRedisEnabled bool `mapstructure:"excel_bps_state_redis_enabled"`
+	// ExcelBPSStreamDataIntervalTimeout aborts a BPS stream that produces no
+	// data frames for this many seconds. 0 disables, range 30-300, default 120.
+	ExcelBPSStreamDataIntervalTimeout int `mapstructure:"excel_bps_stream_data_interval_timeout"`
 	// 等待上游响应头的超时时间（秒），0表示无超时
 	// 注意：这不影响流式数据传输，只控制等待响应头的时间
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
