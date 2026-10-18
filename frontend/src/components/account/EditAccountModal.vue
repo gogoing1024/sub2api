@@ -4769,7 +4769,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     excelBPSRecoveryIntervalMinutes.value = bpsRecoveryIntervalOrDefault(extra?.openai_excel_bps_403_recovery_interval_minutes)
     excelBPSAutoMoveOn403.value = extra?.openai_excel_bps_auto_move_on_403 === true
     const bpsTargetGroup = extra?.openai_excel_bps_403_target_group_id
-    excelBPS403TargetGroupID.value = typeof bpsTargetGroup === 'number' ? bpsTargetGroup : 
+    excelBPS403TargetGroupID.value = typeof bpsTargetGroup === 'number' && Number.isSafeInteger(bpsTargetGroup) && bpsTargetGroup >= 0 ? bpsTargetGroup : ''
     // plan_type 手动覆盖仅 OAuth 有实际调度语义(IsOpenAIChatGPTSubscription 要求 oauth),故只对 oauth 回填
     editPlanType.value = newAccount.type === 'oauth'
       ? readPlanType(newAccount.credentials as Record<string, unknown> | undefined)
@@ -6426,7 +6426,7 @@ const handleSubmit = async () => {
       } else {
         newExtra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
       }
-      if (props.account?.platform === 'openai' && props.account?.type === 'oauth' && !isSparkShadow) {
+      if (props.account?.platform === 'openai' && props.account?.type === 'oauth' && !isSparkShadow.value) {
         newExtra.openai_excel_bps = excelBPSEnabled.value
         if (!excelBPSEnabled.value) {
           delete newExtra.openai_excel_bps_models
