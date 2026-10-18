@@ -17,6 +17,15 @@ import (
 // API keys use the standard endpoint; OAuth reuses the authenticated, cached
 // Codex source. Account mappings and group policy are applied after this cache.
 func (s *OpenAIGatewayService) FetchOpenAIModelsList(ctx context.Context, account *Account) (*OpenAIModelsResponse, error) {
+	if account != nil && account.IsExcelBPSEnabled() {
+		return s.fetchExcelBPSAccountModels(ctx, account)
+	}
+	return s.fetchNativeOpenAIModelsList(ctx, account)
+}
+
+// fetchNativeOpenAIModelsList is the non-BPS catalog source. BPS discovery
+// merges this result, so it must never dispatch back into the BPS path.
+func (s *OpenAIGatewayService) fetchNativeOpenAIModelsList(ctx context.Context, account *Account) (*OpenAIModelsResponse, error) {
 	if s == nil || account == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_MODELS_ACCOUNT_REQUIRED", "OpenAI account is required")
 	}
@@ -24,15 +33,15 @@ func (s *OpenAIGatewayService) FetchOpenAIModelsList(ctx context.Context, accoun
 	if err != nil {
 		return nil, fmt.Errorf("resolve model list credentials: %w", err)
 	}
-	if credentialAccount.IsExcelBPSEnabled() {
-		return s.fetchExcelBPSAccountModels(ctx, account)
+	if credentialAccount.IsExcelOAuth() {
+		return nil, errExcelOAuthRouteUnavailable
 	}
 	if credentialAccount.IsOpenAIOAuth() {
 		clientVersion := CodexCanonicalClientVersion()
 		if s.settingService != nil {
 			clientVersion = s.settingService.GetOpenAICodexClientVersion(ctx)
 		}
-		response, err := s.FetchCodexModelsManifest(ctx, account, clientVersion, "")
+		response, err := s.fetchNativeCodexModelsManifest(ctx, account, clientVersion, "")
 		if err != nil {
 			return nil, err
 		}

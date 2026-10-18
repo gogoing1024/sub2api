@@ -272,7 +272,7 @@ func (s *OpenAIGatewayService) fetchExcelBPSAccountModels(ctx context.Context, a
 	}
 	var native []byte
 	if !account.IsExcelOAuth() && !account.isExcelBPSAllModelsEnabled() {
-		response, err := s.FetchOpenAIModelsList(ctx, account)
+		response, err := s.fetchNativeOpenAIModelsList(ctx, account)
 		if err == nil {
 			native = response.Body
 		} else if ctx.Err() != nil {
@@ -316,7 +316,7 @@ func (s *OpenAIGatewayService) fetchExcelBPSCodexManifest(ctx context.Context, a
 		return nil, err
 	}
 	if !account.IsExcelOAuth() && !account.isExcelBPSAllModelsEnabled() {
-		native, nativeErr := s.FetchCodexModelsManifest(ctx, account, CodexCanonicalClientVersion(), "")
+		native, nativeErr := s.fetchNativeCodexModelsManifest(ctx, account, CodexCanonicalClientVersion(), "")
 		if nativeErr == nil {
 			envelope, models, err := modelCatalogEntries(native.Body, "models")
 			if err != nil {
