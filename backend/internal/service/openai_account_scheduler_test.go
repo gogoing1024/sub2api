@@ -4057,3 +4057,32 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_LegacyAccountModelRoute
 		selection.ReleaseFunc()
 	}
 }
+
+// BPS only speaks HTTP/SSE: a WS session for a BPS-routed model must not be
+// scheduled onto the BPS account, while its native models stay WS-capable.
+func TestIsOpenAIAccountTransportCompatibleRejectsWebSocketForBPSModels(t *testing.T) {
+	cfg := newSchedulerTestOpenAIWSV2Config()
+	svc := &OpenAIGatewayService{cfg: cfg}
+	account := &Account{
+		ID:          8802,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeOAuth,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Extra: map[string]any{
+			"openai_oauth_responses_websockets_v2_enabled": true,
+			"openai_excel_bps":        true,
+			"openai_excel_bps_models": []string{"gpt-7-new"},
+		},
+	}
+	scheduler := &defaultOpenAIAccountScheduler{service: svc}
+
+	require.True(t, scheduler.isAccountTransportCompatible(account, OpenAIUpstreamTransportResponsesWebsocketV2, "gpt-native"))
+	require.False(t, scheduler.isAccountTransportCompatible(account, OpenAIUpstreamTransportResponsesWebsocketV2, "gpt-7-new"))
+	require.False(t, scheduler.isAccountTransportCompatible(account, OpenAIUpstreamTransportResponsesWebsocketV2Ingress, "gpt-7-new"))
+	require.True(t, scheduler.isAccountTransportCompatible(account, OpenAIUpstreamTransportHTTPSSE, "gpt-7-new"))
+
+	delete(account.Extra, "openai_excel_bps_models")
+	require.False(t, scheduler.isAccountTransportCompatible(account, OpenAIUpstreamTransportResponsesWebsocketV2, "gpt-native"), "all-model BPS routes every model over HTTP")
+}
