@@ -63,7 +63,10 @@ type TestEvent struct {
 	UpstreamModel     string `json:"upstream_model,omitempty"`
 	RequestID         string `json:"request_id,omitempty"`
 	UpstreamErrorCode string `json:"upstream_error_code,omitempty"`
-	ImageURL          string `json:"image_url,omitempty"`
+	// UpstreamErrorMessage is BPS's own rejection message, redacted of the
+	// request token and account secrets.
+	UpstreamErrorMessage string `json:"upstream_error_message,omitempty"`
+	ImageURL             string `json:"image_url,omitempty"`
 	// AudioURL / VideoURL are data: or https URLs for in-browser media players.
 	AudioURL string `json:"audio_url,omitempty"`
 	VideoURL string `json:"video_url,omitempty"`

@@ -76,3 +76,25 @@ func TestAccountTestServiceBPSToolsModeHonoursGlobalSwitch(t *testing.T) {
 	require.Empty(t, upstream.requests)
 	require.Contains(t, rec.Body.String(), "Excel BPS is disabled globally")
 }
+
+// A failing BPS test must show the BPS status and its own (redacted) message
+// in the dialog instead of only basispoints_upstream_error.
+func TestAccountTestServiceShowsBPSRejectionStatusAndMessage(t *testing.T) {
+	body := `{"error":{"code":"token_invalidated","message":"Bearer test-token was rejected for this workspace"}}`
+	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusUnauthorized, Header: http.Header{"Content-Type": {"application/json"}, "X-Request-Id": {"req_bps_401"}}, Body: io.NopCloser(strings.NewReader(body))}}
+	svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream)}
+	c, rec := newBPSAccountTestContext()
+
+	_ = svc.testOpenAIAccountConnection(c, excelAccount(), "gpt-5.6-sol", "", "")
+
+	out := rec.Body.String()
+	require.Len(t, upstream.requests, 1)
+	require.Contains(t, out, `"type":"upstream_response"`)
+	require.Contains(t, out, `"upstream_status":401`)
+	require.Contains(t, out, `"request_id":"req_bps_401"`)
+	require.Contains(t, out, `"upstream_error_code":"token_invalidated"`)
+	require.Contains(t, out, `"upstream_error_message":`)
+	require.Contains(t, out, "was rejected for this workspace")
+	require.NotContains(t, out, "test-token", "the request token must never reach the test output")
+	require.Contains(t, out, "(HTTP 401)")
+}

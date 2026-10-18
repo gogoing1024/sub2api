@@ -343,7 +343,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			lease.ReportUpstreamFailure()
 		}
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
-		observeBPSTestResponse(ctx, resp, model, token, gjson.GetBytes(raw, "error.code").String())
+		observeBPSTestFailure(ctx, resp, model, token, raw, account)
 		// BPS throttles its own endpoint. A BPS 429 must not write Codex
 		// quota/cooldown state; it cools only the BPS route and fails over.
 		// Preserve the original rejection for Ops without exposing it to clients.
@@ -437,7 +437,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		if repairResp.StatusCode < 200 || repairResp.StatusCode >= 300 {
 			raw, _ := io.ReadAll(io.LimitReader(repairResp.Body, 512<<10))
-			observeBPSTestResponse(repairCtx, repairResp, model, token, gjson.GetBytes(raw, "error.code").String())
+			observeBPSTestFailure(repairCtx, repairResp, model, token, raw, account)
 			if repairResp.StatusCode == http.StatusTooManyRequests {
 				// Output was already accepted: cool the route, never replay the request.
 				s.coolDownExcelBPS(repairCtx, account, repairResp.Header.Get("Retry-After"))
@@ -476,7 +476,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		if repaired.StatusCode < 200 || repaired.StatusCode >= 300 {
 			raw, _ := io.ReadAll(io.LimitReader(repaired.Body, 512<<10))
-			observeBPSTestResponse(repairCtx, repaired, model, token, gjson.GetBytes(raw, "error.code").String())
+			observeBPSTestFailure(repairCtx, repaired, model, token, raw, account)
 			_ = repaired.Body.Close()
 			if repaired.StatusCode == http.StatusTooManyRequests {
 				s.coolDownExcelBPS(repairCtx, account, repaired.Header.Get("Retry-After"))

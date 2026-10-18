@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,10 +44,16 @@ func (s *AccountTestService) testExcelBPSAccountConnection(c *gin.Context, accou
 	}
 	result, err := s.openaiGatewayService.Forward(probeCtx.Request.Context(), probeCtx, account, body)
 	if err != nil {
+		// Name the BPS HTTP status so the failure is diagnosable from the test
+		// dialog; the upstream_response evidence event carries the details.
+		status := ""
+		if code := probeCtx.GetInt(OpsUpstreamStatusCodeKey); code > 0 {
+			status = fmt.Sprintf(" (HTTP %d)", code)
+		}
 		// A single-account test has no other account to fail over to.
 		var failover *UpstreamFailoverError
 		if errors.As(err, &failover) && failover.ClientMessage != "" {
-			return s.sendErrorAndEnd(c, failover.ClientMessage)
+			return s.sendErrorAndEnd(c, failover.ClientMessage+status)
 		}
 		var local *excelBPSForwardError
 		if errors.As(err, &local) && strings.HasPrefix(local.code, "basispoints_auth_") {
@@ -56,10 +63,10 @@ func (s *AccountTestService) testExcelBPSAccountConnection(c *gin.Context, accou
 				} `json:"error"`
 			}
 			if json.Unmarshal(probe.Body.Bytes(), &payload) == nil && payload.Error.Message != "" {
-				return s.sendErrorAndEnd(c, local.Error()+": "+payload.Error.Message)
+				return s.sendErrorAndEnd(c, local.Error()+status+": "+payload.Error.Message)
 			}
 		}
-		return s.sendErrorAndEnd(c, err.Error())
+		return s.sendErrorAndEnd(c, err.Error()+status)
 	}
 
 	answer := strings.Builder{}

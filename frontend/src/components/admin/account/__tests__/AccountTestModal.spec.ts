@@ -222,6 +222,38 @@ describe('AccountTestModal', () => {
     })
   })
 
+  it('BPS 测试失败时展示上游状态码、错误码与消息', async () => {
+    getAvailableModels.mockResolvedValue([{ id: 'gpt-5.6-sol', display_name: 'GPT-5.6 Sol' }])
+    global.fetch = vi.fn().mockResolvedValue(
+      createStreamResponse([
+        'data: {"type":"test_start","model":"gpt-5.6-sol"}\n',
+        'data: {"type":"upstream_response","upstream_status":401,"upstream_model":"gpt-5.6-sol","request_id":"req_bps_401","upstream_error_code":"token_invalidated","upstream_error_message":"Bearer [redacted] was rejected"}\n',
+        'data: {"type":"error","error":"excel BPS: basispoints_upstream_error (HTTP 401)"}\n'
+      ])
+    ) as any
+
+    const wrapper = mountModal({
+      id: 44,
+      name: 'Excel BPS',
+      platform: 'openai',
+      type: 'oauth',
+      status: 'active',
+      credentials: { client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID },
+      extra: { openai_excel_bps: true }
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+    ;(wrapper.vm as any).selectedModelId = 'gpt-5.6-sol'
+    await (wrapper.vm as any).startTest()
+    await flushPromises()
+
+    const evidence = wrapper.get('[data-testid="upstream-evidence"]').text()
+    expect(evidence).toContain('401')
+    expect(evidence).toContain('req_bps_401')
+    expect(evidence).toContain('token_invalidated')
+    expect(evidence).toContain('Bearer [redacted] was rejected')
+  })
+
   it('只有 Excel OAuth 的 BPS 账号提供 BPS 工具测试，且不提供 compact 测试', async () => {
     getAvailableModels.mockResolvedValue([{ id: 'gpt-5.4', display_name: 'GPT-5.4' }])
     const modeValues = async (extra: Record<string, unknown>, credentials: Record<string, unknown> = {}) => {
