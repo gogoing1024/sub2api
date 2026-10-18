@@ -1225,3 +1225,47 @@ func TestBuildSchedulerMetadataAccount_KeepsRPMFieldsForRPMGate(t *testing.T) {
 			"投影裁掉 rpm_strategy 会让粘性豁免账号退回三区判定")
 	})
 }
+
+// BPS candidate filtering and ordering run on the snapshot projection; without
+// these keys IsExcelBPSEnabledForModel is always false on snapshot candidates.
+func TestFilterSchedulerExtraKeepsExcelBPSRouting(t *testing.T) {
+	extra := map[string]any{
+		"openai_excel_bps":                            true,
+		"openai_excel_bps_auto_disable_on_403":        true,
+		service.ExcelBPSAutoRecoverOn403Key:           true,
+		service.ExcelBPS403RecoveryIntervalMinutesKey: 30,
+		service.ExcelBPSAutoMoveOn403Key:              true,
+		service.ExcelBPS403TargetGroupIDKey:           0,
+		"openai_excel_bps_models":                     []string{"gpt-7-new"},
+	}
+	filtered := filterSchedulerExtra(extra)
+	for key, value := range extra {
+		require.Equal(t, value, filtered[key], key)
+	}
+
+	account := &service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Extra: filtered}
+	require.True(t, account.IsExcelBPSEnabledForModel("gpt-7-new"))
+	require.False(t, account.IsExcelBPSEnabledForModel("gpt-native"))
+}
+
+// An explicit null model scope means "selected models, none chosen"; dropping
+// the key would silently widen the account to every model.
+func TestFilterSchedulerExtraKeepsNullExcelBPSModelScope(t *testing.T) {
+	filtered := filterSchedulerExtra(map[string]any{
+		"openai_excel_bps":        true,
+		"openai_excel_bps_models": nil,
+		"openai_passthrough":      nil,
+	})
+	require.Contains(t, filtered, "openai_excel_bps_models")
+	require.Nil(t, filtered["openai_excel_bps_models"])
+	require.NotContains(t, filtered, "openai_passthrough")
+}
+
+func TestFilterSchedulerCredentialsKeepsExcelOAuthClientID(t *testing.T) {
+	filtered := filterSchedulerCredentials(map[string]any{
+		"client_id":    "excel-client",
+		"access_token": "secret-access-token",
+	})
+	require.Equal(t, "excel-client", filtered["client_id"])
+	require.NotContains(t, filtered, "access_token")
+}
