@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -22,7 +23,7 @@ const excelBPSInvalidCiphertextNoCode = `{"error":{"message":"The encrypted cont
 
 func excelAccount() *Account {
 	return &Account{ID: 300, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 10,
-		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account"}, Extra: map[string]any{"openai_excel_bps": true, "openai_passthrough": true}}
+		Credentials: map[string]any{"access_token": "test-token", "chatgpt_account_id": "test-account", "client_id": openai.ExcelClientID}, Extra: map[string]any{"openai_excel_bps": true, "openai_passthrough": true}}
 }
 
 func TestExcelBPSInvalidEncryptedContentClassification(t *testing.T) {

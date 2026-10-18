@@ -2219,14 +2219,12 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 // 优先级：
 // 1. 按账号类型读取分类型字段
 // 2. 分类型字段缺失时，回退兼容字段
-// IsExcelBPSEnabled routes an existing ChatGPT OAuth account to the Excel gateway
-// (bps.openai.com). Credentials and refresh remain on the original account; no
-// sidecar is involved. Free-plan accounts are never eligible.
+// IsExcelBPSEnabled routes an Excel OAuth account to the Excel gateway
+// (bps.openai.com). Credentials and refresh remain on the account; no sidecar
+// is involved. Only accounts authorized through the official Excel client are
+// eligible (see excelBPSRouteEligible); free-plan accounts never are.
 func (a *Account) IsExcelBPSEnabled() bool {
-	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.IsOpenAIAgentIdentity() || a.IsOpenAIPersonalAccessToken() {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(a.GetCredential("plan_type")), "free") {
+	if !excelBPSRouteEligible(a) {
 		return false
 	}
 	enabled, _ := a.Extra["openai_excel_bps"].(bool)

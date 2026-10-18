@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -1243,7 +1244,8 @@ func TestFilterSchedulerExtraKeepsExcelBPSRouting(t *testing.T) {
 		require.Equal(t, value, filtered[key], key)
 	}
 
-	account := &service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Extra: filtered}
+	credentials := filterSchedulerCredentials(map[string]any{"client_id": openai.ExcelClientID, "access_token": "secret"})
+	account := &service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: credentials, Extra: filtered}
 	require.True(t, account.IsExcelBPSEnabledForModel("gpt-7-new"))
 	require.False(t, account.IsExcelBPSEnabledForModel("gpt-native"))
 }

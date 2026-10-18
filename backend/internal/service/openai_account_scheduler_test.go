@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/stretchr/testify/require"
 )
 
@@ -4070,6 +4071,7 @@ func TestIsOpenAIAccountTransportCompatibleRejectsWebSocketForBPSModels(t *testi
 		Status:      StatusActive,
 		Schedulable: true,
 		Concurrency: 1,
+		Credentials: map[string]any{"client_id": openai.ExcelClientID},
 		Extra: map[string]any{
 			"openai_oauth_responses_websockets_v2_enabled": true,
 			"openai_excel_bps":        true,

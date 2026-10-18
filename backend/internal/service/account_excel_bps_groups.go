@@ -78,6 +78,11 @@ func (s *adminServiceImpl) validateExcelBPSGroupPolicy(ctx context.Context, acco
 	if account.Extra["openai_excel_bps"] == true && strings.EqualFold(strings.TrimSpace(account.GetCredential("plan_type")), "free") {
 		return infraerrors.BadRequest("OPENAI_EXCEL_BPS_INVALID", "Excel BPS is unavailable for free accounts")
 	}
+	// BPS only accepts Excel-client tokens and this build has no independent
+	// Excel grant, so a Codex OAuth account with BPS on would always be rejected.
+	if account.Extra["openai_excel_bps"] == true && !account.IsExcelOAuth() {
+		return infraerrors.BadRequest("OPENAI_EXCEL_BPS_INVALID", "Excel BPS requires an Excel OAuth account created via BPS OAuth")
+	}
 	if err := validateExcelBPS403RecoveryExtra(account.Extra); err != nil {
 		return err
 	}

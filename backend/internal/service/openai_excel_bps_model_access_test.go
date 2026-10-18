@@ -148,10 +148,11 @@ func (r excelBPSShadowParentRepo) GetByID(context.Context, int64) (*Account, err
 	return r.parent, nil
 }
 
-// A scoped BPS account merges its native catalog into BPS discovery. The
-// native fetch must stay native; dispatching back into BPS recursed until the
+// A scoped Excel OAuth account has no native Codex channel: discovery must
+// return only its BPS models and never dispatch back into itself. The old
+// native merge went through the public dispatchers and recursed until the
 // stack overflowed and killed the process.
-func TestExcelBPSScopedDiscoveryMergesNativeCatalogWithoutRecursion(t *testing.T) {
+func TestExcelBPSScopedDiscoveryReturnsBPSCatalogWithoutRecursion(t *testing.T) {
 	var bpsCalls, nativeCalls atomic.Int32
 	svc := openAIClientToolsTestService(nil)
 	svc.httpUpstream = excelBPSAccessOnlyUpstream(t, &bpsCalls)
@@ -162,23 +163,23 @@ func TestExcelBPSScopedDiscoveryMergesNativeCatalogWithoutRecursion(t *testing.T
 
 	list, err := svc.FetchOpenAIModelsList(context.Background(), account)
 	require.NoError(t, err)
-	require.Contains(t, string(list.Body), `"gpt-native"`)
 	require.Contains(t, string(list.Body), `"gpt-7-new"`)
+	require.NotContains(t, string(list.Body), `"gpt-native"`)
 
 	manifest, err := svc.FetchCodexModelsManifest(context.Background(), account, "", "")
 	require.NoError(t, err)
-	require.Contains(t, string(manifest.Body), `"gpt-native"`)
 	require.Contains(t, string(manifest.Body), `"gpt-7-new"`)
+	require.NotContains(t, string(manifest.Body), `"gpt-native"`)
 	require.Positive(t, bpsCalls.Load())
-	require.Positive(t, nativeCalls.Load())
+	require.Zero(t, nativeCalls.Load(), "Excel OAuth credentials must never reach native Codex discovery")
 }
 
-// Spark shadows never route through BPS, so their catalog stays native even
-// when the parent account has BPS enabled.
-func TestExcelBPSShadowOfBPSParentUsesNativeCatalog(t *testing.T) {
-	var bpsCalls atomic.Int32
+// Spark shadows never route through BPS. A shadow of an Excel OAuth parent
+// resolves Excel credentials, which native Codex discovery must refuse instead
+// of sending the Excel token to ChatGPT.
+func TestExcelBPSShadowOfExcelParentRefusesNativeCatalog(t *testing.T) {
+	var bpsCalls, nativeCalls atomic.Int32
 	svc := openAIClientToolsTestService(nil)
-	var nativeCalls atomic.Int32
 	svc.httpUpstream = excelBPSAccessOnlyUpstream(t, &bpsCalls)
 	useNativeCodexManifestServer(t, &nativeCalls)
 	parent := excelAccount()
@@ -188,11 +189,10 @@ func TestExcelBPSShadowOfBPSParentUsesNativeCatalog(t *testing.T) {
 	shadow := &Account{ID: 301, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 10,
 		ParentAccountID: &parentID, Credentials: map[string]any{}, Extra: map[string]any{}}
 
-	list, err := svc.FetchOpenAIModelsList(context.Background(), shadow)
-	require.NoError(t, err)
-	require.Contains(t, string(list.Body), `"gpt-native"`)
+	_, err := svc.FetchOpenAIModelsList(context.Background(), shadow)
+	require.ErrorIs(t, err, errExcelOAuthRouteUnavailable)
 	require.Zero(t, bpsCalls.Load())
-	require.Positive(t, nativeCalls.Load())
+	require.Zero(t, nativeCalls.Load())
 }
 
 func TestExcelBPSMixedRoutesAndAliasesUseTheirOwnCatalog(t *testing.T) {

@@ -626,6 +626,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 	if bpsValidateTarget := *account; normalizedExtra != nil {
 		bpsValidateTarget.Extra = normalizedExtra
+		// Validate against the credentials this update will store, so a
+		// re-authorization that switches the OAuth client is judged correctly.
+		if len(input.Credentials) > 0 {
+			bpsValidateTarget.Credentials = MergePreservingSensitiveCreds(account.Credentials, input.Credentials)
+		}
 		if err := s.validateExcelBPS403GroupSettings(ctx, &bpsValidateTarget); err != nil {
 			return nil, err
 		}

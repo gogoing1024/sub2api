@@ -28,11 +28,14 @@ type AccountExcelBPSRecoveryRepository interface {
 	RestoreExcelBPSAfter403(context.Context, *Account) (bool, error)
 }
 
-// excelBPSRouteEligible mirrors the account editor: only regular ChatGPT OAuth
-// parent accounts can run BPS.
+// excelBPSRouteEligible mirrors the account editor: only Excel OAuth parent
+// accounts can run BPS. BPS accepts tokens issued to the official Excel client
+// only; this build has no independent Excel grant for Codex OAuth accounts, so
+// a Codex token sent to BPS is always rejected.
 func excelBPSRouteEligible(account *Account) bool {
 	return account != nil && account.Platform == PlatformOpenAI && account.Type == AccountTypeOAuth &&
 		!account.IsShadow() && !account.IsOpenAIAgentIdentity() && !account.IsOpenAIPersonalAccessToken() &&
+		account.IsExcelOAuth() &&
 		!strings.EqualFold(strings.TrimSpace(account.GetCredential("plan_type")), "free")
 }
 

@@ -67,8 +67,11 @@ func TestAccountTestServiceBPSToolsModeHonoursGlobalSwitch(t *testing.T) {
 	gateway.settingService = excelBPSDisabledSettingService()
 	svc := &AccountTestService{openaiGatewayService: gateway, httpUpstream: upstream}
 	c, rec := newBPSAccountTestContext()
+	// A Codex OAuth account skips the Excel OAuth guard and reaches the probe.
+	account := excelAccount()
+	delete(account.Credentials, "client_id")
 
-	_ = svc.testOpenAIAccountConnection(c, excelAccount(), "gpt-5.6-sol", "", AccountTestModeBPSTools)
+	_ = svc.testOpenAIAccountConnection(c, account, "gpt-5.6-sol", "", AccountTestModeBPSTools)
 
 	require.Empty(t, upstream.requests)
 	require.Contains(t, rec.Body.String(), "Excel BPS is disabled globally")
