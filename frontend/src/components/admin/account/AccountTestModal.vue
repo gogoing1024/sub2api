@@ -375,7 +375,6 @@ import Select from '@/components/common/Select.vue'
 import TextArea from '@/components/common/TextArea.vue'
 import { Icon } from '@/components/icons'
 import { useClipboard } from '@/composables/useClipboard'
-import { OPENAI_EXCEL_OAUTH_CLIENT_ID } from '@/composables/useOpenAIOAuth'
 import { buildApiUrl } from '@/api/client'
 import { ADMIN_UI_REQUEST_HEADER } from '@/api/adminUIRequest'
 import { adminAPI } from '@/api/admin'
@@ -430,15 +429,9 @@ const imageFileInput = ref<HTMLInputElement | null>(null)
 const audioFileInput = ref<HTMLInputElement | null>(null)
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
 const isGrokAccount = computed(() => props.account?.platform === 'grok')
-// BPS accounts are tested on the BPS route (the default test follows it), so
-// they get the BPS tool probe instead of the native-only compact probe. Only
-// Excel OAuth credentials can reach BPS; a stale flag on a Codex account is ignored.
-const isBPSAccount = computed(() =>
-  isOpenAIAccount.value &&
-  props.account?.type === 'oauth' &&
-  props.account?.credentials?.client_id === OPENAI_EXCEL_OAUTH_CLIENT_ID &&
-  props.account?.extra?.openai_excel_bps === true
-)
+// BPS-only (BPS OAuth) accounts are tested on the BPS route (the default test
+// follows it), so they get the BPS tool probe instead of the native-only compact probe.
+const isBPSAccount = computed(() => isOpenAIAccount.value && props.account?.type === 'bps-oauth')
 const openAITestModeOptions = computed(() => isBPSAccount.value
   ? [
       { value: 'default', label: t('admin.accounts.openai.testModeDefault') },

@@ -11,6 +11,18 @@ vi.mock('vue-i18n', async () => {
 })
 
 describe('PlatformTypeBadge', () => {
+  it('labels BPS OAuth accounts as their own type', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'openai',
+        type: 'bps-oauth'
+      }
+    })
+
+    expect(wrapper.text()).toContain('BPS OAuth')
+    expect(wrapper.text()).not.toContain('bps-oauth')
+  })
+
   it('uses Kiro theme instead of Anthropic orange theme', () => {
     const wrapper = mount(PlatformTypeBadge, {
       props: {

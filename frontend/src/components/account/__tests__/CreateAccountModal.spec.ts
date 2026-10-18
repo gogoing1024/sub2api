@@ -1005,6 +1005,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
     const flow = wrapper.findComponent({ name: 'OAuthAuthorizationFlow' })
     expect(flow.exists()).toBe(true)
+    expect((wrapper.vm as any).form.type).toBe('bps-oauth')
     expect(flow.props('showMobileRefreshTokenOption')).toBe(false)
     expect(flow.props('showCodexSessionImportOption')).toBe(false)
     expect(flow.props('showAgentIdentityOption')).toBe(false)
@@ -1014,6 +1015,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
   it('普通 OpenAI OAuth 仍提供 Codex 导入入口', async () => {
     const wrapper = await openCodexImportStep()
     const flow = wrapper.findComponent({ name: 'OAuthAuthorizationFlow' })
+    expect((wrapper.vm as any).form.type).toBe('oauth')
     expect(flow.props('showMobileRefreshTokenOption')).toBe(true)
     expect(flow.props('showCodexSessionImportOption')).toBe(true)
     expect(flow.props('showAgentIdentityOption')).toBe(true)

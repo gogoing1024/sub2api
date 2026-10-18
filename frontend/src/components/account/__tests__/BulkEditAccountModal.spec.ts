@@ -664,20 +664,28 @@ describe('BulkEditAccountModal', () => {
     expect((wrapper.get('[data-testid="bulk-edit-openai-responses-mode-select"]').element as HTMLSelectElement).value).toBe('auto')
   })
 
-  it('只有所选账号全部为 Excel OAuth 时才提供批量 BPS 设置', () => {
-    const codex = mountModal({
-      selectedPlatforms: ['openai'],
-      selectedTypes: ['oauth'],
-      target: { mode: 'selected', selectedPlatforms: ['openai'], selectedTypes: ['oauth'], selectedExcelOAuthOnly: false }
-    })
-    expect(codex.find('[data-testid="bulk-edit-excel-bps-toggle"]').exists()).toBe(false)
+  it('只有所选账号全部为 BPS OAuth 时才提供批量 BPS 设置', async () => {
+    const codex = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    expect(codex.find('[data-testid="bulk-edit-excel-bps-section"]').exists()).toBe(false)
 
-    const excel = mountModal({
-      selectedPlatforms: ['openai'],
-      selectedTypes: ['oauth'],
-      target: { mode: 'selected', selectedPlatforms: ['openai'], selectedTypes: ['oauth'], selectedExcelOAuthOnly: true }
+    const mixed = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth', 'bps-oauth'] })
+    expect(mixed.find('[data-testid="bulk-edit-excel-bps-section"]').exists()).toBe(false)
+
+    const bps = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['bps-oauth'] })
+    expect(bps.find('[data-testid="bulk-edit-excel-bps-section"]').exists()).toBe(true)
+    await bps.get('[data-testid="bulk-edit-excel-bps-apply"]').setValue(true)
+    await bps.get('[data-testid="bulk-edit-excel-bps-all-models"]').setValue(true)
+    await bps.get('[data-testid="bulk-edit-excel-bps-cache-creation-as-input"]').setValue(true)
+    await bps.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = vi.mocked(adminAPI.accounts.bulkUpdate).mock.calls.at(-1)?.[1] as any
+    expect(payload?.extra).toMatchObject({
+      openai_excel_bps_models: null,
+      openai_excel_bps_ignore_encrypted_content: false,
+      openai_excel_bps_cache_creation_as_input: true
     })
-    expect(excel.find('[data-testid="bulk-edit-excel-bps-toggle"]').exists()).toBe(true)
+    expect(payload?.extra).not.toHaveProperty('openai_excel_bps')
   })
 
   it('筛选全量模式固定展示影子继承说明并按 filters 提交', async () => {

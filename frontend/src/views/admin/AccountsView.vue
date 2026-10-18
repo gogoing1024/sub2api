@@ -541,7 +541,6 @@ import { adminAPI } from '@/api/admin'
 import { useTableLoader } from '@/composables/useTableLoader'
 import { useSwipeSelect, type SwipeSelectVirtualContext } from '@/composables/useSwipeSelect'
 import { useTableSelection } from '@/composables/useTableSelection'
-import { OPENAI_EXCEL_OAUTH_CLIENT_ID } from '@/composables/useOpenAIOAuth'
 import { useStepUp, isStepUpBlocked, isStepUpCancelled, stepUpBlockReason } from '@/composables/useStepUp'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -603,7 +602,6 @@ type AccountBulkEditTarget =
       accountIds: number[]
       selectedPlatforms: AccountPlatform[]
       selectedTypes: AccountType[]
-      selectedExcelOAuthOnly: boolean
     }
   | {
       mode: 'filtered'
@@ -620,7 +618,6 @@ type AccountBulkEditTarget =
       previewCount: number
       selectedPlatforms: AccountPlatform[]
       selectedTypes: AccountType[]
-      selectedExcelOAuthOnly: boolean
     }
 const selPlatforms = computed<AccountPlatform[]>(() => {
   const platforms = new Set(
@@ -792,7 +789,7 @@ const accountSupportsBatchUsage = (account: Account) => {
   }
   if (account.platform === 'gemini') return true
   if (account.platform === 'antigravity') return account.type === 'oauth'
-  if (account.platform === 'openai') return account.type === 'oauth'
+  if (account.platform === 'openai') return account.type === 'oauth' || account.type === 'bps-oauth'
   if (account.platform === 'grok') return account.type === 'oauth'
   return false
 }
@@ -2182,17 +2179,10 @@ const handleSelectAllResults = async () => {
   }
 }
 
-// BPS 只对 Excel OAuth（BPS OAuth 新建）账号生效，批量编辑据此决定是否提供 BPS 设置
-const isExcelOAuthAccount = (account: Account) =>
-  account.platform === 'openai' &&
-  account.type === 'oauth' &&
-  account.credentials?.client_id === OPENAI_EXCEL_OAUTH_CLIENT_ID
-
 const collectSelectionMetadata = (rows: Account[]) => {
   const selectedPlatforms = Array.from(new Set(rows.map(account => account.platform)))
   const selectedTypes = Array.from(new Set(rows.map(account => account.type)))
-  const selectedExcelOAuthOnly = rows.length > 0 && rows.every(isExcelOAuthAccount)
-  return { selectedPlatforms, selectedTypes, selectedExcelOAuthOnly }
+  return { selectedPlatforms, selectedTypes }
 }
 
 const openBulkEditSelected = () => {
@@ -2200,8 +2190,7 @@ const openBulkEditSelected = () => {
     mode: 'selected',
     accountIds: [...selIds.value],
     selectedPlatforms: [...selPlatforms.value],
-    selectedTypes: [...selTypes.value],
-    selectedExcelOAuthOnly: collectSelectionMetadata(accounts.value.filter(a => isSelected(a.id))).selectedExcelOAuthOnly
+    selectedTypes: [...selTypes.value]
   }
   showBulkEdit.value = true
 }
@@ -2209,15 +2198,13 @@ const openBulkEditSelected = () => {
 const openBulkEditFiltered = async () => {
   const filters = buildBulkEditFilterSnapshot()
   const preview = await adminAPI.accounts.list(1, 100, filters)
-  const { selectedPlatforms, selectedTypes, selectedExcelOAuthOnly } = collectSelectionMetadata(preview.items)
+  const { selectedPlatforms, selectedTypes } = collectSelectionMetadata(preview.items)
   bulkEditTarget.value = {
     mode: 'filtered',
     filters,
     previewCount: preview.total,
     selectedPlatforms,
-    selectedTypes,
-    // 预览只取前 100 条，未覆盖全部结果时无法确认都是 Excel OAuth
-    selectedExcelOAuthOnly: selectedExcelOAuthOnly && preview.items.length >= preview.total
+    selectedTypes
   }
   showBulkEdit.value = true
 }

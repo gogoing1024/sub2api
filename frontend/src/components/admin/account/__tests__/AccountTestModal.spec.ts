@@ -236,10 +236,9 @@ describe('AccountTestModal', () => {
       id: 44,
       name: 'Excel BPS',
       platform: 'openai',
-      type: 'oauth',
+      type: 'bps-oauth',
       status: 'active',
-      credentials: { client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID },
-      extra: { openai_excel_bps: true }
+      credentials: { client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID }
     })
     await wrapper.setProps({ show: true })
     await flushPromises()
@@ -254,18 +253,17 @@ describe('AccountTestModal', () => {
     expect(evidence).toContain('Bearer [redacted] was rejected')
   })
 
-  it('只有 Excel OAuth 的 BPS 账号提供 BPS 工具测试，且不提供 compact 测试', async () => {
+  it('只有 BPS OAuth 账号提供 BPS 工具测试，且不提供 compact 测试', async () => {
     getAvailableModels.mockResolvedValue([{ id: 'gpt-5.4', display_name: 'GPT-5.4' }])
-    const modeValues = async (extra: Record<string, unknown>, credentials: Record<string, unknown> = {}) => {
-      const wrapper = mountModal({ id: 43, name: 'OpenAI OAuth', platform: 'openai', type: 'oauth', status: 'active', extra, credentials })
+    const modeValues = async (type: string) => {
+      const wrapper = mountModal({ id: 43, name: 'OpenAI account', platform: 'openai', type, status: 'active' })
       await wrapper.setProps({ show: true })
       await flushPromises()
       return ((wrapper.vm as any).openAITestModeOptions as Array<{ value: string }>).map((option) => option.value)
     }
 
-    expect(await modeValues({ openai_excel_bps: true }, { client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID })).toEqual(['default', 'bps_tools'])
-    expect(await modeValues({ openai_excel_bps: true })).toEqual(['default', 'compact'])
-    expect(await modeValues({})).toEqual(['default', 'compact'])
+    expect(await modeValues('bps-oauth')).toEqual(['default', 'bps_tools'])
+    expect(await modeValues('oauth')).toEqual(['default', 'compact'])
   })
 })
 

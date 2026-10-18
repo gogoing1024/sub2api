@@ -1093,59 +1093,10 @@ describe('EditAccountModal', () => {
     )
   })
 
-  it('keeps plan_type when the BPS 403 target group is a number', async () => {
+  it('keeps plan_type on save for Codex OAuth accounts', async () => {
     const account = buildAccount()
     account.type = 'oauth'
-    account.credentials = { access_token: 'token', plan_type: 'plus', client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID }
-    account.extra = {
-      openai_excel_bps: true,
-      openai_excel_bps_auto_move_on_403: true,
-      openai_excel_bps_403_target_group_id: 0
-    }
-    updateAccountMock.mockReset()
-    checkMixedChannelRiskMock.mockReset()
-    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
-    updateAccountMock.mockResolvedValue(account)
-
-    const wrapper = mountModal(account)
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-
-    expect(updateAccountMock).toHaveBeenCalledTimes(1)
-    const payload = updateAccountMock.mock.calls[0]?.[1]
-    expect(payload?.credentials?.plan_type).toBe('plus')
-    expect(payload?.extra?.openai_excel_bps_403_target_group_id).toBe(0)
-  })
-
-  it('saves the Excel BPS toggle for OpenAI OAuth accounts', async () => {
-    const account = buildAccount()
-    account.type = 'oauth'
-    account.credentials = { access_token: 'token', client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID }
-    account.extra = { openai_excel_bps: true }
-    updateAccountMock.mockReset()
-    checkMixedChannelRiskMock.mockReset()
-    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
-    updateAccountMock.mockResolvedValue(account)
-
-    const wrapper = mountModal(account)
-    const toggle = wrapper.get('[data-testid="excel-bps-toggle"]')
-    expect(toggle.attributes('aria-checked')).toBe('true')
-    await toggle.trigger('click')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-
-    expect(updateAccountMock).toHaveBeenCalledTimes(1)
-    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps).toBe(false)
-  })
-
-  it('hides BPS on Codex OAuth accounts and strips stale BPS keys on save', async () => {
-    const account = buildAccount()
-    account.type = 'oauth'
-    account.credentials = { access_token: 'token' }
-    account.extra = {
-      openai_excel_bps: true,
-      openai_excel_bps_models: ['gpt-5.6-sol'],
-      openai_excel_bps_auto_disable_on_403: true,
-      openai_long_context_billing_enabled: true
-    }
+    account.credentials = { access_token: 'token', plan_type: 'plus' }
     updateAccountMock.mockReset()
     checkMixedChannelRiskMock.mockReset()
     checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
@@ -1156,9 +1107,36 @@ describe('EditAccountModal', () => {
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
 
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.plan_type).toBe('plus')
+  })
+
+  it('edits only BPS settings on BPS OAuth accounts', async () => {
+    const account = buildAccount()
+    account.type = 'bps-oauth'
+    account.credentials = { access_token: 'token', client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID }
+    account.extra = { openai_excel_bps_models: ['gpt-5.6-sol'] }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    expect(wrapper.find('[data-testid="excel-bps-section"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="excel-bps-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="edit-openai-flatten-namespaces-toggle"]').exists()).toBe(false)
+    expect((wrapper.get('[data-testid="excel-bps-all-models"]').element as HTMLInputElement).checked).toBe(false)
+
+    await wrapper.get('[data-testid="excel-bps-all-models"]').setValue(true)
+    await wrapper.get('[data-testid="excel-bps-ignore-encrypted-content"]').setValue(true)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
     const extra = updateAccountMock.mock.calls[0]?.[1]?.extra ?? {}
-    expect(Object.keys(extra).filter((key) => key.startsWith('openai_excel_bps'))).toEqual([])
-    expect(extra.openai_long_context_billing_enabled).toBe(true)
+    expect(extra).not.toHaveProperty('openai_excel_bps_models')
+    expect(extra).not.toHaveProperty('openai_excel_bps')
+    expect(extra.openai_excel_bps_ignore_encrypted_content).toBe(true)
+    expect(extra).not.toHaveProperty('openai_oauth_responses_websockets_v2_mode')
+    expect(extra).not.toHaveProperty('codex_fingerprint_mode')
   })
 
   it('writes the upstream request id header into extra only when it changes', async () => {

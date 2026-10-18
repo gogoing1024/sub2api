@@ -4003,7 +4003,7 @@
 
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
-        v-if="form.platform === 'openai'"
+        v-if="form.platform === 'openai' && !isOpenAIBPSOAuth"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -4064,7 +4064,7 @@
 
       <!-- OpenAI WS Mode（off/ctx_pool/passthrough/http_bridge/ws_bridge） -->
       <div
-        v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+        v-if="form.platform === 'openai' && !isOpenAIBPSOAuth && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         data-testid="create-openai-ws-mode"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
@@ -4183,7 +4183,7 @@
       </div>
 
       <div
-        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based' && !isOpenAIBPSOAuth"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between">
@@ -4239,7 +4239,7 @@
 
       <!-- Codex 指纹收敛模式（仅 OpenAI OAuth） -->
       <div
-        v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based' && !isOpenAIBPSOAuth"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -4287,7 +4287,7 @@
 
       <!-- OpenAI Compact 能力配置 -->
       <div
-        v-if="form.platform === 'openai' && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
+        v-if="form.platform === 'openai' && !isOpenAIBPSOAuth && (accountCategory === 'oauth-based' || accountCategory === 'apikey')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600 space-y-4"
       >
         <div class="flex items-center justify-between">
@@ -6108,7 +6108,7 @@ watch(
 
 // Sync form.type based on accountCategory, addMethod, and platform-specific type
 watch(
-  [accountCategory, addMethod, antigravityAccountType, () => form.platform],
+  [accountCategory, addMethod, antigravityAccountType, () => form.platform, openaiBPSOAuth],
   ([category, method, agType]) => {
     // Antigravity upstream 类型（实际创建为 apikey）
     if (form.platform === 'antigravity' && agType === 'upstream') {
@@ -6132,7 +6132,10 @@ watch(
     if ((form.platform === 'gemini' || form.platform === 'anthropic') && category === 'service_account') {
       form.type = 'service_account' as AccountType
     } else if (category === 'oauth-based') {
-      form.type = form.platform === 'anthropic' ? method as AccountType : 'oauth'
+      // BPS OAuth（官方 Excel 授权）是独立的 BPS-only 账号类型
+      form.type = form.platform === 'anthropic'
+        ? method as AccountType
+        : form.platform === 'openai' && openaiBPSOAuth.value ? 'bps-oauth' : 'oauth'
     } else {
       form.type = 'apikey'
     }
@@ -6831,8 +6834,11 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
 
   const extra: Record<string, unknown> = { ...(base || {}) }
   if (isOpenAIBPSOAuth.value) {
-    extra.openai_excel_bps = true
+    // BPS-only 账号只走 BPS：只写模型白名单与计费开关，Codex 专属设置
+    // （WS、透传、CLI only、指纹、compact 等）一律不落库。
     extra.openai_excel_bps_models = [...new Set(bpsOAuthModels.value.map(m => m.trim()).filter(Boolean))]
+    extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
+    return extra
   }
   if (accountCategory.value === 'oauth-based') {
     extra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
@@ -7929,7 +7935,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         name: form.name,
         notes: form.notes,
         platform: 'openai',
-        type: 'oauth',
+        type: isOpenAIBPSOAuth.value ? 'bps-oauth' : 'oauth',
         credentials,
         extra: withUpstreamRequestIdHeader(extra),
         proxy_id: form.proxy_id,
@@ -8210,7 +8216,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             name: accountName,
             notes: form.notes,
             platform: 'openai',
-            type: 'oauth',
+            type: isOpenAIBPSOAuth.value ? 'bps-oauth' : 'oauth',
             credentials,
             extra: withUpstreamRequestIdHeader(extra),
             proxy_id: form.proxy_id,
