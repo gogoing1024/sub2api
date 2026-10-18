@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AccountTestModal from '../AccountTestModal.vue'
+import { OPENAI_EXCEL_OAUTH_CLIENT_ID } from '@/composables/useOpenAIOAuth'
 
 const { getAvailableModels, copyToClipboard } = vi.hoisted(() => ({
   getAvailableModels: vi.fn(),
@@ -221,16 +222,17 @@ describe('AccountTestModal', () => {
     })
   })
 
-  it('只有 BPS 账号提供 BPS 工具测试，且不提供 compact 测试', async () => {
+  it('只有 Excel OAuth 的 BPS 账号提供 BPS 工具测试，且不提供 compact 测试', async () => {
     getAvailableModels.mockResolvedValue([{ id: 'gpt-5.4', display_name: 'GPT-5.4' }])
-    const modeValues = async (extra: Record<string, unknown>) => {
-      const wrapper = mountModal({ id: 43, name: 'OpenAI OAuth', platform: 'openai', type: 'oauth', status: 'active', extra })
+    const modeValues = async (extra: Record<string, unknown>, credentials: Record<string, unknown> = {}) => {
+      const wrapper = mountModal({ id: 43, name: 'OpenAI OAuth', platform: 'openai', type: 'oauth', status: 'active', extra, credentials })
       await wrapper.setProps({ show: true })
       await flushPromises()
       return ((wrapper.vm as any).openAITestModeOptions as Array<{ value: string }>).map((option) => option.value)
     }
 
-    expect(await modeValues({ openai_excel_bps: true })).toEqual(['default', 'bps_tools'])
+    expect(await modeValues({ openai_excel_bps: true }, { client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID })).toEqual(['default', 'bps_tools'])
+    expect(await modeValues({ openai_excel_bps: true })).toEqual(['default', 'compact'])
     expect(await modeValues({})).toEqual(['default', 'compact'])
   })
 })

@@ -195,7 +195,7 @@
 
       <!-- Excel / BPS 协议 -->
       <div
-        v-if="allOpenAIOAuthOnly"
+        v-if="allExcelOAuthOnly"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="mb-3 flex items-center justify-between gap-4">
@@ -1641,6 +1641,8 @@ interface Props {
     previewCount?: number
     selectedPlatforms?: AccountPlatform[]
     selectedTypes?: AccountType[]
+    // 所选账号是否全部为 Excel OAuth（BPS OAuth 新建）账号；BPS 设置只对它们生效
+    selectedExcelOAuthOnly?: boolean
   }
   proxies: ProxyConfig[]
   groups: AdminGroup[]
@@ -1695,6 +1697,9 @@ const allOpenAIOAuthOnly = computed(() => {
     targetSelectedTypes.value.every(t => t === 'oauth')
   )
 })
+
+// BPS 只接受 Excel 客户端 token，批量 BPS 设置仅在所选账号全部为 Excel OAuth 时提供
+const allExcelOAuthOnly = computed(() => allOpenAIOAuthOnly.value && props.target?.selectedExcelOAuthOnly === true)
 
 const allOpenAIAPIKey = computed(() => {
   return (
@@ -2133,7 +2138,7 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
   }
 
-  if (applyExcelBPS.value && allOpenAIOAuthOnly.value) {
+  if (applyExcelBPS.value && allExcelOAuthOnly.value) {
     const extra = ensureExtra()
     extra.openai_excel_bps = excelBPSEnabled.value
     if (excelBPSEnabled.value) {

@@ -2505,7 +2505,7 @@
 
       <!-- Excel / BPS 协议区 -->
       <div
-        v-if="account?.platform === 'openai' && account?.type === 'oauth' && !isSparkShadow"
+        v-if="isExcelOAuthAccount && !isSparkShadow"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
         data-testid="excel-bps-section"
       >
@@ -3486,6 +3486,7 @@ import { useAppStore } from '@/stores/app'
 
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
+import { OPENAI_EXCEL_OAUTH_CLIENT_ID } from '@/composables/useOpenAIOAuth'
 import type {
   Account,
   Proxy,
@@ -3631,6 +3632,14 @@ const selectableGroups = computed(() => {
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
 // 故隐藏代理选择器。
 const isSparkShadow = computed(() => props.account?.parent_account_id != null)
+
+// BPS 只接受官方 Excel 客户端签发的 token；本构建没有为 Codex OAuth 账号移植独立的
+// Excel 授权，所以只有通过「BPS OAuth」新建的 Excel OAuth 账号才提供 BPS 设置。
+const isExcelOAuthAccount = computed(() =>
+  props.account?.platform === 'openai' &&
+  props.account?.type === 'oauth' &&
+  props.account?.credentials?.client_id === OPENAI_EXCEL_OAUTH_CLIENT_ID
+)
 
 const codexTurnTickets = computed(() => props.account?.codex_turn_tickets ?? [])
 
@@ -6425,7 +6434,7 @@ const handleSubmit = async () => {
       } else {
         newExtra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
       }
-      if (props.account?.platform === 'openai' && props.account?.type === 'oauth' && !isSparkShadow.value) {
+      if (isExcelOAuthAccount.value && !isSparkShadow.value) {
         newExtra.openai_excel_bps = excelBPSEnabled.value
         if (!excelBPSEnabled.value) {
           delete newExtra.openai_excel_bps_models
@@ -6484,6 +6493,13 @@ const handleSubmit = async () => {
           } else {
             delete newExtra.openai_excel_bps_auto_move_on_403
             delete newExtra.openai_excel_bps_403_target_group_id
+          }
+        }
+      } else if (props.account?.platform === 'openai' && props.account?.type === 'oauth') {
+        // 非 Excel OAuth 账号不支持 BPS：清掉此前误开留下的 BPS 键，后端也会拒绝保存开启状态。
+        for (const key of Object.keys(newExtra)) {
+          if (key.startsWith('openai_excel_bps')) {
+            delete newExtra[key]
           }
         }
       }

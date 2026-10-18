@@ -664,6 +664,22 @@ describe('BulkEditAccountModal', () => {
     expect((wrapper.get('[data-testid="bulk-edit-openai-responses-mode-select"]').element as HTMLSelectElement).value).toBe('auto')
   })
 
+  it('只有所选账号全部为 Excel OAuth 时才提供批量 BPS 设置', () => {
+    const codex = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['oauth'],
+      target: { mode: 'selected', selectedPlatforms: ['openai'], selectedTypes: ['oauth'], selectedExcelOAuthOnly: false }
+    })
+    expect(codex.find('[data-testid="bulk-edit-excel-bps-toggle"]').exists()).toBe(false)
+
+    const excel = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['oauth'],
+      target: { mode: 'selected', selectedPlatforms: ['openai'], selectedTypes: ['oauth'], selectedExcelOAuthOnly: true }
+    })
+    expect(excel.find('[data-testid="bulk-edit-excel-bps-toggle"]').exists()).toBe(true)
+  })
+
   it('筛选全量模式固定展示影子继承说明并按 filters 提交', async () => {
     const wrapper = mountModal({
       accountIds: [],
