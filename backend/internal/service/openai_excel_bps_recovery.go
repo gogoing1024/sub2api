@@ -159,6 +159,11 @@ func (s *OpenAIGatewayService) syncExcelBPS403Recovery(ctx context.Context) {
 			logger.FromContext(ctx).Error("excel_bps.recovery_scan_panicked")
 		}
 	}()
+	// A globally disabled protocol has nothing to probe or restore; skip the
+	// full account scan until the admin switch is turned back on.
+	if !s.excelBPSGloballyEnabled(ctx) {
+		return
+	}
 	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	accounts, err := s.accountRepo.ListByPlatform(queryCtx, PlatformOpenAI)
 	cancel()
