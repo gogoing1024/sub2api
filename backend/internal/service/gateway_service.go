@@ -774,46 +774,47 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 
 // GatewayService handles API gateway operations
 type GatewayService struct {
-	accountRepo           AccountRepository
-	groupRepo             GroupRepository
-	usageLogRepo          UsageLogRepository
-	usageBillingRepo      UsageBillingRepository
-	userRepo              UserRepository
-	userSubRepo           UserSubscriptionRepository
-	userGroupRateRepo     UserGroupRateRepository
-	cache                 GatewayCache
-	digestStore           *DigestSessionStore
-	cfg                   *config.Config
-	schedulerSnapshot     *SchedulerSnapshotService
-	billingService        *BillingService
-	rateLimitService      *RateLimitService
-	billingCacheService   *BillingCacheService
-	identityService       *IdentityService
-	httpUpstream          HTTPUpstream
-	deferredService       *DeferredService
-	concurrencyService    *ConcurrencyService
-	claudeTokenProvider   *ClaudeTokenProvider
-	kiroTokenProvider     *KiroTokenProvider
-	kiroCooldownStore     KiroCooldownStore
-	sessionLimitCache     SessionLimitCache // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
-	rpmCache              RPMCache          // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
-	userGroupRateResolver *userGroupRateResolver
-	userGroupRateCache    *gocache.Cache
-	userGroupRateSF       singleflight.Group
-	modelsListCache       *gocache.Cache
-	modelsListCacheTTL    time.Duration
-	settingService        *SettingService
-	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
-	debugModelRouting     atomic.Bool
-	debugClaudeMimic      atomic.Bool
-	channelService        *ChannelService
-	resolver              *ModelPricingResolver
-	compositeResolver     *CompositeRouteResolver
-	debugGatewayBodyFile  atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
-	tlsFPProfileService   *TLSFingerprintProfileService
-	balanceNotifyService  *BalanceNotifyService
-	userPlatformQuotaRepo UserPlatformQuotaRepository
-	leonardoTokenProvider *LeonardoTokenProvider
+	accountRepo              AccountRepository
+	groupRepo                GroupRepository
+	usageLogRepo             UsageLogRepository
+	usageBillingRepo         UsageBillingRepository
+	userRepo                 UserRepository
+	userSubRepo              UserSubscriptionRepository
+	userGroupRateRepo        UserGroupRateRepository
+	cache                    GatewayCache
+	digestStore              *DigestSessionStore
+	cfg                      *config.Config
+	schedulerSnapshot        *SchedulerSnapshotService
+	billingService           *BillingService
+	rateLimitService         *RateLimitService
+	billingCacheService      *BillingCacheService
+	identityService          *IdentityService
+	httpUpstream             HTTPUpstream
+	deferredService          *DeferredService
+	concurrencyService       *ConcurrencyService
+	claudeTokenProvider      *ClaudeTokenProvider
+	kiroTokenProvider        *KiroTokenProvider
+	kiroCooldownStore        KiroCooldownStore
+	kiroCacheEmulationRemote KiroCacheEmulationRemoteStore // Kiro 缓存模拟跨节点共享存储；nil = 纯内存
+	sessionLimitCache        SessionLimitCache             // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
+	rpmCache                 RPMCache                      // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
+	userGroupRateResolver    *userGroupRateResolver
+	userGroupRateCache       *gocache.Cache
+	userGroupRateSF          singleflight.Group
+	modelsListCache          *gocache.Cache
+	modelsListCacheTTL       time.Duration
+	settingService           *SettingService
+	responseHeaderFilter     *responseheaders.CompiledHeaderFilter
+	debugModelRouting        atomic.Bool
+	debugClaudeMimic         atomic.Bool
+	channelService           *ChannelService
+	resolver                 *ModelPricingResolver
+	compositeResolver        *CompositeRouteResolver
+	debugGatewayBodyFile     atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
+	tlsFPProfileService      *TLSFingerprintProfileService
+	balanceNotifyService     *BalanceNotifyService
+	userPlatformQuotaRepo    UserPlatformQuotaRepository
+	leonardoTokenProvider    *LeonardoTokenProvider
 }
 
 // NewGatewayService creates a new GatewayService
@@ -839,6 +840,7 @@ func NewGatewayService(
 	kiroTokenProvider *KiroTokenProvider,
 	leonardoTokenProvider *LeonardoTokenProvider,
 	kiroCooldownStore KiroCooldownStore,
+	kiroCacheEmulationRemote KiroCacheEmulationRemoteStore,
 	sessionLimitCache SessionLimitCache,
 	rpmCache RPMCache,
 	digestStore *DigestSessionStore,
@@ -854,41 +856,42 @@ func NewGatewayService(
 	modelsListTTL := resolveModelsListCacheTTL(cfg)
 
 	svc := &GatewayService{
-		accountRepo:           accountRepo,
-		groupRepo:             groupRepo,
-		usageLogRepo:          usageLogRepo,
-		usageBillingRepo:      usageBillingRepo,
-		userRepo:              userRepo,
-		userSubRepo:           userSubRepo,
-		userGroupRateRepo:     userGroupRateRepo,
-		cache:                 cache,
-		digestStore:           digestStore,
-		cfg:                   cfg,
-		schedulerSnapshot:     schedulerSnapshot,
-		concurrencyService:    concurrencyService,
-		billingService:        billingService,
-		rateLimitService:      rateLimitService,
-		billingCacheService:   billingCacheService,
-		identityService:       identityService,
-		httpUpstream:          httpUpstream,
-		deferredService:       deferredService,
-		claudeTokenProvider:   claudeTokenProvider,
-		kiroTokenProvider:     kiroTokenProvider,
-		kiroCooldownStore:     kiroCooldownStore,
-		sessionLimitCache:     sessionLimitCache,
-		rpmCache:              rpmCache,
-		userGroupRateCache:    gocache.New(userGroupRateTTL, time.Minute),
-		settingService:        settingService,
-		modelsListCache:       gocache.New(modelsListTTL, time.Minute),
-		modelsListCacheTTL:    modelsListTTL,
-		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
-		tlsFPProfileService:   tlsFPProfileService,
-		channelService:        channelService,
-		resolver:              resolver,
-		compositeResolver:     compositeResolver,
-		balanceNotifyService:  balanceNotifyService,
-		userPlatformQuotaRepo: userPlatformQuotaRepo,
-		leonardoTokenProvider: leonardoTokenProvider,
+		accountRepo:              accountRepo,
+		groupRepo:                groupRepo,
+		usageLogRepo:             usageLogRepo,
+		usageBillingRepo:         usageBillingRepo,
+		userRepo:                 userRepo,
+		userSubRepo:              userSubRepo,
+		userGroupRateRepo:        userGroupRateRepo,
+		cache:                    cache,
+		digestStore:              digestStore,
+		cfg:                      cfg,
+		schedulerSnapshot:        schedulerSnapshot,
+		concurrencyService:       concurrencyService,
+		billingService:           billingService,
+		rateLimitService:         rateLimitService,
+		billingCacheService:      billingCacheService,
+		identityService:          identityService,
+		httpUpstream:             httpUpstream,
+		deferredService:          deferredService,
+		claudeTokenProvider:      claudeTokenProvider,
+		kiroTokenProvider:        kiroTokenProvider,
+		kiroCooldownStore:        kiroCooldownStore,
+		kiroCacheEmulationRemote: kiroCacheEmulationRemote,
+		sessionLimitCache:        sessionLimitCache,
+		rpmCache:                 rpmCache,
+		userGroupRateCache:       gocache.New(userGroupRateTTL, time.Minute),
+		settingService:           settingService,
+		modelsListCache:          gocache.New(modelsListTTL, time.Minute),
+		modelsListCacheTTL:       modelsListTTL,
+		responseHeaderFilter:     compileResponseHeaderFilter(cfg),
+		tlsFPProfileService:      tlsFPProfileService,
+		channelService:           channelService,
+		resolver:                 resolver,
+		compositeResolver:        compositeResolver,
+		balanceNotifyService:     balanceNotifyService,
+		userPlatformQuotaRepo:    userPlatformQuotaRepo,
+		leonardoTokenProvider:    leonardoTokenProvider,
 	}
 	if svc.leonardoTokenProvider == nil {
 		svc.leonardoTokenProvider = NewLeonardoTokenProvider(accountRepo, nil)

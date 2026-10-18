@@ -982,6 +982,9 @@ type GatewayConfig struct {
 	// MinOutputTokens is the minimum max_output_tokens used when
 	// converting Chat Completions or Anthropic requests to Responses.
 	MinOutputTokens int `mapstructure:"min_output_tokens"`
+	// KiroCacheEmulationRedisEnabled shares Kiro cache emulation prefix state
+	// via Redis across instances instead of per-process memory. Default false.
+	KiroCacheEmulationRedisEnabled bool `mapstructure:"kiro_cache_emulation_redis_enabled"`
 	// 等待上游响应头的超时时间（秒），0表示无超时
 	// 注意：这不影响流式数据传输，只控制等待响应头的时间
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
