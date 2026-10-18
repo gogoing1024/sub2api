@@ -2595,10 +2595,9 @@
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSAutoMoveOn403Desc') }}</p>
             <div v-if="excelBPSAutoMoveOn403" class="mt-2">
               <label class="input-label">{{ t('admin.accounts.openai.excelBPS403TargetGroup') }}</label>
-              <select v-model="excelBPS403TargetGroupID" data-testid="excel-bps-403-target-group" class="input">
-                <option value="">{{ t('admin.accounts.openai.excelBPS403TargetGroupNone') }}</option>
-                <option v-for="option in excelBPS403GroupOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
+              <div data-testid="excel-bps-403-target-group">
+                <Select v-model="excelBPS403TargetGroupID" :options="[{ label: t('admin.accounts.openai.excelBPS403TargetGroupNone'), value: '' }, ...excelBPS403GroupOptions]" />
+              </div>
             </div>
           </div>
           <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.excelBPSNotice') }}</p>
