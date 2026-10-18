@@ -90,6 +90,7 @@ const OAuthAuthorizationFlowStub = defineComponent({
   name: 'OAuthAuthorizationFlow',
   props: {
     showManualOption: Boolean,
+    showMobileRefreshTokenOption: Boolean,
     showCodexSessionImportOption: Boolean,
     showAgentIdentityOption: Boolean,
     showCodexPatOption: Boolean,
@@ -991,6 +992,32 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(payload?.upstream_billing_probe_enabled).toBe(true)
     // 创建成功后前端立即发起一次首探（与其他 apikey 平台一致）。
     expect(probeUpstreamBillingMock).toHaveBeenCalledWith(42)
+  })
+
+  it('BPS OAuth 只保留 Excel 可用的授权入口', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
+    await wrapper.get('[data-testid="bps-oauth-models"] [data-testid="model-whitelist-selector"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('BPS account')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const flow = wrapper.findComponent({ name: 'OAuthAuthorizationFlow' })
+    expect(flow.exists()).toBe(true)
+    expect(flow.props('showMobileRefreshTokenOption')).toBe(false)
+    expect(flow.props('showCodexSessionImportOption')).toBe(false)
+    expect(flow.props('showAgentIdentityOption')).toBe(false)
+    expect(flow.props('showCodexPatOption')).toBe(false)
+  })
+
+  it('普通 OpenAI OAuth 仍提供 Codex 导入入口', async () => {
+    const wrapper = await openCodexImportStep()
+    const flow = wrapper.findComponent({ name: 'OAuthAuthorizationFlow' })
+    expect(flow.props('showMobileRefreshTokenOption')).toBe(true)
+    expect(flow.props('showCodexSessionImportOption')).toBe(true)
+    expect(flow.props('showAgentIdentityOption')).toBe(true)
+    expect(flow.props('showCodexPatOption')).toBe(true)
   })
 
   it('leaves Codex session import billing ownership to the backend', async () => {
