@@ -13,6 +13,26 @@ import (
 	"github.com/google/uuid"
 )
 
+// testBPSOAuthAccountConnection routes every test mode of a BPS-only account
+// through BPS: the tool round trip for bps_tools, otherwise a text probe.
+func (s *AccountTestService) testBPSOAuthAccountConnection(c *gin.Context, account *Account, modelID, prompt, mode string) error {
+	ctx := c.Request.Context()
+	model := strings.TrimSpace(modelID)
+	if model == "" {
+		model = openai.DefaultTestModel
+	}
+	if s.openaiGatewayService == nil || s.openaiGatewayService.validateExcelOAuthRoute(ctx, account, model) != nil {
+		return s.sendErrorAndEnd(c, errExcelOAuthRouteUnavailable.Error())
+	}
+	if isOpenAIImageModel(account.GetMappedModel(model)) {
+		return s.sendErrorAndEnd(c, "BPS OAuth accounts do not serve image models")
+	}
+	if mode == AccountTestModeBPSTools {
+		return s.testExcelBPSToolRoundtrip(c, account, modelID)
+	}
+	return s.testExcelBPSAccountConnection(c, account, modelID, prompt)
+}
+
 // testExcelBPSAccountConnection runs the default account test through the
 // gateway Forward path, so a BPS-enabled account is probed on the same route
 // user Responses requests take instead of the hard-coded native Codex probe.

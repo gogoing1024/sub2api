@@ -358,12 +358,6 @@ func provideCleanup(
 				}
 				return nil
 			}},
-			{"ExcelBPS403Recovery", func() error {
-				if openAIGateway != nil {
-					openAIGateway.StopBPS403Recovery()
-				}
-				return nil
-			}},
 			{"ScheduledTestRunnerService", func() error {
 				if scheduledTestRunner != nil {
 					scheduledTestRunner.Stop()

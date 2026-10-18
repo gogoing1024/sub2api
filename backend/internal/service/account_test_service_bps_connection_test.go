@@ -14,6 +14,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type excelBPSSwitchSettingRepo struct {
+	SettingRepository
+	values map[string]string
+}
+
+func (r *excelBPSSwitchSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
+	out := make(map[string]string, len(keys))
+	for _, key := range keys {
+		if value, ok := r.values[key]; ok {
+			out[key] = value
+		}
+	}
+	return out, nil
+}
+
 func newBPSAccountTestContext() (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
@@ -61,20 +76,29 @@ func TestAccountTestServiceExcelOAuthRequiresBPSRoute(t *testing.T) {
 	require.Contains(t, rec.Body.String(), errExcelOAuthRouteUnavailable.Error())
 }
 
-func TestAccountTestServiceBPSToolsModeHonoursGlobalSwitch(t *testing.T) {
+// The BPS tool probe exists only for BPS OAuth accounts.
+func TestAccountTestServiceBPSToolsModeRequiresBPSOAuth(t *testing.T) {
 	upstream := &httpUpstreamRecorder{}
-	gateway := openAIClientToolsTestService(upstream)
-	gateway.settingService = excelBPSDisabledSettingService()
-	svc := &AccountTestService{openaiGatewayService: gateway, httpUpstream: upstream}
+	svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream), httpUpstream: upstream}
 	c, rec := newBPSAccountTestContext()
-	// A Codex OAuth account skips the Excel OAuth guard and reaches the probe.
-	account := excelAccount()
-	delete(account.Credentials, "client_id")
+	codex := &Account{ID: 302, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Concurrency: 1, Credentials: map[string]any{"access_token": "codex-token"}}
 
-	_ = svc.testOpenAIAccountConnection(c, account, "gpt-5.6-sol", "", AccountTestModeBPSTools)
+	_ = svc.testOpenAIAccountConnection(c, codex, "gpt-5.6-sol", "", AccountTestModeBPSTools)
 
 	require.Empty(t, upstream.requests)
-	require.Contains(t, rec.Body.String(), "Excel BPS is disabled globally")
+	require.Contains(t, rec.Body.String(), "BPS tool probe requires a BPS OAuth account")
+}
+
+// BPS-only accounts never fall through to the native image probe.
+func TestAccountTestServiceBPSOAuthRejectsImageModels(t *testing.T) {
+	upstream := &httpUpstreamRecorder{}
+	svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream), httpUpstream: upstream}
+	c, rec := newBPSAccountTestContext()
+
+	_ = svc.testOpenAIAccountConnection(c, excelAccount(), "gpt-image-2", "", "")
+
+	require.Empty(t, upstream.requests)
+	require.Contains(t, rec.Body.String(), "do not serve image models")
 }
 
 // A failing BPS test must show the BPS status and its own (redacted) message

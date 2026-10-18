@@ -945,8 +945,8 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 }
 
 func (a *Account) isModelMappingSupported(requestedModel string) bool {
-	// Excel-only 账号没有原生 Codex 通道：未启用 BPS 的模型一律不参与映射放行。
-	if a.IsExcelOAuth() && !a.IsExcelBPSEnabledForModel(requestedModel) {
+	// BPS-only（bps-oauth）账号没有原生 Codex 通道：BPS 白名单外的模型一律不参与映射放行。
+	if a.IsBPSOAuth() && !a.IsExcelBPSEnabledForModel(requestedModel) {
 		return false
 	}
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
@@ -1729,7 +1729,7 @@ func (a *Account) GetOpenAIAccessToken() string {
 }
 
 func (a *Account) GetOpenAIRefreshToken() string {
-	if !a.IsOpenAIOAuth() {
+	if !a.IsOpenAIOAuthCredentialAccount() {
 		return ""
 	}
 	return a.GetCredential("refresh_token")
@@ -2128,7 +2128,7 @@ func (a *Account) GetOpenAIOrganizationID() string {
 }
 
 func (a *Account) GetOpenAITokenExpiresAt() *time.Time {
-	if !a.IsOpenAIOAuth() {
+	if !a.IsOpenAIOAuthCredentialAccount() {
 		return nil
 	}
 	return a.GetCredentialAsTime("expires_at")
@@ -2219,16 +2219,12 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 // 优先级：
 // 1. 按账号类型读取分类型字段
 // 2. 分类型字段缺失时，回退兼容字段
-// IsExcelBPSEnabled routes an Excel OAuth account to the Excel gateway
-// (bps.openai.com). Credentials and refresh remain on the account; no sidecar
-// is involved. Only accounts authorized through the official Excel client are
-// eligible (see excelBPSRouteEligible); free-plan accounts never are.
+// IsExcelBPSEnabled reports whether the account routes through the Excel
+// gateway (bps.openai.com). BPS is the only channel of a BPS-only (bps-oauth)
+// account, so it is always on for eligible accounts; the model whitelist and
+// the global switch decide what it serves. Free-plan accounts are never eligible.
 func (a *Account) IsExcelBPSEnabled() bool {
-	if !excelBPSRouteEligible(a) {
-		return false
-	}
-	enabled, _ := a.Extra["openai_excel_bps"].(bool)
-	return enabled
+	return excelBPSRouteEligible(a)
 }
 
 const ExcelBPSIgnoreEncryptedContentKey = "openai_excel_bps_ignore_encrypted_content"
@@ -2251,15 +2247,6 @@ func (a *Account) IsExcelBPSCacheCreationAsInputEnabled() bool {
 		return false
 	}
 	enabled, _ := a.Extra["openai_excel_bps_cache_creation_as_input"].(bool)
-	return enabled
-}
-
-// IsExcelBPSAutoDisableOn403Enabled opts into disabling BPS after a generic 403.
-func (a *Account) IsExcelBPSAutoDisableOn403Enabled() bool {
-	if !a.IsExcelBPSEnabled() {
-		return false
-	}
-	enabled, _ := a.Extra["openai_excel_bps_auto_disable_on_403"].(bool)
 	return enabled
 }
 

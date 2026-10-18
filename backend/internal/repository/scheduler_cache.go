@@ -957,8 +957,6 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	// Candidate-list admission evaluates the account override before hydrating
 	// the full account. Dropping it silently falls back to the platform threshold.
 	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold",
-		// Excel OAuth 凭据靠 client_id 识别（IsExcelOAuth）；BPS 全局关闭时候选过滤要据此剔除 Excel-only 账号。
-		"client_id",
 		// Gemini 显式缓存的候选过滤（GeminiExplicitCacheExclusions）读本投影判定账号是否支持显式缓存：
 		// 官方地址、Vertex 认证方式与上游网关的显式缓存声明。缺这几个键时只能按类型粗筛，
 		// 不支持的账号要逐个选中后才被剔除。
@@ -1027,14 +1025,8 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// 走网关报 no available accounts"。
 		"openai_passthrough",
 		"openai_oauth_passthrough",
-		// Excel BPS：候选过滤与排序（BPS 优先、429/模型权限冷却、WS 兼容性）都读本投影。
-		// 缺这些键时 IsExcelBPSEnabledForModel 在快照候选上恒为 false，BPS 调度逻辑全部失效。
-		"openai_excel_bps",
-		"openai_excel_bps_auto_disable_on_403",
-		service.ExcelBPSAutoRecoverOn403Key,
-		service.ExcelBPS403RecoveryIntervalMinutesKey,
-		service.ExcelBPSAutoMoveOn403Key,
-		service.ExcelBPS403TargetGroupIDKey,
+		// Excel BPS：BPS-only（bps-oauth）账号的模型白名单。候选过滤与排序（BPS 优先、
+		// 429/模型权限冷却、WS 兼容性）都按它判断，缺失时账号退化为全部模型走 BPS。
 		"openai_excel_bps_models",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",

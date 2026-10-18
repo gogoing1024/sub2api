@@ -24,9 +24,11 @@ import (
 var excelBPSReplay basispoints.ReplayCache
 var excelBPSCatalog basispoints.CatalogCache
 
-// Independently authorized Excel grants never quarantine the primary Codex
-// account. Legacy single-grant accounts retain their authentication policy.
-func (s *OpenAIGatewayService) handleExcelBPSUnauthorized(ctx context.Context, account *Account, status int, headers http.Header, raw []byte, tokens ...string) {
+// handleExcelBPSUnauthorized hands a BPS 401 to the account-level policy. The
+// Excel token is the account's only credential, so the shared OpenAI OAuth 401
+// rules apply: invalidate the cached token and pause for a refresh window, or
+// mark revoked tokens as errors.
+func (s *OpenAIGatewayService) handleExcelBPSUnauthorized(ctx context.Context, account *Account, status int, headers http.Header, raw []byte) {
 	if status != http.StatusUnauthorized {
 		return
 	}
@@ -48,60 +50,31 @@ func (s *OpenAIGatewayService) handleExcelBPSUnauthorized(ctx context.Context, a
 	s.rateLimitService.HandleUpstreamError(stateCtx, account, status, headers, body)
 }
 
-func (s *OpenAIGatewayService) moveExcelBPSOn403(ctx context.Context, account *Account) bool {
-	target, enabled := account.ExcelBPS403GroupTarget()
-	if !enabled {
-		return false
+// handleExcelBPSForbidden hands a generic BPS 403 (not a model-permission
+// rejection) to the account-level policy. A BPS-only account has no other
+// channel, so the shared OpenAI 403 rules apply to the whole account: HTML or
+// Cloudflare block pages carry no penalty, other rejections cool the account
+// down and escalate to an error after repeated hits. BPS bodies can echo
+// request data, so only the code and a redacted message are passed on.
+func (s *OpenAIGatewayService) handleExcelBPSForbidden(ctx context.Context, account *Account, headers http.Header, raw []byte, token string) {
+	if s.rateLimitService == nil {
+		return
 	}
-	repo, ok := s.accountRepo.(AccountExcelBPSGroupRepository)
-	if !ok {
-		return false
-	}
-	stateCtx, cancel := openAIAccountStateContext(ctx)
-	defer cancel()
-	changed, err := repo.MoveExcelBPSOn403(stateCtx, account)
-	if err != nil {
-		logger.LegacyPrintf("service.openai_excel_bps", "automatic group action failed: account_id=%d error_type=%T", account.ID, err)
-		return false
-	}
-	if changed {
-		logger.LegacyPrintf("service.openai_excel_bps", "automatically updated groups after upstream HTTP 403: account_id=%d target_group_id=%d", account.ID, target)
-	}
-	return changed
-}
-
-func (s *OpenAIGatewayService) disableExcelBPSOn403(ctx context.Context, account *Account) bool {
-	if !account.IsExcelBPSAutoDisableOn403Enabled() {
-		return false
-	}
-	repo, ok := s.accountRepo.(AccountExcelBPSRepository)
-	if !ok {
-		return false
+	body := raw
+	if !isHTMLResponse(raw) && !isCloudflareBotBlockResponse(raw) {
+		fields := map[string]string{"message": "Excel BPS rejected the account"}
+		if code := extractUpstreamErrorCode(raw); bpsTestDiagnosticIdentifier.MatchString(code) {
+			fields["code"] = code
+		}
+		message := strings.TrimSpace(extractUpstreamErrorMessage([]byte(excelBPSSanitizeErrorBody(string(raw), token, account))))
+		if message != "" && (token == "" || !strings.Contains(message, token)) {
+			fields["message"] = "Excel BPS rejected the account: " + truncateString(message, 256)
+		}
+		body, _ = json.Marshal(map[string]any{"error": fields})
 	}
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
-	changed, err := repo.DisableExcelBPSOn403(stateCtx, account)
-	if err != nil {
-		// Do not log upstream bodies, credentials or database query arguments.
-		logger.LegacyPrintf("service.openai_excel_bps", "auto-disable failed: account_id=%d error_type=%T", account.ID, err)
-		return false
-	}
-	if changed {
-		logger.LegacyPrintf("service.openai_excel_bps", "automatically disabled Excel BPS after upstream HTTP 403: account_id=%d", account.ID)
-	}
-	return changed
-}
-
-// AccountExcelBPSRepository disables only BPS, provided the account credentials
-// and both opt-in switches still match at the time of the write.
-type AccountExcelBPSRepository interface {
-	DisableExcelBPSOn403(ctx context.Context, account *Account) (bool, error)
-}
-
-// AccountExcelBPSGroupRepository applies an opted-in group action atomically
-// after rechecking the account identity, policy and current memberships.
-type AccountExcelBPSGroupRepository interface {
-	MoveExcelBPSOn403(ctx context.Context, account *Account) (bool, error)
+	s.rateLimitService.HandleUpstreamError(stateCtx, account, http.StatusForbidden, headers, body)
 }
 
 // getExcelBPSAccessToken resolves the account's own OAuth token: without the
@@ -114,6 +87,11 @@ func (s *OpenAIGatewayService) getExcelBPSAccessToken(ctx context.Context, accou
 
 func excelBPSAccountID(account *Account, accessToken string) string {
 	if accountID := strings.TrimSpace(account.GetChatGPTAccountID()); accountID != "" {
+		return accountID
+	}
+	// GetChatGPTAccountID covers Codex OAuth types only; BPS-only accounts store
+	// the same credential key.
+	if accountID := strings.TrimSpace(account.GetCredential("chatgpt_account_id")); accountID != "" {
 		return accountID
 	}
 	claims, err := openai.DecodeIDToken(accessToken)
@@ -187,6 +165,14 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return clientCanceled()
 		}
 		return nil, newExcelBPSRateLimitedFailoverError(retryAfter)
+	}
+	// A generic BPS 401/403 disqualifies this BPS-only account as a whole;
+	// nothing was written yet, so the handler may retry another account.
+	failoverAccountRejected := func(status int) (*OpenAIForwardResult, error) {
+		if isExcelBPSClientCancellation(c, ctx.Err()) {
+			return clientCanceled()
+		}
+		return nil, newExcelBPSAccountRejectedFailoverError(status)
 	}
 	body, err := sjson.SetBytes(body, "model", model)
 	if err != nil {
@@ -378,32 +364,23 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			return failoverRateLimited(resp.Header.Get("Retry-After"))
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
-			s.handleExcelBPSUnauthorized(ctx, account, resp.StatusCode, resp.Header, raw, token)
-			return fail(resp.StatusCode, "basispoints_upstream_error", "Excel BPS authentication failed; request was not replayed")
+			s.handleExcelBPSUnauthorized(ctx, account, resp.StatusCode, resp.Header, raw)
+			return failoverAccountRejected(resp.StatusCode)
 		}
 		code := gjson.GetBytes(raw, "error.code").String()
 		if isExcelBPSModelPermissionError(resp.StatusCode, code) {
 			s.coolDownExcelBPSModel(account, model)
 			return fail(resp.StatusCode, code, "This model is not available on the account's Excel BPS endpoint")
 		}
+		if resp.StatusCode == http.StatusForbidden {
+			s.handleExcelBPSForbidden(ctx, account, resp.Header, raw, token)
+			return failoverAccountRejected(resp.StatusCode)
+		}
 		message := "Excel BPS rejected this request; account scheduling was not changed"
 		errorCode := "basispoints_upstream_error"
 		if resp.StatusCode == http.StatusBadRequest && isExcelBPSInvalidEncryptedContent(raw) {
 			errorCode = "invalid_encrypted_content"
 			message = "Excel BPS could not verify encrypted conversation state; resend the original plaintext history or start a new conversation"
-		}
-		if resp.StatusCode == http.StatusForbidden {
-			// Apply group routing before the independent protocol switch is disabled.
-			moved := s.moveExcelBPSOn403(ctx, account)
-			disabled := s.disableExcelBPSOn403(ctx, account)
-			switch {
-			case moved && disabled:
-				message = "Excel BPS rejected this request; Excel BPS was automatically disabled and account groups were updated; request was not replayed"
-			case disabled:
-				message = "Excel BPS rejected this request; Excel BPS was automatically disabled for this account; request was not replayed"
-			case moved:
-				message = "Excel BPS rejected this request; account groups were automatically updated; request was not replayed"
-			}
 		}
 		return fail(resp.StatusCode, errorCode, message)
 	}
@@ -442,13 +419,13 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				// Output was already accepted: cool the route, never replay the request.
 				s.coolDownExcelBPS(repairCtx, account, repairResp.Header.Get("Retry-After"))
 			}
-			s.handleExcelBPSUnauthorized(repairCtx, account, repairResp.StatusCode, repairResp.Header, raw, token)
+			// Output was already accepted, so the request cannot move to another
+			// account; only the account-level state is updated.
+			s.handleExcelBPSUnauthorized(repairCtx, account, repairResp.StatusCode, repairResp.Header, raw)
 			if isExcelBPSModelPermissionError(repairResp.StatusCode, gjson.GetBytes(raw, "error.code").String()) {
 				s.coolDownExcelBPSModel(account, model)
-			}
-			if repairResp.StatusCode == http.StatusForbidden && !isExcelBPSModelPermissionError(http.StatusForbidden, gjson.GetBytes(raw, "error.code").String()) {
-				s.moveExcelBPSOn403(repairCtx, account)
-				s.disableExcelBPSOn403(repairCtx, account)
+			} else if repairResp.StatusCode == http.StatusForbidden {
+				s.handleExcelBPSForbidden(repairCtx, account, repairResp.Header, raw, token)
 			}
 			return nil, fmt.Errorf("excel BPS correction returned HTTP %d", repairResp.StatusCode)
 		}
@@ -481,13 +458,13 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			if repaired.StatusCode == http.StatusTooManyRequests {
 				s.coolDownExcelBPS(repairCtx, account, repaired.Header.Get("Retry-After"))
 			}
-			s.handleExcelBPSUnauthorized(repairCtx, account, repaired.StatusCode, repaired.Header, raw, token)
+			// Output was already accepted, so the request cannot move to another
+			// account; only the account-level state is updated.
+			s.handleExcelBPSUnauthorized(repairCtx, account, repaired.StatusCode, repaired.Header, raw)
 			if isExcelBPSModelPermissionError(repaired.StatusCode, gjson.GetBytes(raw, "error.code").String()) {
 				s.coolDownExcelBPSModel(account, model)
-			}
-			if repaired.StatusCode == http.StatusForbidden && !isExcelBPSModelPermissionError(http.StatusForbidden, gjson.GetBytes(raw, "error.code").String()) {
-				s.moveExcelBPSOn403(repairCtx, account)
-				s.disableExcelBPSOn403(repairCtx, account)
+			} else if repaired.StatusCode == http.StatusForbidden {
+				s.handleExcelBPSForbidden(repairCtx, account, repaired.Header, raw, token)
 			}
 			return nil, fmt.Errorf("excel BPS tool correction returned HTTP %d", repaired.StatusCode)
 		}

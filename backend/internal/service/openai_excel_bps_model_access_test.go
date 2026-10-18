@@ -174,9 +174,9 @@ func TestExcelBPSScopedDiscoveryReturnsBPSCatalogWithoutRecursion(t *testing.T) 
 	require.Zero(t, nativeCalls.Load(), "Excel OAuth credentials must never reach native Codex discovery")
 }
 
-// Spark shadows never route through BPS. A shadow of an Excel OAuth parent
-// resolves Excel credentials, which native Codex discovery must refuse instead
-// of sending the Excel token to ChatGPT.
+// Spark shadows never route through BPS, and BPS OAuth accounts cannot parent
+// one: a malformed shadow pointing at a BPS-only parent must fail without
+// sending the Excel token to ChatGPT or BPS.
 func TestExcelBPSShadowOfExcelParentRefusesNativeCatalog(t *testing.T) {
 	var bpsCalls, nativeCalls atomic.Int32
 	svc := openAIClientToolsTestService(nil)
@@ -190,7 +190,7 @@ func TestExcelBPSShadowOfExcelParentRefusesNativeCatalog(t *testing.T) {
 		ParentAccountID: &parentID, Credentials: map[string]any{}, Extra: map[string]any{}}
 
 	_, err := svc.FetchOpenAIModelsList(context.Background(), shadow)
-	require.ErrorIs(t, err, errExcelOAuthRouteUnavailable)
+	require.Error(t, err)
 	require.Zero(t, bpsCalls.Load())
 	require.Zero(t, nativeCalls.Load())
 }

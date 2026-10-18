@@ -16,6 +16,27 @@ const ExcelBPSRateLimitedReason = GatewayFailureReason("basispoints_rate_limited
 
 const excelBPSRateLimitedClientMessage = "Excel BPS rate limit exceeded, please retry later"
 
+// ExcelBPSAccountRejectedReason marks a generic BPS 401/403. A BPS-only account
+// has no other channel, so the rejection disqualifies the whole account: the
+// account-level policy records it and the handler moves on to another account.
+const ExcelBPSAccountRejectedReason = GatewayFailureReason("basispoints_account_rejected")
+
+const excelBPSAccountRejectedClientMessage = "Excel BPS rejected the selected account"
+
+// newExcelBPSAccountRejectedFailoverError never carries the BPS body: it may
+// echo request data.
+func newExcelBPSAccountRejectedFailoverError(status int) *UpstreamFailoverError {
+	return &UpstreamFailoverError{
+		StatusCode:        status,
+		Stage:             GatewayFailureStageAccountAuth,
+		Scope:             GatewayFailureScopeAccount,
+		Reason:            ExcelBPSAccountRejectedReason,
+		NextAccountAction: NextAccountRetry,
+		ClientStatusCode:  http.StatusBadGateway,
+		ClientMessage:     excelBPSAccountRejectedClientMessage,
+	}
+}
+
 // excelBPSRateLimitedFilterReason names BPS cooldowns in "no available
 // accounts" diagnostics; the handler reports such pools as rate limited.
 const excelBPSRateLimitedFilterReason = "excel_bps_rate_limited"

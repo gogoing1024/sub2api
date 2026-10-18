@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -1228,24 +1227,14 @@ func TestBuildSchedulerMetadataAccount_KeepsRPMFieldsForRPMGate(t *testing.T) {
 }
 
 // BPS candidate filtering and ordering run on the snapshot projection; without
-// these keys IsExcelBPSEnabledForModel is always false on snapshot candidates.
+// the model whitelist a scoped BPS-only account would route every model to BPS.
 func TestFilterSchedulerExtraKeepsExcelBPSRouting(t *testing.T) {
-	extra := map[string]any{
-		"openai_excel_bps":                            true,
-		"openai_excel_bps_auto_disable_on_403":        true,
-		service.ExcelBPSAutoRecoverOn403Key:           true,
-		service.ExcelBPS403RecoveryIntervalMinutesKey: 30,
-		service.ExcelBPSAutoMoveOn403Key:              true,
-		service.ExcelBPS403TargetGroupIDKey:           0,
-		"openai_excel_bps_models":                     []string{"gpt-7-new"},
-	}
-	filtered := filterSchedulerExtra(extra)
-	for key, value := range extra {
-		require.Equal(t, value, filtered[key], key)
-	}
+	filtered := filterSchedulerExtra(map[string]any{
+		"openai_excel_bps_models": []string{"gpt-7-new"},
+	})
+	require.Equal(t, []string{"gpt-7-new"}, filtered["openai_excel_bps_models"])
 
-	credentials := filterSchedulerCredentials(map[string]any{"client_id": openai.ExcelClientID, "access_token": "secret"})
-	account := &service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: credentials, Extra: filtered}
+	account := &service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeBPSOAuth, Extra: filtered}
 	require.True(t, account.IsExcelBPSEnabledForModel("gpt-7-new"))
 	require.False(t, account.IsExcelBPSEnabledForModel("gpt-native"))
 }
@@ -1261,13 +1250,4 @@ func TestFilterSchedulerExtraKeepsNullExcelBPSModelScope(t *testing.T) {
 	require.Contains(t, filtered, "openai_excel_bps_models")
 	require.Nil(t, filtered["openai_excel_bps_models"])
 	require.NotContains(t, filtered, "openai_passthrough")
-}
-
-func TestFilterSchedulerCredentialsKeepsExcelOAuthClientID(t *testing.T) {
-	filtered := filterSchedulerCredentials(map[string]any{
-		"client_id":    "excel-client",
-		"access_token": "secret-access-token",
-	})
-	require.Equal(t, "excel-client", filtered["client_id"])
-	require.NotContains(t, filtered, "access_token")
 }

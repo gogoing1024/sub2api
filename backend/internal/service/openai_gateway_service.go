@@ -506,10 +506,6 @@ type OpenAIGatewayService struct {
 	excelBPSModelsCache                 openAIModelsCache
 	excelBPSModelCooldowns              excelBPSModelCooldowns
 	excelBPSCooldownUntil               sync.Map // key: int64(accountID), value: time.Time
-	excelBPSRecoveryMu                  sync.Mutex
-	excelBPSRecoveryCancel              context.CancelFunc
-	excelBPSRecoveryDone                chan struct{}
-	excelBPSRecoveryStopped             bool
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
 	// openaiCodexTurnStateOrigins: 下游会话 seed → openAICodexTurnStateOrigin，
@@ -602,7 +598,6 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	svc.StartOpenAICodexTicketHarvester()
-	svc.StartBPS403Recovery()
 	return svc
 }
 
@@ -1263,6 +1258,21 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 			return accessToken, "oauth", nil
 		}
 		// 降级：TokenProvider 未配置时直接从账号读取
+		accessToken := account.GetOpenAIAccessToken()
+		if accessToken == "" {
+			return "", "", errors.New("access_token not found in credentials")
+		}
+		return accessToken, "oauth", nil
+	case AccountTypeBPSOAuth:
+		// BPS-only accounts hold Excel-client OAuth credentials maintained by the
+		// same OpenAI token lifecycle; only the BPS forwarder consumes them.
+		if s.openAITokenProvider != nil {
+			accessToken, err := s.openAITokenProvider.GetAccessToken(ctx, account)
+			if err != nil {
+				return "", "", err
+			}
+			return accessToken, "oauth", nil
+		}
 		accessToken := account.GetOpenAIAccessToken()
 		if accessToken == "" {
 			return "", "", errors.New("access_token not found in credentials")

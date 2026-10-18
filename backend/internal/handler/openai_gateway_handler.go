@@ -1160,6 +1160,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	defer h.recoverAnthropicMessagesPanic(c, &streamStarted)
 
 	requestStart := time.Now()
+	// Anthropic Messages forwards through the native Codex protocol; BPS-only
+	// accounts have no route for it.
+	c.Request = c.Request.WithContext(service.WithBPSUnsupportedInbound(c.Request.Context()))
 
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {

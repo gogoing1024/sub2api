@@ -1857,7 +1857,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	}
 	// Excel-only accounts have no native Codex route: they become ineligible as
 	// soon as the admin disables the BPS protocol globally.
-	if account.IsExcelOAuth() && s != nil && s.service != nil && !s.service.excelBPSGloballyEnabled(ctx) {
+	if account.IsBPSOAuth() && s != nil && s.service != nil && !s.service.excelBPSGloballyEnabled(ctx) {
 		return false, "excel_bps_disabled"
 	}
 	if source, ok := CompositeRouteSourceFromContext(ctx); ok && source == CompositeRouteSourceAccount {
@@ -1904,7 +1904,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 		s.service.isUpstreamModelRestrictedByChannel(ctx, *req.GroupID, account, req.RequestedModel, req.RequireCompact) {
 		return false, "channel_upstream_restricted"
 	}
-	if !accountSupportsOpenAICapabilitiesForRequest(account, req.RequestedModel, req.RequiredCapability, req.RequiredImageCapability) {
+	if !accountSupportsOpenAICapabilitiesForRequest(ctx, account, req.RequestedModel, req.RequiredCapability, req.RequiredImageCapability) {
 		return false, "capability_mismatch"
 	}
 	// 分组利润控制：不合格账号在候选过滤与抢槽后终检阶段即被排除，
@@ -2468,7 +2468,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 				if selection == nil || selection.Account == nil {
 					return selection, decision, nil
 				}
-				if accountSupportsOpenAICapabilitiesForRequest(selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
+				if accountSupportsOpenAICapabilitiesForRequest(ctx, selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
 					applyLegacySelectionDecision(&decision, selection)
 					return selection, decision, nil
 				}
@@ -2495,7 +2495,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 				return selection, decision, nil
 			}
 			if s.isOpenAIAccountTransportCompatible(selection.Account, requiredTransport, requestedModel) &&
-				accountSupportsOpenAICapabilitiesForRequest(selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
+				accountSupportsOpenAICapabilitiesForRequest(ctx, selection.Account, requestedModel, requiredCapability, requiredImageCapability) {
 				applyLegacySelectionDecision(&decision, selection)
 				return selection, decision, nil
 			}
@@ -2564,15 +2564,20 @@ func accountSupportsOpenAICapabilities(account *Account, requiredCapability Open
 }
 
 // accountSupportsOpenAICapabilitiesForRequest short-circuits the capability
-// set for Excel BPS routes: those accounts answer Responses via the Excel
-// plugin protocol and never run the Codex endpoint probes that populate the
-// stored capability set.
-func accountSupportsOpenAICapabilitiesForRequest(account *Account, requestedModel string, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
-	if account != nil && requiredImageCapability == "" && account.IsExcelBPSEnabledForModel(requestedModel) {
-		switch requiredCapability {
-		case OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses:
-			return true
+// set for BPS-only accounts: they answer text Responses through the Excel
+// plugin protocol, never run the Codex endpoint probes that populate the stored
+// capability set, and cannot serve image requests or entry points without a
+// BPS route (Chat Completions, Anthropic Messages).
+func accountSupportsOpenAICapabilitiesForRequest(ctx context.Context, account *Account, requestedModel string, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
+	if account != nil && account.IsBPSOAuth() {
+		if requiredImageCapability != "" || isBPSUnsupportedInbound(ctx) {
+			return false
 		}
+		switch requiredCapability {
+		case "", OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses:
+			return account.IsExcelBPSEnabledForModel(requestedModel)
+		}
+		return false
 	}
 	return accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability)
 }
@@ -3002,7 +3007,7 @@ func openAIUpstreamCostFactors(accounts []*Account, now time.Time, oauthScheduli
 			continue
 		}
 		factors[account.ID] = openAIUpstreamCostNeutralFactor
-		if !account.IsOpenAIApiKey() && !account.IsOpenAIOAuthLike() {
+		if !account.IsOpenAIApiKey() && !account.IsOpenAIOAuthLike() && !account.IsBPSOAuth() {
 			continue
 		}
 		eligibleCount++
@@ -3066,7 +3071,7 @@ func newOpenAILegacyUpstreamRateOrder(accounts []*Account, now time.Time, oauthS
 		// 与 openAIUpstreamCostFactors 使用同一道平台门控：只有 OpenAI 平台账号
 		// 的倍率参与 legacy 低倍率优先排序。上游自报倍率来自中转方，不能让它对
 		// 其他平台的调度产生影响——否则自报低价即可吸走流量，而实际结算走本地倍率。
-		if !account.IsOpenAIApiKey() && !account.IsOpenAIOAuthLike() {
+		if !account.IsOpenAIApiKey() && !account.IsOpenAIOAuthLike() && !account.IsBPSOAuth() {
 			continue
 		}
 		rate, ok := openAISchedulingRate(account, now, oauthSchedulingRateMultiplier)
@@ -3084,10 +3089,11 @@ func newOpenAILegacyUpstreamRateOrder(accounts []*Account, now time.Time, oauthS
 }
 
 func openAISchedulingRate(account *Account, now time.Time, oauthSchedulingRateMultiplier *float64) (float64, bool) {
-	if account == nil || (!account.IsOpenAIApiKey() && !account.IsOpenAIOAuthLike()) {
+	if account == nil || (!account.IsOpenAIApiKey() && !account.IsOpenAIOAuthLike() && !account.IsBPSOAuth()) {
 		return 0, false
 	}
-	if account.IsOpenAIOAuthLike() {
+	// BPS-only accounts are subscription OAuth accounts priced like Codex OAuth.
+	if account.IsOpenAIOAuthLike() || account.IsBPSOAuth() {
 		if rate := oauthSchedulingRateMultiplier; rate != nil && *rate >= 0 && !math.IsNaN(*rate) && !math.IsInf(*rate, 0) {
 			return *rate, true
 		}
