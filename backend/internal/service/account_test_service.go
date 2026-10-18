@@ -998,6 +998,29 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
+	// Excel OAuth credentials only work on an enabled BPS route; the native
+	// probes below would send the Excel token to ChatGPT Codex.
+	if account.IsExcelOAuth() {
+		model := strings.TrimSpace(modelID)
+		if model == "" {
+			model = openai.DefaultTestModel
+		}
+		if s.openaiGatewayService == nil || s.openaiGatewayService.validateExcelOAuthRoute(ctx, account, model) != nil {
+			return s.sendErrorAndEnd(c, errExcelOAuthRouteUnavailable.Error())
+		}
+	}
+	// Excel/BPS accounts must use the same gateway path as user Responses
+	// requests: the legacy text probe hard-codes ChatGPT Codex and silently
+	// bypasses the account's protocol toggle.
+	if mode == AccountTestModeBPSTools {
+		if s.openaiGatewayService == nil || !s.openaiGatewayService.excelBPSGloballyEnabled(ctx) {
+			return s.sendErrorAndEnd(c, "Excel BPS is disabled globally")
+		}
+		return s.testExcelBPSToolRoundtrip(c, account, modelID)
+	}
+	if account.IsExcelBPSEnabled() && s.openaiGatewayService != nil && s.openaiGatewayService.excelBPSGloballyEnabled(ctx) && !isOpenAIImageModel(account.GetMappedModel(strings.TrimSpace(modelID))) {
+		return s.testExcelBPSAccountConnection(c, account, modelID, prompt)
+	}
 
 	// Default to openai.DefaultTestModel for OpenAI testing
 	testModelID := modelID
@@ -1010,15 +1033,6 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	// /responses wire and does NOT apply the legacy compact-only mapping
 	// (post-#5641 semantics: compact_model_mapping is /responses/compact-only).
 	testModelID = account.GetMappedModel(testModelID)
-	// Excel/BPS accounts must use the same gateway path as user Responses
-	// requests: the legacy text probe hard-codes ChatGPT Codex and silently
-	// bypasses the account's protocol toggle.
-	if mode == AccountTestModeBPSTools {
-		if s.openaiGatewayService == nil || !s.openaiGatewayService.excelBPSGloballyEnabled(ctx) {
-			return s.sendErrorAndEnd(c, "Excel BPS is disabled globally")
-		}
-		return s.testExcelBPSToolRoundtrip(c, account, modelID)
-	}
 	if mode == AccountTestModeCompact {
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}

@@ -220,6 +220,19 @@ describe('AccountTestModal', () => {
       mode: 'compact'
     })
   })
+
+  it('只有 BPS 账号提供 BPS 工具测试，且不提供 compact 测试', async () => {
+    getAvailableModels.mockResolvedValue([{ id: 'gpt-5.4', display_name: 'GPT-5.4' }])
+    const modeValues = async (extra: Record<string, unknown>) => {
+      const wrapper = mountModal({ id: 43, name: 'OpenAI OAuth', platform: 'openai', type: 'oauth', status: 'active', extra })
+      await wrapper.setProps({ show: true })
+      await flushPromises()
+      return ((wrapper.vm as any).openAITestModeOptions as Array<{ value: string }>).map((option) => option.value)
+    }
+
+    expect(await modeValues({ openai_excel_bps: true })).toEqual(['default', 'bps_tools'])
+    expect(await modeValues({})).toEqual(['default', 'compact'])
+  })
 })
 
 describe('AccountTestModal Leonardo', () => {

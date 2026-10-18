@@ -424,11 +424,20 @@ const imageFileInput = ref<HTMLInputElement | null>(null)
 const audioFileInput = ref<HTMLInputElement | null>(null)
 const isOpenAIAccount = computed(() => props.account?.platform === 'openai')
 const isGrokAccount = computed(() => props.account?.platform === 'grok')
-const openAITestModeOptions = computed(() => [
-  { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
-  { value: 'compact', label: t('admin.accounts.openai.testModeCompact') },
-  { value: 'bps_tools', label: t('admin.accounts.openai.testModeBPSTools') }
-])
+// BPS accounts are tested on the BPS route (the default test follows it), so
+// they get the BPS tool probe instead of the native-only compact probe.
+const isBPSAccount = computed(() =>
+  isOpenAIAccount.value && props.account?.type === 'oauth' && props.account?.extra?.openai_excel_bps === true
+)
+const openAITestModeOptions = computed(() => isBPSAccount.value
+  ? [
+      { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
+      { value: 'bps_tools', label: t('admin.accounts.openai.testModeBPSTools') }
+    ]
+  : [
+      { value: 'default', label: t('admin.accounts.openai.testModeDefault') },
+      { value: 'compact', label: t('admin.accounts.openai.testModeCompact') }
+    ])
 const grokTestModeOptions = computed(() => [
   { value: 'text', label: t('admin.accounts.grok.testModeText') },
   { value: 'image', label: t('admin.accounts.grok.testModeImage') },

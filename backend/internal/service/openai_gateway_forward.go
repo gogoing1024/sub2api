@@ -66,6 +66,12 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if err := s.validateExcelOAuthRoute(ctx, account, modelForBPS); err != nil {
 		return nil, writeExcelOAuthRouteError(c)
 	}
+	// The BPS tools probe must exercise BPS itself; a silent native fallback
+	// would report a passing BPS test without touching BPS.
+	if c.GetBool(bpsAccountProbeRequiredContextKey) &&
+		(!account.IsExcelBPSEnabledForModel(modelForBPS) || account.excelBPSNativeFallbackReason(body) != "") {
+		return nil, errors.New("bps probe path is unavailable")
+	}
 	if account.IsExcelBPSEnabledForModel(modelForBPS) && s.excelBPSGloballyEnabled(ctx) {
 		return s.forwardExcelBPS(ctx, c, account, body, startTime)
 	}
