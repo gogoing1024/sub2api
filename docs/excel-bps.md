@@ -5,7 +5,7 @@ BPS = Basis Points，是 OpenAI 官方 Excel 插件（`bps.openai.com`）的后�
 ## 与 ranxi 原版的差异（本部署裁剪）
 
 - **BPS-only 账号类型**：BPS 只接受官方 Excel 客户端（`client_id = app_fnr0pYvVwwFDocDumLG3H2Bp`）签发的 token。ranxi 会为普通 Codex 账号另外申请一份独立的 Excel 授权（双凭据 + 自动重登 worker），本构建没有移植这部分，因此：
-  - BPS 只属于 `bps-oauth` 账号，没有账号级开关；普通 Codex OAuth（`oauth`）账号不能走 BPS。
+  - BPS 只属于 `bps-oauth` 账号，没有账号级开关，也没有 ranxi 的全局 BPS 开关（关掉它在这里只等于停用全部 bps-oauth 账号）；普通 Codex OAuth（`oauth`）账号不能走 BPS。
   - 账号类型与凭据必须一致：`bps-oauth` 必须持有 Excel client 的凭据，`oauth` / `setup-token` 账号不能持有 Excel client 的凭据，否则保存返回 400 `BPS_OAUTH_INVALID`。`bps-oauth` 账号不能改成其他类型，其他类型也不能改成 `bps-oauth`，需要时新建账号。
 - **无 mihomo 会话代理 / Warm IP 池**：BPS 请求始终走账号自身绑定的代理（`proxy_id`）。需要不同出口 IP 时给账号绑不同代理。
 - **无自动重登（reauth/2FA worker）**：RT 失效后由管理员在账号菜单里"重新授权"（走 Excel 客户端）。
@@ -25,10 +25,10 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
 
 ## 能力与限制
 
-- **只服务 BPS**：没有原生 Codex 通道。调度器（高级调度与旧调度规则一致）不会把该账号派给白名单外的模型；万一已经选中（例如渠道映射改了模型，或关闭全局开关时会话仍粘在该账号上），转发阶段换号重试（`excel_oauth_route_unavailable`），不直接返回 400。
+- **只服务 BPS**：没有原生 Codex 通道。调度器（高级调度与旧调度规则一致）不会把该账号派给白名单外的模型；万一已经选中（例如渠道映射或账号白名单在选号后改变了模型的路由），转发阶段换号重试（`excel_oauth_route_unavailable`），不直接返回 400。
 - **只支持 Responses 接口**：`/v1/chat/completions`、`/v1/messages`、`/v1/messages/count_tokens`、图片接口都不会选中 BPS OAuth 账号。想同时提供 BPS 与非 BPS 模型或接口，把 BPS OAuth 账号和普通 Codex OAuth 账号放在同一个分组里，调度会按模型和入口分流；这些入口在原生账号上的粘性会话不会因为分组里有 BPS 账号而被打断。
 - **token 计数本地估算**：BPS 没有计数端点，`/v1/responses/input_tokens` 选中 BPS OAuth 账号时直接本地估算，Excel token 不会发往原生 `input_tokens` 端点。
-- **只走 HTTP/SSE**：不接受 WebSocket 会话。调度器不会给 WS 会话选 BPS OAuth 账号；万一选中（任何模型、套餐或开关状态下），转发前直接换号（`basispoints_inbound_unsupported`），不会继续走原生 Codex WS。
+- **只走 HTTP/SSE**：不接受 WebSocket 会话。调度器不会给 WS 会话选 BPS OAuth 账号；万一选中（任何模型或套餐下），转发前直接换号（`basispoints_inbound_unsupported`），不会继续走原生 Codex WS。
 - **托管工具**：联网搜索、图片生成等托管工具会被适配层省略，并告知模型能力不可用；客户端函数工具不受影响。
 - **图片输入**：见下文"图片输入"。
 - **privacy**：建号或重新授权（OAuth 兑换或粘贴 RT）时和 Codex 账号走同一套信息补全：读取套餐与订阅到期时间，并尽力关闭该 ChatGPT 账号的训练数据共享。成功时账号的 `privacy_mode` 记为 `training_off`，要求设置 privacy 的分组会正常选中它；失败时这类分组不会选中它。后台刷新 token 时也会重复这套补全（关闭训练是幂等操作），但结果不回写；后台的 privacy 补设和账号菜单里的"设置 privacy"只作用于 Codex OAuth 账号。
@@ -46,9 +46,9 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
 
 另外沿用通用的长上下文计费（单账号与批量编辑都支持）与 5h/7d 自动暂停设置。和 Codex 订阅账号一样，GPT-6.1 Sol 在 BPS OAuth 账号上不收长上下文附加费。free 套餐账号不能走 BPS；数据导入时也会从 id_token 补全 `plan_type`。
 
-## 全局开关与配置
+## 配置
 
-- 设置页（gateway 分区）`excel_bps_enabled`：DB 键，默认 true；关闭后所有 BPS 路由停用，高级调度与旧调度都不再选中 BPS OAuth 账号。开关读自进程内 5 秒缓存：保存的实例立即生效，其他实例最多晚 5 秒；读库失败时沿用上一次的值，进程从未读到过值时按关闭处理（每秒重试一次）。同一请求的路由判定和 BPS 转发只读一次开关。
+- 没有全局开关：BPS 只属于 bps-oauth 账号，要停用 BPS，在账号列表里按类型筛出 BPS OAuth 账号批量停调度即可。
 - `config.yaml` `gateway.excel_bps_stream_data_interval_timeout`：流无数据帧超时（秒，0 禁用，30–300，默认 120）。
 - `config.yaml` `gateway.excel_bps_state_redis_enabled`：工具回放/目录状态共享 Redis（多实例）；默认 false（进程内）。
 
@@ -97,9 +97,8 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
 1. BPS OAuth 建号，账号类型显示为 "BPS OAuth"；账号测试（默认与 BPS 工具往返）通过。
 2. 白名单模型 `/v1/responses`（流式/非流式）经 `basispoints` 正常返回，用量行 `upstream_endpoint=/basispoints/api/responses`。
 3. 白名单外模型请求不会派到 BPS OAuth 账号；`/v1/chat/completions`、`/v1/messages`、`/v1/messages/count_tokens` 也不会。
-4. 关闭全局开关 → 高级调度与旧调度都不再选中 BPS OAuth 账号。
-5. `/v1/responses/input_tokens` 选中 BPS OAuth 账号 → 返回本地估算值，无上游请求。
-6. 编辑 BPS OAuth 账号 → 模型映射区"同步上游模型"返回 BPS 模型列表。
-7. （可选）制造 BPS 403（例如换一个被拒的代理）→ 账号临时停调度，请求换到同分组的其他账号。
-8. 带 `data:` 图片（含历史消息里的图片）请求白名单模型 → Ops 里先出现 `/basispoints/api/attachments` 上传，Responses 请求体只含 `file_id`；同一会话的下一轮不再重复上传同一张图。
-9. 混合分组里发一个超过 20 张内联图片（或 `http://` 图片地址）的请求 → 请求转给原生账号；纯 BPS 分组 → 400 `basispoints_request_invalid`。
+4. `/v1/responses/input_tokens` 选中 BPS OAuth 账号 → 返回本地估算值，无上游请求。
+5. 编辑 BPS OAuth 账号 → 模型映射区"同步上游模型"返回 BPS 模型列表。
+6. （可选）制造 BPS 403（例如换一个被拒的代理）→ 账号临时停调度，请求换到同分组的其他账号。
+7. 带 `data:` 图片（含历史消息里的图片）请求白名单模型 → Ops 里先出现 `/basispoints/api/attachments` 上传，Responses 请求体只含 `file_id`；同一会话的下一轮不再重复上传同一张图。
+8. 混合分组里发一个超过 20 张内联图片（或 `http://` 图片地址）的请求 → 请求转给原生账号；纯 BPS 分组 → 400 `basispoints_request_invalid`。
