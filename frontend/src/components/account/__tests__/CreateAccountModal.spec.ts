@@ -15,6 +15,8 @@ const {
   importCodexSessionMock,
   createOpenAICodexPATMock,
   generateKiroIDCAuthUrlMock,
+  generateAuthUrlMock,
+  exchangeCodeMock,
   authIsSimpleMode,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
@@ -24,6 +26,8 @@ const {
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
   generateKiroIDCAuthUrlMock: vi.fn(),
+  generateAuthUrlMock: vi.fn(),
+  exchangeCodeMock: vi.fn(),
   authIsSimpleMode: { value: true },
 }))
 
@@ -52,6 +56,8 @@ vi.mock('@/api/admin', () => ({
       checkMixedChannelRisk: vi.fn().mockResolvedValue({ has_risk: false }),
       importCodexSession: importCodexSessionMock,
       createOpenAICodexPAT: createOpenAICodexPATMock,
+      generateAuthUrl: generateAuthUrlMock,
+      exchangeCode: exchangeCodeMock,
     },
     settings: {
       getWebSearchEmulationConfig: vi.fn().mockResolvedValue({ enabled: false, providers: [] }),
@@ -79,6 +85,8 @@ vi.mock('vue-i18n', async () => {
 })
 
 import CreateAccountModal from '../CreateAccountModal.vue'
+import { DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
+import { OPENAI_EXCEL_OAUTH_CLIENT_ID } from '@/composables/useOpenAIOAuth'
 
 const BaseDialogStub = defineComponent({
   name: 'BaseDialog',
@@ -163,6 +171,7 @@ const ModelWhitelistSelectorStub = defineComponent({
       default: () => [],
     },
     platform: String,
+    availableModels: { type: Array, default: undefined },
     syncCredentials: Object,
   },
   emits: ['update:modelValue', 'upstream-synced'],
@@ -997,11 +1006,22 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(probeUpstreamBillingMock).toHaveBeenCalledWith(42)
   })
 
+  it('OpenAI 的 OAuth / BPS OAuth / API Key 三个类型按钮在同一行', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+
+    const grid = wrapper.get('[data-testid="openai-account-type-grid"]')
+    expect(grid.classes()).toContain('grid-cols-3')
+    expect(grid.classes()).not.toContain('grid-cols-2')
+    const labels = grid.findAll(':scope > button').map((button) => button.find('span.block').text())
+    expect(labels).toEqual(['OAuth', 'BPS OAuth', 'API Key'])
+  })
+
   it('BPS OAuth 只保留 Excel 可用的授权入口', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
     await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
-    await wrapper.get('[data-testid="bps-oauth-models"] [data-testid="model-whitelist-selector"]').trigger('click')
+    expect(wrapper.find('[data-testid="bps-oauth-models"]').exists()).toBe(false)
     await wrapper.get('form#create-account-form input[type="text"]').setValue('BPS account')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -1019,8 +1039,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
     await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
-    await wrapper.get('[data-testid="bps-oauth-models"] [data-testid="model-whitelist-selector"]').trigger('click')
-    const models = [...(wrapper.vm as any).bpsOAuthModels]
+    const models = [...(wrapper.vm as any).allowedModels]
     await wrapper.get('form#create-account-form input[type="text"]').setValue('BPS account')
     await wrapper.get('form#create-account-form').trigger('submit.prevent')
     await flushPromises()
@@ -1032,7 +1051,76 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
     expect((wrapper.vm as any).form.type).toBe('bps-oauth')
     expect((wrapper.vm as any).openaiBPSOAuth).toBe(true)
-    expect((wrapper.vm as any).bpsOAuthModels).toEqual(models)
+    expect((wrapper.vm as any).allowedModels).toEqual(models)
+  })
+
+  it('BPS OAuth 默认在通用模型限制里预填 BPS 模型，候选只列 BPS 模型', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    const section = () => wrapper.get('[data-testid="oauth-model-restriction-section"]')
+    // 普通 OAuth：原生目录，不限定候选
+    expect(section().getComponent(ModelWhitelistSelectorStub).props('availableModels')).toBeUndefined()
+    expect(section().getComponent(ModelWhitelistSelectorStub).props('modelValue')).toContain('gpt-image-2')
+
+    await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
+    await flushPromises()
+    const selector = section().getComponent(ModelWhitelistSelectorStub)
+    expect(selector.props('modelValue')).toEqual([...DEFAULT_EXCEL_BPS_MODELS])
+    expect(selector.props('availableModels')).toEqual([...DEFAULT_EXCEL_BPS_MODELS])
+
+    const mappingTab = section().findAll('button').find((button) => button.text() === 'admin.accounts.modelMapping')
+    await mappingTab!.trigger('click')
+    expect(section().findAll('[data-testid="oauth-preset-mapping"]').map((button) => button.text())).toEqual([
+      '+ GPT-6 Astra',
+      '+ GPT-5.6 Sol',
+      '+ GPT-5.6 Terra',
+    ])
+
+    // 切回普通 OAuth：恢复原生预设与白名单
+    await selectButtonByText(wrapper, 'admin.accounts.types.chatgptOauth')
+    await flushPromises()
+    expect(section().findAll('[data-testid="oauth-preset-mapping"]').map((button) => button.text())).toContain('+ GPT-4o')
+    const whitelistTab = section().findAll('button').find((button) => button.text() === 'admin.accounts.modelWhitelist')
+    await whitelistTab!.trigger('click')
+    await flushPromises()
+    expect(section().getComponent(ModelWhitelistSelectorStub).props('availableModels')).toBeUndefined()
+    expect(section().getComponent(ModelWhitelistSelectorStub).props('modelValue')).toContain('gpt-image-2')
+  })
+
+  it('BPS OAuth 建号把模型写进 model_mapping，不再写 openai_excel_bps_models', async () => {
+    generateAuthUrlMock.mockResolvedValue({
+      auth_url: 'https://auth.openai.com/oauth/authorize?client_id=excel&state=bps.test',
+      session_id: 'session-1',
+    })
+    exchangeCodeMock.mockResolvedValue({
+      access_token: 'at',
+      refresh_token: 'rt',
+      client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID,
+    })
+    createAccountMock.mockResolvedValue({ id: 42 })
+
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('BPS account')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    await wrapper.get('[data-testid="generate-url"]').trigger('click')
+    await flushPromises()
+    expect(generateAuthUrlMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ oauth_client: 'excel' }))
+
+    await (wrapper.vm as any).handleOpenAIExchange('auth-code')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.type).toBe('bps-oauth')
+    expect(payload?.credentials?.model_mapping).toEqual({
+      'gpt-6-astra': 'gpt-6-astra',
+      'gpt-5.6-sol': 'gpt-5.6-sol',
+      'gpt-5.6-terra': 'gpt-5.6-terra',
+    })
+    expect(payload?.extra ?? {}).not.toHaveProperty('openai_excel_bps_models')
   })
 
   it('BPS OAuth 不受 Codex 透传开关影响，始终应用模型映射', async () => {

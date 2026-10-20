@@ -687,7 +687,6 @@
 
         <!-- Manual Authorization Flow -->
         <div v-if="inputMethod === 'manual'" class="space-y-4">
-          <p v-if="isExcelOAuth" class="text-sm text-blue-700 dark:text-blue-300" data-testid="excel-oauth-login-hint">{{ t('admin.accounts.oauth.openai.excelLoginHint') }}</p>
           <p class="mb-4 text-sm text-blue-800 dark:text-blue-300">
             {{ oauthFollowSteps }}
           </p>

@@ -34,7 +34,7 @@ describe('OAuthAuthorizationFlow Excel (BPS) OAuth', () => {
     const text = wrapper.text()
 
     expect(text).toContain('admin.accounts.oauth.openai.excelTitle')
-    expect(text).toContain('admin.accounts.oauth.openai.excelLoginHint')
+    expect(wrapper.find('[data-testid="excel-oauth-login-hint"]').exists()).toBe(false)
     expect(text).toContain('admin.accounts.oauth.openai.excelCodeHint')
     expect(text).not.toContain('admin.accounts.oauth.openai.importantNotice')
     expect(text).not.toContain('admin.accounts.oauth.openai.authCodeDesc')
@@ -48,7 +48,6 @@ describe('OAuthAuthorizationFlow Excel (BPS) OAuth', () => {
   it('keeps the Codex and other providers wording', () => {
     const codex = mountFlow('openai', false).text()
     expect(codex).toContain('admin.accounts.oauth.openai.importantNotice')
-    expect(codex).not.toContain('admin.accounts.oauth.openai.excelLoginHint')
     expect(mountFlow('anthropic', true).text()).not.toContain('excel')
   })
 })

@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import BulkEditAccountModal from '../BulkEditAccountModal.vue'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 import { adminAPI } from '@/api/admin'
+import { DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
 
 const { showError, showSuccess, translate } = vi.hoisted(() => ({
   showError: vi.fn(),
@@ -692,33 +693,54 @@ describe('BulkEditAccountModal', () => {
     const bps = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['bps-oauth'] })
     expect(bps.find('[data-testid="bulk-edit-excel-bps-section"]').exists()).toBe(true)
     await bps.get('[data-testid="bulk-edit-excel-bps-apply"]').setValue(true)
-    await bps.get('[data-testid="bulk-edit-excel-bps-all-models"]').setValue(true)
+    // BPS 区块只剩两个开关，没有单独的模型白名单
+    expect(bps.find('[data-testid="bulk-edit-excel-bps-all-models"]').exists()).toBe(false)
+    expect(
+      bps.get('[data-testid="bulk-edit-excel-bps-section"]').findComponent({ name: 'ModelWhitelistSelector' }).exists()
+    ).toBe(false)
     await bps.get('[data-testid="bulk-edit-excel-bps-cache-creation-as-input"]').setValue(true)
     await bps.get('#bulk-edit-account-form').trigger('submit.prevent')
     await flushPromises()
 
     const payload = vi.mocked(adminAPI.accounts.bulkUpdate).mock.calls.at(-1)?.[1] as any
-    expect(payload?.extra).toMatchObject({
-      openai_excel_bps_models: null,
+    expect(payload?.extra).toEqual({
       openai_excel_bps_ignore_encrypted_content: false,
       openai_excel_bps_cache_creation_as_input: true
     })
-    expect(payload?.extra).not.toHaveProperty('openai_excel_bps')
   })
 
-  it('不允许批量保存空的 BPS 模型白名单', async () => {
+  it('全部为 BPS OAuth 时模型候选、填入相关模型和快速添加只含 BPS 模型', async () => {
     const bps = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['bps-oauth'] })
-    vi.mocked(adminAPI.accounts.bulkUpdate).mockClear()
-    await bps.get('[data-testid="bulk-edit-excel-bps-apply"]').setValue(true)
-    await bps
-      .get('[data-testid="bulk-edit-excel-bps-section"]')
-      .findComponent({ name: 'ModelWhitelistSelector' })
-      .vm.$emit('update:modelValue', [])
-    await bps.get('#bulk-edit-account-form').trigger('submit.prevent')
-    await flushPromises()
+    const selector = bps.findComponent(ModelWhitelistSelector)
+    expect(selector.props('availableModels')).toEqual([...DEFAULT_EXCEL_BPS_MODELS])
 
-    expect(showError).toHaveBeenCalledWith('admin.accounts.oauth.openai.excelModelsRequired')
-    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+    await selector.find('div.cursor-pointer').trigger('click')
+    const options = selector.findAll('[data-testid="select-model"] span.truncate').map(option => option.text())
+    expect(options).toEqual([...DEFAULT_EXCEL_BPS_MODELS].sort())
+
+    const fillRelated = selector.findAll('button').find(btn => btn.text() === 'admin.accounts.fillRelatedModels')
+    await fillRelated!.trigger('click')
+    expect(selector.props('modelValue')).toEqual([...DEFAULT_EXCEL_BPS_MODELS])
+
+    const mappingTab = bps.findAll('button').find(btn => btn.text().includes('admin.accounts.modelMapping'))
+    await mappingTab!.trigger('click')
+    const presets = bps.findAll('[data-testid="bulk-edit-preset-mapping"]')
+    expect(presets.map(btn => btn.text())).toEqual(['+ GPT-6 Astra', '+ GPT-5.6 Sol', '+ GPT-5.6 Terra'])
+  })
+
+  it('普通 OpenAI OAuth 批量编辑仍使用原生模型候选与预设', async () => {
+    const codex = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    const selector = codex.findComponent(ModelWhitelistSelector)
+    expect(selector.props('availableModels')).toBeUndefined()
+
+    await selector.find('div.cursor-pointer').trigger('click')
+    const options = selector.findAll('[data-testid="select-model"] span.truncate').map(option => option.text())
+    expect(options).toContain('gpt-image-2')
+    expect(options).toContain('codex-auto-review')
+
+    const mappingTab = codex.findAll('button').find(btn => btn.text().includes('admin.accounts.modelMapping'))
+    await mappingTab!.trigger('click')
+    expect(codex.findAll('[data-testid="bulk-edit-preset-mapping"]').map(btn => btn.text())).toContain('+ GPT-4o')
   })
 
   it('筛选全量模式固定展示影子继承说明并按 filters 提交', async () => {

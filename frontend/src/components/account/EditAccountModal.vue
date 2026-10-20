@@ -1010,6 +1010,7 @@
               v-model="allowedModels"
               :model-mappings="modelMappings"
               :platform="account?.platform || 'anthropic'"
+              :available-models="isBPSOAuthAccount ? bpsCandidateModels : undefined"
               :account-id="account?.id"
               :account-type="account?.type"
               @update:kiroUpstreamIDs="mergeKiroUpstreamIDs"
@@ -1098,6 +1099,7 @@
                 v-for="preset in presetMappings"
                 :key="'oauth-' + preset.label"
                 type="button"
+                data-testid="oauth-preset-mapping"
                 @click="addPresetMapping(preset.from, preset.to)"
                 :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
               >
@@ -2634,7 +2636,7 @@
         </div>
       </div>
 
-      <!-- Excel / BPS 协议区：BPS-only（BPS OAuth）账号只走 BPS，按模型白名单服务 -->
+      <!-- Excel / BPS 协议区：BPS-only（BPS OAuth）账号只走 BPS，可服务的模型以上方模型限制为准 -->
       <div
         v-if="isBPSOAuthAccount && !isSparkShadow"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
@@ -2645,15 +2647,7 @@
           {{ t('admin.accounts.openai.excelBPSDesc') }}
         </p>
         <div class="mt-3 space-y-3">
-          <label class="flex items-center gap-2 text-sm" data-testid="excel-bps-all-models-label">
-            <input v-model="excelBPSAllModels" type="checkbox" data-testid="excel-bps-all-models" />
-            <span>{{ t('admin.accounts.openai.excelBPSAllModels') }}</span>
-          </label>
-          <div v-if="!excelBPSAllModels" data-testid="excel-bps-model-selection">
-            <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
-            <ModelWhitelistSelector v-model="excelBPSModels" platform="openai" />
-          </div>
-          <div class="mt-3">
+          <div>
             <label class="flex items-center gap-2">
               <input v-model="excelBPSIgnoreEncryptedContent" type="checkbox" data-testid="excel-bps-ignore-encrypted-content" />
               <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContent') }}</span>
@@ -3645,7 +3639,7 @@ import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { isKiroDirectApiKeyAccount, isKiroRelayAccount } from '@/utils/kiroAccount'
 import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
-import { DEFAULT_EXCEL_BPS_MODELS, VERTEX_LOCATION_SELECT_OPTIONS } from '@/constants/account'
+import { VERTEX_LOCATION_SELECT_OPTIONS } from '@/constants/account'
 import { KIRO_REGION_SELECT_OPTIONS } from '@/constants/kiroRegions'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -3660,11 +3654,13 @@ import {
 } from '@/utils/openaiWsMode'
 import {
   getPresetMappingsByPlatform,
+  getBPSPresetMappings,
   commonErrorCodes,
   buildModelMappingObject,
   splitModelMappingObject,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
+import { useBPSCandidateModels } from '@/composables/useBPSCandidateModels'
 
 interface Props {
   show: boolean
@@ -4051,6 +4047,8 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+// BPS OAuth 账号的白名单候选只列 BPS 模型（含同步上游追加的）
+const { candidates: bpsCandidateModels, reset: resetBPSCandidateModels } = useBPSCandidateModels(allowedModels)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
@@ -4264,8 +4262,6 @@ const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
-const excelBPSAllModels = ref(false)
-const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const excelBPSIgnoreEncryptedContent = ref(false)
 const excelBPSCacheCreationAsInput = ref(false)
 // OpenAI 订阅档位（Plus / Pro 20x / Pro 5x / Business Standard / Business Premium / Free）手动覆盖值,
@@ -4540,7 +4536,9 @@ const openAICompactStatusKey = computed(() => {
 })
 
 // Computed: current preset mappings based on platform
-const presetMappings = computed(() => getPresetMappingsByPlatform(props.account?.platform || 'anthropic'))
+const presetMappings = computed(() =>
+  isBPSOAuthAccount.value ? getBPSPresetMappings() : getPresetMappingsByPlatform(props.account?.platform || 'anthropic')
+)
 const tempUnschedScopeOptions = computed<Array<{ value: TempUnschedulableScope; label: string; description: string }>>(() => [
   {
     value: 'model',
@@ -4787,8 +4785,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
-  excelBPSAllModels.value = false
-  excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
   excelBPSIgnoreEncryptedContent.value = false
   excelBPSCacheCreationAsInput.value = false
   editPlanType.value = ''
@@ -4870,11 +4866,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // BPS-only（BPS OAuth）账号只有 BPS 设置与通用的长上下文计费，不读取任何 Codex 专属设置。
   if (newAccount.platform === 'openai' && newAccount.type === 'bps-oauth') {
     openAILongContextBillingEnabled.value = extra?.openai_long_context_billing_enabled === true
-    const bpsModels = extra?.openai_excel_bps_models
-    excelBPSAllModels.value = !Array.isArray(bpsModels)
-    excelBPSModels.value = Array.isArray(bpsModels)
-      ? bpsModels.filter((m): m is string => typeof m === 'string' && m.trim() !== '')
-      : [...DEFAULT_EXCEL_BPS_MODELS]
     excelBPSIgnoreEncryptedContent.value = extra?.openai_excel_bps_ignore_encrypted_content === true
     excelBPSCacheCreationAsInput.value = extra?.openai_excel_bps_cache_creation_as_input === true
   }
@@ -5197,6 +5188,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   if (newAccount.platform !== 'kiro' || newAccount.type !== 'apikey') {
     editKiroAPIRegion.value = 'us-east-1'
   }
+  resetBPSCandidateModels()
 }
 
 async function loadTLSProfiles() {
@@ -5844,11 +5836,6 @@ const handleSubmit = async () => {
 
   if (form.status !== 'active' && form.status !== 'inactive' && form.status !== 'error') {
     appStore.showError(t('admin.accounts.pleaseSelectStatus'))
-    return
-  }
-  // An empty BPS whitelist would leave a BPS-only account unable to serve.
-  if (isBPSOAuthAccount.value && !excelBPSAllModels.value && !excelBPSModels.value.some(model => model.trim())) {
-    appStore.showError(t('admin.accounts.oauth.openai.excelModelsRequired'))
     return
   }
 	if (autoResetCreditEnabled.value) {
@@ -6624,11 +6611,8 @@ const handleSubmit = async () => {
     if (props.account.platform === 'openai' && props.account.type === 'bps-oauth') {
       const newExtra: Record<string, unknown> = { ...((props.account.extra as Record<string, unknown>) || {}) }
       newExtra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
-      if (excelBPSAllModels.value) {
-        delete newExtra.openai_excel_bps_models
-      } else {
-        newExtra.openai_excel_bps_models = [...new Set(excelBPSModels.value.map(m => m.trim()).filter(Boolean))]
-      }
+      // 可服务的模型只看通用模型限制（credentials.model_mapping），清掉旧版单独的 BPS 白名单。
+      delete newExtra.openai_excel_bps_models
       if (excelBPSIgnoreEncryptedContent.value) {
         newExtra.openai_excel_bps_ignore_encrypted_content = true
       } else {

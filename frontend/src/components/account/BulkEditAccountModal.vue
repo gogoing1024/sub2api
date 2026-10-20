@@ -217,14 +217,6 @@
           />
         </div>
         <div v-if="applyExcelBPS" class="mt-3 space-y-3">
-          <label class="flex items-center gap-2 text-sm">
-            <input v-model="excelBPSAllModels" type="checkbox" data-testid="bulk-edit-excel-bps-all-models" />
-            <span>{{ t('admin.accounts.openai.excelBPSAllModels') }}</span>
-          </label>
-          <div v-if="!excelBPSAllModels">
-            <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
-            <ModelWhitelistSelector v-model="excelBPSModels" platform="openai" />
-          </div>
           <label class="flex items-center gap-2">
             <input v-model="excelBPSIgnoreEncryptedContent" type="checkbox" data-testid="bulk-edit-excel-bps-ignore-encrypted-content" />
             <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContent') }}</span>
@@ -388,6 +380,7 @@
                 v-model="allowedModels"
                 :model-mappings="modelMappings"
                 :platforms="targetSelectedPlatforms"
+                :available-models="allBPSOAuthOnly ? bpsCandidateModels : undefined"
               />
 
               <p class="text-xs text-gray-500 dark:text-gray-400">
@@ -495,6 +488,7 @@
                   v-for="preset in filteredPresets"
                   :key="preset.label"
                   type="button"
+                  data-testid="bulk-edit-preset-mapping"
                   :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
                   @click="addPresetMapping(preset.from, preset.to)"
                 >
@@ -1581,12 +1575,13 @@ import Select from '@/components/common/Select.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
-import { DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
 import Icon from '@/components/icons/Icon.vue'
 import {
   buildModelMappingObject as buildModelMappingPayload,
+  getBPSPresetMappings,
   getPresetMappingsByPlatform
 } from '@/composables/useModelWhitelist'
+import { useBPSCandidateModels } from '@/composables/useBPSCandidateModels'
 import HeaderOverrideEditor from '@/components/account/HeaderOverrideEditor.vue'
 import {
   buildHeaderOverridesObject,
@@ -1733,6 +1728,7 @@ const allAnthropicOAuthOrSetupToken = computed(() => {
 
 const filteredPresets = computed(() => {
   if (targetSelectedPlatforms.value.length === 0) return []
+  if (allBPSOAuthOnly.value) return getBPSPresetMappings()
 
   const dedupedPresets = new Map<string, ReturnType<typeof getPresetMappingsByPlatform>[number]>()
   for (const platform of targetSelectedPlatforms.value) {
@@ -1770,8 +1766,6 @@ const enableOpenAIPassthrough = ref(false)
 const enableOpenAIFlattenNamespaces = ref(false)
 const enableOpenAILongContextBilling = ref(false)
 const applyExcelBPS = ref(false)
-const excelBPSAllModels = ref(false)
-const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const excelBPSIgnoreEncryptedContent = ref(false)
 const excelBPSCacheCreationAsInput = ref(false)
 const enableOpenAIEndpointCapabilities = ref(false)
@@ -1793,6 +1787,8 @@ const pendingUpdatesForConfirm = ref<Record<string, unknown> | null>(null)
 const baseUrl = ref('')
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+// 所选账号全是 BPS OAuth 时，白名单候选只列 BPS 模型
+const { candidates: bpsCandidateModels, reset: resetBPSCandidateModels } = useBPSCandidateModels(allowedModels)
 const modelMappings = ref<ModelMapping[]>([])
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
@@ -2128,10 +2124,6 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (applyExcelBPS.value && allBPSOAuthOnly.value) {
     const extra = ensureExtra()
-    // null 让后端移除白名单键，恢复「全部模型」
-    extra.openai_excel_bps_models = excelBPSAllModels.value
-      ? null
-      : [...new Set(excelBPSModels.value.map(m => m.trim()).filter(Boolean))]
     extra.openai_excel_bps_ignore_encrypted_content = excelBPSIgnoreEncryptedContent.value
     extra.openai_excel_bps_cache_creation_as_input = excelBPSCacheCreationAsInput.value
   }
@@ -2382,13 +2374,6 @@ const handleSubmit = async () => {
     return
   }
 
-  // An empty BPS whitelist would leave the BPS-only accounts unable to serve.
-  if (applyExcelBPS.value && allBPSOAuthOnly.value && !excelBPSAllModels.value &&
-    !excelBPSModels.value.some(model => model.trim())) {
-    appStore.showError(t('admin.accounts.oauth.openai.excelModelsRequired'))
-    return
-  }
-
   // base_url 现在也会作用于 Grok OAuth 订阅账号的转发端点；坏值会让请求期
   // 校验失败、账号请求全挂，因此保存前强制格式校验（与单账号编辑一致）。
   if (enableBaseUrl.value) {
@@ -2543,14 +2528,13 @@ watch(
       openaiFlattenNamespacesEnabled.value = false
       openAILongContextBillingEnabled.value = false
       applyExcelBPS.value = false
-      excelBPSAllModels.value = false
-      excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
       excelBPSIgnoreEncryptedContent.value = false
       excelBPSCacheCreationAsInput.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openAIResponsesMode.value = 'auto'
       modelRestrictionMode.value = 'whitelist'
       allowedModels.value = []
+      resetBPSCandidateModels()
       modelMappings.value = []
       selectedErrorCodes.value = []
       customErrorCodeInput.value = null

@@ -455,7 +455,7 @@
       <!-- Account Type Selection (OpenAI) -->
       <div v-if="form.platform === 'openai'">
         <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
-        <div class="mt-2 grid grid-cols-2 gap-3" data-tour="account-form-type">
+        <div class="mt-2 grid grid-cols-3 gap-3" data-tour="account-form-type" data-testid="openai-account-type-grid">
           <button
             type="button"
             @click="accountCategory = 'oauth-based'; openaiBPSOAuth = false"
@@ -536,11 +536,6 @@
             </div>
           </button>
 
-        </div>
-        <div v-if="isOpenAIBPSOAuth" class="mt-3 space-y-2" data-testid="bps-oauth-models">
-          <p class="input-hint">{{ t('admin.accounts.oauth.openai.excelLoginHint') }}</p>
-          <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
-          <ModelWhitelistSelector v-model="bpsOAuthModels" platform="openai" />
         </div>
       </div>
 
@@ -3451,6 +3446,7 @@
               v-model="allowedModels"
               :model-mappings="modelMappings"
               :platform="form.platform"
+              :available-models="isOpenAIBPSOAuth ? bpsCandidateModels : undefined"
               :sync-credentials="syncPreviewCredentials"
               @upstream-synced="upstreamModelsPreviewed = true"
             />
@@ -3532,6 +3528,7 @@
                 v-for="preset in presetMappings"
                 :key="'oauth-' + preset.label"
                 type="button"
+                data-testid="oauth-preset-mapping"
                 @click="addPresetMapping(preset.from, preset.to)"
                 :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
               >
@@ -5132,12 +5129,14 @@ import { useAppStore } from '@/stores/app'
 import {
   claudeModels,
   getPresetMappingsByPlatform,
+  getBPSPresetMappings,
   getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
   fetchAntigravityDefaultMappings,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
+import { useBPSCandidateModels } from '@/composables/useBPSCandidateModels'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import {
@@ -5362,7 +5361,6 @@ const hideAccountLongContextBilling = computed(() => {
 const oauth = useAccountOAuth() // For Anthropic OAuth
 const openaiOAuth = useOpenAIOAuth() // For OpenAI OAuth
 const openaiBPSOAuth = ref(false)
-const bpsOAuthModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const isOpenAIBPSOAuth = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiBPSOAuth.value)
 const geminiOAuth = useGeminiOAuth() // For Gemini OAuth
 const antigravityOAuth = useAntigravityOAuth() // For Antigravity OAuth
@@ -5672,6 +5670,11 @@ const modelMappings = ref<ModelMapping[]>([])
 const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
+// BPS OAuth 账号的白名单候选只列 BPS 模型
+const { candidates: bpsCandidateModels, reset: resetBPSCandidateModels } = useBPSCandidateModels(allowedModels)
+// 白名单模式的预填：BPS OAuth 用默认 BPS 模型，其余按平台目录。
+const defaultWhitelistModels = () =>
+  isOpenAIBPSOAuth.value ? [...DEFAULT_EXCEL_BPS_MODELS] : [...getModelsByPlatform(form.platform)]
 
 const upstreamModelsPreviewed = ref(false)
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
@@ -6166,7 +6169,9 @@ const geminiHelpLinks = {
 }
 
 // Computed: current preset mappings based on platform
-const presetMappings = computed(() => getPresetMappingsByPlatform(form.platform))
+const presetMappings = computed(() =>
+  isOpenAIBPSOAuth.value ? getBPSPresetMappings() : getPresetMappingsByPlatform(form.platform)
+)
 const tempUnschedScopeOptions = computed<Array<{ value: TempUnschedulableScope; label: string; description: string }>>(() => [
   {
     value: 'model',
@@ -6298,7 +6303,7 @@ watch(
       // Modal opened - fill related models
       // Leonardo 留空白名单：不下发 model_mapping = 后端回落默认映射。
       if (form.platform === 'leonardo') return
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = defaultWhitelistModels()
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -6469,7 +6474,6 @@ watch(
     }
     if (newPlatform !== 'openai') {
       openaiBPSOAuth.value = false
-      bpsOAuthModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -6495,7 +6499,6 @@ watch(
     oauth.resetState()
     openaiOAuth.resetState()
     openaiBPSOAuth.value = false
-    bpsOAuthModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
 
     geminiOAuth.resetState()
     antigravityOAuth.resetState()
@@ -6571,10 +6574,20 @@ watch(
       return
     }
     if (newMode === 'whitelist') {
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = defaultWhitelistModels()
     }
   }
 )
+
+// 切到 BPS OAuth 时白名单预填默认 BPS 模型（映射模式不读白名单，一并替换以免带入原生模型）；
+// 切回其他 OpenAI 类型时恢复平台默认白名单。
+watch(isOpenAIBPSOAuth, (bps) => {
+  if (form.platform !== 'openai') return
+  if (bps || modelRestrictionMode.value === 'whitelist') {
+    allowedModels.value = defaultWhitelistModels()
+  }
+  resetBPSCandidateModels()
+})
 
 watch(
   [antigravityModelRestrictionMode, () => form.platform],
@@ -7038,7 +7051,6 @@ const resetForm = () => {
   oauth.resetState()
   openaiOAuth.resetState()
   openaiBPSOAuth.value = false
-  bpsOAuthModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
   geminiOAuth.resetState()
   antigravityOAuth.resetState()
   kiroOAuth.resetState()
@@ -7062,9 +7074,8 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
 
   const extra: Record<string, unknown> = { ...(base || {}) }
   if (isOpenAIBPSOAuth.value) {
-    // BPS-only 账号只走 BPS：只写模型白名单与计费开关，Codex 专属设置
-    // （WS、透传、CLI only、指纹、compact 等）一律不落库。
-    extra.openai_excel_bps_models = [...new Set(bpsOAuthModels.value.map(m => m.trim()).filter(Boolean))]
+    // BPS-only 账号只走 BPS：只写计费开关（可服务的模型以通用模型限制为准），
+    // Codex 专属设置（WS、透传、CLI only、指纹、compact 等）一律不落库。
     extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
     return extra
   }
@@ -7271,10 +7282,6 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 }
 
 const handleSubmit = async () => {
-  if (isOpenAIBPSOAuth.value && !bpsOAuthModels.value.some(model => model.trim())) {
-    appStore.showError(t('admin.accounts.oauth.openai.excelModelsRequired'))
-    return
-  }
   // 两步建号（OAuth 授权，以及 Leonardo Cookie 粘贴）：第一步只校验名称后进入第二步。
   // 必须与模板里「下一步」按钮的 needsCredentialStep 同口径，否则 Leonardo Cookie 号
   // 会落到下面的通用 API Key 分支。
