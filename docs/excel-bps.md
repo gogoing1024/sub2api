@@ -22,11 +22,12 @@ BPS = Basis Points，是 OpenAI 官方 Excel 插件（`bps.openai.com`）的后�
 
 ## 能力与限制
 
-- **只服务 BPS**：没有原生 Codex 通道。白名单外的模型请求返回 400 `excel_oauth_route_unavailable`，调度器也不会把该账号派给白名单外的模型。
-- **只支持 Responses 接口**：`/v1/chat/completions`、`/v1/messages`、图片接口都不会选中 BPS OAuth 账号。想同时提供 BPS 与非 BPS 模型或接口，把 BPS OAuth 账号和普通 Codex OAuth 账号放在同一个分组里，调度会按模型和入口分流。
+- **只服务 BPS**：没有原生 Codex 通道。调度器（高级调度与旧调度规则一致）不会把该账号派给白名单外的模型；万一已经选中（例如渠道映射改了模型，或关闭全局开关时会话仍粘在该账号上），转发阶段换号重试（`excel_oauth_route_unavailable`），不直接返回 400。
+- **只支持 Responses 接口**：`/v1/chat/completions`、`/v1/messages`、`/v1/messages/count_tokens`、图片接口都不会选中 BPS OAuth 账号。想同时提供 BPS 与非 BPS 模型或接口，把 BPS OAuth 账号和普通 Codex OAuth 账号放在同一个分组里，调度会按模型和入口分流；这些入口在原生账号上的粘性会话不会因为分组里有 BPS 账号而被打断。
+- **token 计数本地估算**：BPS 没有计数端点，`/v1/responses/input_tokens` 选中 BPS OAuth 账号时直接本地估算，Excel token 不会发往原生 `input_tokens` 端点。
 - **只走 HTTP/SSE**：不接受 WebSocket 会话。
 - **托管工具**：联网搜索、图片生成等托管工具会被适配层省略，并告知模型能力不可用；客户端函数工具不受影响。
-- **不设置 privacy**：ChatGPT 的 privacy 设置属于 Codex 账号逻辑，要求设置 privacy 的分组不会选中 BPS OAuth 账号。
+- **privacy**：建号或重新授权（OAuth 兑换或粘贴 RT）时和 Codex 账号走同一套信息补全：读取套餐与订阅到期时间，并尽力关闭该 ChatGPT 账号的训练数据共享。成功时账号的 `privacy_mode` 记为 `training_off`，要求设置 privacy 的分组会正常选中它；失败时这类分组不会选中它。后台刷新 token 时也会重复这套补全（关闭训练是幂等操作），但结果不回写；后台的 privacy 补设和账号菜单里的"设置 privacy"只作用于 Codex OAuth 账号。
 - **Codex 专属功能不适用**：打票、Codex 指纹、WS v2、compact、额度重置（wham）、Spark 影子等都不作用于 BPS OAuth 账号。
 
 ## 账号级配置（extra 键）
@@ -37,17 +38,18 @@ BPS = Basis Points，是 OpenAI 官方 Excel 插件（`bps.openai.com`）的后�
 | `openai_excel_bps_ignore_encrypted_content` | 旧会话里 BPS 无法转发的密文替换为省略提示 |
 | `openai_excel_bps_cache_creation_as_input` | 缓存创建 token 按普通输入计费 |
 
-另外沿用通用的长上下文计费与 5h/7d 自动暂停设置。free 套餐账号不能走 BPS。
+另外沿用通用的长上下文计费（单账号与批量编辑都支持）与 5h/7d 自动暂停设置。free 套餐账号不能走 BPS。
 
 ## 全局开关与配置
 
-- 设置页（gateway 分区）`excel_bps_enabled`：DB 键，默认 true；关闭后所有 BPS 路由停用，BPS OAuth 账号变为不可调度。
+- 设置页（gateway 分区）`excel_bps_enabled`：DB 键，默认 true；关闭后所有 BPS 路由停用，高级调度与旧调度都不再选中 BPS OAuth 账号。
 - `config.yaml` `gateway.excel_bps_stream_data_interval_timeout`：流无数据帧超时（秒，0 禁用，30–300，默认 120）。
 - `config.yaml` `gateway.excel_bps_state_redis_enabled`：工具回放/目录状态共享 Redis（多实例）；默认 false（进程内）。
 
 ## 行为要点
 
-- **调度**：白名单模型优先派给 BPS 账号；BPS 429 只冷却该账号的 BPS 路由（`excel_bps_rate_limited` 排除原因）并允许换号重试；模型权限 403 冷却该（账号,模型）（`excel_bps_model_not_allowed`）。
+- **调度**：白名单模型优先派给 BPS 账号；BPS 429 只冷却该账号的 BPS 路由（`excel_bps_rate_limited` 排除原因）并换号重试；模型权限 403（`model_not_allowed` / `basispoints_model_access_changed`）冷却该（账号,模型）30 分钟（`excel_bps_model_not_allowed`）并换号重试，所有账号都不可用时返回 403 `basispoints_model_not_allowed`。这几类换号都不计入账号健康分。
+- **粘性会话**：原生账号上的会话只在当前入口能走 BPS、且有真正可调度的 BPS 账号（未冷却、未限流、满足分组要求）时才让给 BPS；BPS 账号冷却期间原生会话保持不动。
 - **普通 401/403**：BPS-only 账号没有别的通道，按整号处理并换号重试：
   - 401：清 token 缓存并临时停调度，给 token 刷新留窗口；token 已吊销等情况标记错误。
   - 403：交给 OpenAI 通用 403 处理——HTML / Cloudflare 拦截页不处罚，其余先临时冷却，累计多次才永久停用。
@@ -56,7 +58,7 @@ BPS = Basis Points，是 OpenAI 官方 Excel 插件（`bps.openai.com`）的后�
 - **用量**：5h/7d 窗口来自 BPS 响应头快照与用量日志，不会向 chatgpt.com 发起 Codex 探测。
 - **传输**：BPS 走独立 HTTP 上游 profile（`excel_bps`），经 HTTP 代理出现 H2 流错误时该代理短时熔断降级 HTTP/1.1（1 分钟试探，独立连接池）。
 - **计费**：`/basispoints/api/responses` 端点按 Responses 计费；`cache_creation_as_input` 打开后缓存创建并入普通输入。
-- **模型发现**：`GET /basispoints/api/responses/access?include_models=true` 实时读取 allowed/restricted/efforts，60 秒缓存 + singleflight；模型列表与 Codex manifest 按白名单裁剪。
+- **模型发现**：`GET /basispoints/api/responses/access?include_models=true` 实时读取 allowed/restricted/efforts，60 秒缓存 + singleflight；模型列表与 Codex manifest 按白名单裁剪。账号的"同步上游模型"也走这个接口，返回 BPS 当前可用的全部模型（不按白名单裁剪），便于挑选白名单与映射。
 - **账号测试**：默认测试走与用户请求相同的网关转发路径；另可选"BPS 工具往返"（nonce → echo 工具 → 回传核对，最多 3 次上游请求）。BPS 拒绝请求时，测试弹窗显示上游 HTTP 状态码、Request ID、错误码和脱敏后的错误消息，错误行末尾附 `(HTTP <状态码>)`。
 
 ## 升级与上游
@@ -67,6 +69,8 @@ BPS = Basis Points，是 OpenAI 官方 Excel 插件（`bps.openai.com`）的后�
 
 1. BPS OAuth 建号，账号类型显示为 "BPS OAuth"；账号测试（默认与 BPS 工具往返）通过。
 2. 白名单模型 `/v1/responses`（流式/非流式）经 `basispoints` 正常返回，用量行 `upstream_endpoint=/basispoints/api/responses`。
-3. 白名单外模型请求 → 400 `excel_oauth_route_unavailable`；`/v1/chat/completions` 不会派到 BPS OAuth 账号。
-4. 关闭全局开关 → BPS OAuth 账号不再被调度。
-5. （可选）制造 BPS 403（例如换一个被拒的代理）→ 账号临时停调度，请求换到同分组的其他账号。
+3. 白名单外模型请求不会派到 BPS OAuth 账号；`/v1/chat/completions`、`/v1/messages`、`/v1/messages/count_tokens` 也不会。
+4. 关闭全局开关 → 高级调度与旧调度都不再选中 BPS OAuth 账号。
+5. `/v1/responses/input_tokens` 选中 BPS OAuth 账号 → 返回本地估算值，无上游请求。
+6. 编辑 BPS OAuth 账号 → 模型映射区"同步上游模型"返回 BPS 模型列表。
+7. （可选）制造 BPS 403（例如换一个被拒的代理）→ 账号临时停调度，请求换到同分组的其他账号。
