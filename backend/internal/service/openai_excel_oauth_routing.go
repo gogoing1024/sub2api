@@ -91,8 +91,11 @@ var errExcelOAuthRouteUnavailable = errors.New("an enabled Excel BPS route is re
 
 const excelOAuthRouteUnavailableReason = GatewayFailureReason("excel_oauth_route_unavailable")
 
-func (s *OpenAIGatewayService) validateExcelOAuthRoute(ctx context.Context, account *Account, model string) error {
-	if account.IsBPSOAuth() && (!account.IsExcelBPSEnabledForModel(model) || !s.excelBPSGloballyEnabled(ctx)) {
+// validateExcelOAuthRoute takes the global switch as read by the caller, which
+// must route with that same value: a second read could flip to off and send a
+// BPS-only account down the native path.
+func validateExcelOAuthRoute(account *Account, model string, bpsEnabled bool) error {
+	if account.IsBPSOAuth() && (!account.IsExcelBPSEnabledForModel(model) || !bpsEnabled) {
 		return errExcelOAuthRouteUnavailable
 	}
 	return nil

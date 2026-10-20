@@ -296,3 +296,113 @@ func TestAdvancedStickyBindingYieldsToBPSOnlyWhenBPSCanServe(t *testing.T) {
 		})
 	}
 }
+
+// A sticky binding to a BPS account must not bypass that account's in-memory
+// BPS cooldowns: the session moves to another account while they last.
+func TestLegacyStickyBindingToCoolingBPSAccountMoves(t *testing.T) {
+	const sessionHash = "bps-cooling-sticky"
+	for _, cooldown := range bpsCooldownCases {
+		t.Run(cooldown.name, func(t *testing.T) {
+			bps := bpsRoutingBPSAccount(1)
+			cache := &stubGatewayCache{sessionBindings: map[string]int64{"openai:" + sessionHash: bps.ID}}
+			svc := &OpenAIGatewayService{
+				accountRepo: stubOpenAIAccountRepo{accounts: []Account{bps, bpsRoutingNativeAccount(2, 5)}},
+				cache:       cache,
+				cfg:         &config.Config{},
+			}
+			cooldown.cool(svc, &bps)
+
+			account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, sessionHash, "gpt-5.6-sol", nil)
+
+			require.NoError(t, err)
+			require.Equal(t, int64(2), account.ID)
+		})
+	}
+}
+
+func TestAdvancedStickyBindingToCoolingBPSAccountMoves(t *testing.T) {
+	groupID := int64(11)
+	native := bpsRoutingNativeAccount(2101, 5)
+	native.GroupIDs = []int64{groupID}
+	bps := bpsRoutingBPSAccount(2102)
+	bps.GroupIDs = []int64{groupID}
+	for _, cooldown := range bpsCooldownCases {
+		t.Run(cooldown.name, func(t *testing.T) {
+			resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:bps_cooling": bps.ID}}
+			svc := &OpenAIGatewayService{
+				accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{native, bps}},
+				cache:              cache,
+				cfg:                &config.Config{},
+				rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+			}
+			cooldown.cool(svc, &bps)
+
+			selection, decision, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "bps_cooling", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
+
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.Equal(t, native.ID, selection.Account.ID)
+			require.False(t, decision.StickySessionHit)
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
+// countingExcelBPSSwitchRepo counts the switch reads the scheduler makes.
+type countingExcelBPSSwitchRepo struct {
+	bpsSchedulingSettingRepo
+	reads int
+}
+
+func (r *countingExcelBPSSwitchRepo) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	for _, key := range keys {
+		if key == SettingKeyExcelBPSEnabled {
+			r.reads++
+		}
+	}
+	return r.bpsSchedulingSettingRepo.GetMultiple(ctx, keys)
+}
+
+// Every BPS candidate consults the global switch; the database is read once.
+func TestSchedulerReadsExcelBPSSwitchOncePerPool(t *testing.T) {
+	repo := &countingExcelBPSSwitchRepo{bpsSchedulingSettingRepo: bpsSchedulingSettingRepo{excelBPSSwitchSettingRepo{values: map[string]string{}}}}
+	svc := &OpenAIGatewayService{
+		accountRepo:    stubOpenAIAccountRepo{accounts: []Account{bpsRoutingBPSAccount(1), bpsRoutingBPSAccount(2), bpsRoutingBPSAccount(3), bpsRoutingNativeAccount(4, 5)}},
+		cache:          &stubGatewayCache{},
+		cfg:            &config.Config{},
+		settingService: NewSettingService(repo, &config.Config{}),
+	}
+	for i := 0; i < 3; i++ {
+		account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gpt-5.6-sol", nil)
+		require.NoError(t, err)
+		require.True(t, account.IsBPSOAuth())
+	}
+	require.Equal(t, 1, repo.reads)
+}
+
+// The route check and the BPS dispatch share one read of the switch, and a
+// BPS-only account that may not use BPS never reaches the native path.
+func TestForwardBPSOAuthReadsSwitchOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &countingExcelBPSSwitchRepo{bpsSchedulingSettingRepo: bpsSchedulingSettingRepo{excelBPSSwitchSettingRepo{values: map[string]string{SettingKeyExcelBPSEnabled: "false"}}}}
+	upstream := &httpUpstreamRecorder{}
+	svc := openAIClientToolsTestService(upstream)
+	svc.settingService = NewSettingService(repo, &config.Config{})
+	request, err := buildExcelBPSAccountTestBody("gpt-5.6-sol", "hi")
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(request))
+
+	_, err = svc.Forward(context.Background(), c, excelAccount(), request)
+
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, err, &failover)
+	require.Equal(t, excelOAuthRouteUnavailableReason, failover.Reason)
+	require.Equal(t, 1, repo.reads)
+	require.Empty(t, upstream.requests)
+}

@@ -63,7 +63,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	modelForBPS := gjson.GetBytes(body, "model").String()
-	if err := s.validateExcelOAuthRoute(ctx, account, modelForBPS); err != nil {
+	// Read the switch once: the route check and the BPS dispatch below must
+	// agree, or a BPS-only account could fall through to native Codex.
+	bpsEnabled := account.IsExcelBPSEnabled() && s.excelBPSGloballyEnabled(ctx)
+	if err := validateExcelOAuthRoute(account, modelForBPS, bpsEnabled); err != nil {
 		return nil, newExcelOAuthRouteFailoverError()
 	}
 	// The BPS tools probe must exercise BPS itself; a silent native fallback
@@ -72,8 +75,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		(!account.IsExcelBPSEnabledForModel(modelForBPS) || account.excelBPSNativeFallbackReason(body) != "") {
 		return nil, errors.New("bps probe path is unavailable")
 	}
-	if account.IsExcelBPSEnabledForModel(modelForBPS) && s.excelBPSGloballyEnabled(ctx) {
+	if bpsEnabled && account.IsExcelBPSEnabledForModel(modelForBPS) {
 		return s.forwardExcelBPS(ctx, c, account, body, startTime)
+	}
+	if account.IsBPSOAuth() {
+		// Unreachable while validateExcelOAuthRoute holds; never hand an Excel
+		// token to the native path.
+		return nil, newExcelOAuthRouteFailoverError()
 	}
 
 	normalizedBody, normalized, err := normalizeOpenAICodexCompactReasoningEffortForAccount(c, account, body)
