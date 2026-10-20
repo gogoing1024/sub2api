@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -45,7 +44,7 @@ func (s *AccountTestService) testExcelBPSToolRoundtrip(c *gin.Context, account *
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	model := strings.TrimSpace(modelID)
 	if model == "" {
-		model = openai.DefaultTestModel
+		return s.sendErrorAndEnd(c, errExcelBPSNoTestModel.Error())
 	}
 	if !account.IsExcelBPSEnabledForModel(model) || s.openaiGatewayService == nil {
 		return s.sendErrorAndEnd(c, "BPS tool probe requires this model to use an enabled Excel / BPS OAuth account")

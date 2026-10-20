@@ -10,8 +10,10 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 type excelBPSSwitchSettingRepo struct {
@@ -121,4 +123,79 @@ func TestAccountTestServiceShowsBPSRejectionStatusAndMessage(t *testing.T) {
 	require.Contains(t, out, "was rejected for this workspace")
 	require.NotContains(t, out, "test-token", "the request token must never reach the test output")
 	require.Contains(t, out, "(HTTP 401)")
+}
+
+func bpsTestSuccessResponse() *http.Response {
+	wire := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n"
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(wire))}
+}
+
+// bpsResponsesBodies returns the bodies sent to BPS Responses. The recorder
+// keeps bodies only for requests that have one (discovery GETs have none).
+func bpsResponsesBodies(upstream *httpUpstreamRecorder) [][]byte {
+	var bodies [][]byte
+	next := 0
+	for _, req := range upstream.requests {
+		if req.Body == nil {
+			continue
+		}
+		if req.URL.String() == basispoints.ResponsesURL {
+			bodies = append(bodies, upstream.bodies[next])
+		}
+		next++
+	}
+	return bodies
+}
+
+// The default test sends the public name like a user request, so the account
+// mapping is applied exactly once.
+func TestAccountTestServiceBPSMapsTestModelOnce(t *testing.T) {
+	upstream := &httpUpstreamRecorder{resp: bpsTestSuccessResponse()}
+	svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream)}
+	account := excelAccount()
+	account.Credentials["model_mapping"] = map[string]any{"my-sol": "gpt-5.6-sol", "gpt-5.6-sol": "gpt-5.6-terra"}
+	c, rec := newBPSAccountTestContext()
+
+	require.NoError(t, svc.testOpenAIAccountConnection(c, account, "my-sol", "", ""))
+
+	bodies := bpsResponsesBodies(upstream)
+	require.Len(t, bodies, 1)
+	require.Equal(t, "gpt-5.6-sol", gjson.GetBytes(bodies[0], "model").String())
+	require.Contains(t, rec.Body.String(), `"type":"test_start","model":"my-sol"`)
+}
+
+// Without a model the test uses the account's first BPS model instead of the
+// native default, which BPS does not serve.
+func TestAccountTestServiceBPSDefaultsToBPSModel(t *testing.T) {
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, // discovery
+		bpsTestSuccessResponse(),
+	}}
+	svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream)}
+	account := excelAccount()
+	account.Extra = map[string]any{ExcelBPSModelsExtraKey: []any{"gpt-5.6-terra", "gpt-5.6-sol"}}
+	c, rec := newBPSAccountTestContext()
+
+	require.NoError(t, svc.testOpenAIAccountConnection(c, account, "", "", ""))
+
+	bodies := bpsResponsesBodies(upstream)
+	require.Len(t, bodies, 1)
+	require.Equal(t, "gpt-5.6-terra", gjson.GetBytes(bodies[0], "model").String())
+	require.Contains(t, rec.Body.String(), "test_complete")
+}
+
+func TestAccountTestServiceBPSWithoutAnyModelFails(t *testing.T) {
+	for _, mode := range []string{"", AccountTestModeBPSTools} {
+		upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}}
+		svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream)}
+		account := excelAccount()
+		account.Extra = nil
+		c, rec := newBPSAccountTestContext()
+
+		_ = svc.testOpenAIAccountConnection(c, account, "", "", mode)
+
+		require.Empty(t, bpsResponsesBodies(upstream), "no Responses request without a model")
+		require.Contains(t, rec.Body.String(), errExcelBPSNoTestModel.Error())
+	}
 }

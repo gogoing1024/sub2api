@@ -8,18 +8,28 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
+// errExcelBPSNoTestModel reports a BPS-only account with no model to test.
+var errExcelBPSNoTestModel = errors.New("no Excel BPS model is available for this account; select a model to test")
+
 // testBPSOAuthAccountConnection routes every test mode of a BPS-only account
-// through BPS: the tool round trip for bps_tools, otherwise a text probe.
+// through BPS: the tool round trip for bps_tools, otherwise a text probe. The
+// model is the public (request-side) name; BPS forwarding maps it once.
 func (s *AccountTestService) testBPSOAuthAccountConnection(c *gin.Context, account *Account, modelID, prompt, mode string) error {
 	ctx := c.Request.Context()
 	model := strings.TrimSpace(modelID)
 	if model == "" {
-		model = openai.DefaultTestModel
+		// The native test default is not a BPS model; use the account's first
+		// BPS model, as its test picker would.
+		if models := s.ListExcelBPSAccountModels(ctx, account); len(models) > 0 {
+			model = models[0].ID
+		}
+	}
+	if model == "" {
+		return s.sendErrorAndEnd(c, errExcelBPSNoTestModel.Error())
 	}
 	if s.openaiGatewayService == nil || validateExcelOAuthRoute(account, model, s.openaiGatewayService.excelBPSGloballyEnabled(ctx)) != nil {
 		return s.sendErrorAndEnd(c, errExcelOAuthRouteUnavailable.Error())
@@ -28,20 +38,20 @@ func (s *AccountTestService) testBPSOAuthAccountConnection(c *gin.Context, accou
 		return s.sendErrorAndEnd(c, "BPS OAuth accounts do not serve image models")
 	}
 	if mode == AccountTestModeBPSTools {
-		return s.testExcelBPSToolRoundtrip(c, account, modelID)
+		return s.testExcelBPSToolRoundtrip(c, account, model)
 	}
-	return s.testExcelBPSAccountConnection(c, account, modelID, prompt)
+	return s.testExcelBPSAccountConnection(c, account, model, prompt)
 }
 
 // testExcelBPSAccountConnection runs the default account test through the
 // gateway Forward path, so a BPS-enabled account is probed on the same route
 // user Responses requests take instead of the hard-coded native Codex probe.
 func (s *AccountTestService) testExcelBPSAccountConnection(c *gin.Context, account *Account, modelID, prompt string) error {
+	// Send the public name, like a user request: forwardExcelBPS maps it once.
 	model := strings.TrimSpace(modelID)
 	if model == "" {
-		model = openai.DefaultTestModel
+		return s.sendErrorAndEnd(c, errExcelBPSNoTestModel.Error())
 	}
-	model = account.GetMappedModel(model)
 	prompt = promptOrDefault(prompt)
 	s.sendEvent(c, TestEvent{Type: "test_start", Model: model})
 
