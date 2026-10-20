@@ -2906,6 +2906,17 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// BPS-only accounts test only what BPS serves for them: live BPS discovery
+	// within their whitelist, never mapping keys outside it or native defaults.
+	if account.IsBPSOAuth() {
+		if h.accountTestService != nil {
+			response.Success(c, h.accountTestService.ListExcelBPSAccountModels(c.Request.Context(), account))
+			return
+		}
+		response.Success(c, service.ExcelBPSConfiguredModels(account))
+		return
+	}
+
 	// Handle OpenAI accounts
 	if account.IsOpenAI() {
 		// 账号显式配置的 model_mapping 优先：测试弹窗要反映这个账号实际会服务的模型集合。

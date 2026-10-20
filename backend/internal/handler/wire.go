@@ -127,6 +127,9 @@ func ProvideGatewayHandler(
 		userService, concurrencyService, billingCacheService, usageService, apiKeyService, usageRecordWorkerPool,
 		errorPassthroughService, promptRuleService, contentModerationService, userMsgQueueService,
 		leonardoImageService, cfg, settingService)
+	if openAIGatewayService != nil {
+		gatewayService.SetExcelBPSModelSource(openAIGatewayService)
+	}
 	h.securityAuditCoordinator = coordinator
 	h.geminiCachedContentService = geminiCachedContentService
 	return h
