@@ -1139,6 +1139,26 @@ describe('EditAccountModal', () => {
     expect(extra).not.toHaveProperty('codex_fingerprint_mode')
   })
 
+  it('does not save an empty BPS model whitelist', async () => {
+    const account = buildAccount()
+    account.type = 'bps-oauth'
+    account.credentials = { access_token: 'token', client_id: OPENAI_EXCEL_OAUTH_CLIENT_ID }
+    account.extra = { openai_excel_bps_models: ['gpt-5.6-sol'] }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper
+      .get('[data-testid="excel-bps-model-selection"]')
+      .findComponent({ name: 'ModelWhitelistSelector' })
+      .vm.$emit('update:modelValue', [])
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).not.toHaveBeenCalled()
+  })
+
   it('writes the upstream request id header into extra only when it changes', async () => {
     const account = buildAccount()
     account.extra = { openai_compact_mode: 'force_on' }

@@ -94,9 +94,11 @@ const OAuthAuthorizationFlowStub = defineComponent({
     showCodexSessionImportOption: Boolean,
     showAgentIdentityOption: Boolean,
     showCodexPatOption: Boolean,
+    excelOauth: Boolean,
     initialInputMethod: String,
   },
   data: () => ({ inputMethod: 'manual' }),
+  methods: { reset() {} },
   emits: ['generate-url', 'import-codex-session', 'import-codex-pat'],
   template: `
     <div>
@@ -1010,6 +1012,38 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(flow.props('showCodexSessionImportOption')).toBe(false)
     expect(flow.props('showAgentIdentityOption')).toBe(false)
     expect(flow.props('showCodexPatOption')).toBe(false)
+  })
+
+  it('BPS OAuth 第二步提示 Excel 回调，返回上一步保留 BPS 类型与模型', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
+    await wrapper.get('[data-testid="bps-oauth-models"] [data-testid="model-whitelist-selector"]').trigger('click')
+    const models = [...(wrapper.vm as any).bpsOAuthModels]
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('BPS account')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'OAuthAuthorizationFlow' }).props('excelOauth')).toBe(true)
+
+    ;(wrapper.vm as any).goBackToBasicInfo()
+    await flushPromises()
+
+    expect((wrapper.vm as any).form.type).toBe('bps-oauth')
+    expect((wrapper.vm as any).openaiBPSOAuth).toBe(true)
+    expect((wrapper.vm as any).bpsOAuthModels).toEqual(models)
+  })
+
+  it('BPS OAuth 不受 Codex 透传开关影响，始终应用模型映射', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    ;(wrapper.vm as any).openaiPassthroughEnabled = true
+    await flushPromises()
+    expect((wrapper.vm as any).isOpenAIModelRestrictionDisabled).toBe(true)
+
+    await wrapper.get('[data-testid="openai-bps-oauth"]').trigger('click')
+    await flushPromises()
+    expect((wrapper.vm as any).isOpenAIModelRestrictionDisabled).toBe(false)
   })
 
   it('普通 OpenAI OAuth 仍提供 Codex 导入入口', async () => {

@@ -706,6 +706,21 @@ describe('BulkEditAccountModal', () => {
     expect(payload?.extra).not.toHaveProperty('openai_excel_bps')
   })
 
+  it('不允许批量保存空的 BPS 模型白名单', async () => {
+    const bps = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['bps-oauth'] })
+    vi.mocked(adminAPI.accounts.bulkUpdate).mockClear()
+    await bps.get('[data-testid="bulk-edit-excel-bps-apply"]').setValue(true)
+    await bps
+      .get('[data-testid="bulk-edit-excel-bps-section"]')
+      .findComponent({ name: 'ModelWhitelistSelector' })
+      .vm.$emit('update:modelValue', [])
+    await bps.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('admin.accounts.oauth.openai.excelModelsRequired')
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+  })
+
   it('筛选全量模式固定展示影子继承说明并按 filters 提交', async () => {
     const wrapper = mountModal({
       accountIds: [],

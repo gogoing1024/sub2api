@@ -317,8 +317,10 @@ const expiresLabel = computed(() => {
 })
 
 // Privacy badge — shows different states for OpenAI/Antigravity OAuth privacy setting
+// (OpenAI BPS OAuth accounts get the same training opt-out on authorization)
 const privacyBadge = computed(() => {
-  if (props.type !== 'oauth' || !props.privacyMode) return null
+  const privacyCapable = props.type === 'oauth' || (props.platform === 'openai' && props.type === 'bps-oauth')
+  if (!privacyCapable || !props.privacyMode) return null
   // 支持 OpenAI 和 Antigravity 平台
   if (props.platform !== 'openai' && props.platform !== 'antigravity') return null
 

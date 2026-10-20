@@ -47,6 +47,7 @@ const BaseDialogStub = defineComponent({
 
 const OAuthAuthorizationFlowStub = defineComponent({
   name: 'OAuthAuthorizationFlow',
+  props: { excelOauth: Boolean },
   emits: ['generate-url'],
   template: '<button data-testid="reauth-generate-url" @click="$emit(\'generate-url\')">generate</button>'
 })
@@ -74,6 +75,8 @@ describe('ReAuthAccountModal BPS OAuth', () => {
     await wrapper.get('[data-testid="reauth-generate-url"]').trigger('click')
 
     expect(generateAuthUrlMock).toHaveBeenCalledWith(7, undefined, 'excel')
+    // The flow explains the bps.openai.com callback, not a localhost one.
+    expect(wrapper.findComponent({ name: 'OAuthAuthorizationFlow' }).props('excelOauth')).toBe(true)
   })
 
   it('keeps Codex OAuth re-authorization on the Codex client', async () => {

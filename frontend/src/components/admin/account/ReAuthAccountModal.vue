@@ -360,6 +360,7 @@
         v-if="!isKiroImportMode && !isLeonardo"
         ref="oauthFlowRef"
         :add-method="addMethod"
+        :excel-oauth="isOpenAIBPSOAuth"
         :auth-url="currentAuthUrl"
         :session-id="currentSessionId"
         :loading="currentLoading"

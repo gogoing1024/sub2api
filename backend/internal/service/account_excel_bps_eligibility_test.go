@@ -100,3 +100,15 @@ func TestValidateBPSOAuthTypeChange(t *testing.T) {
 	require.Error(t, validateBPSOAuthTypeChange(AccountTypeBPSOAuth, AccountTypeSetupToken))
 	require.Error(t, validateBPSOAuthTypeChange(AccountTypeOAuth, AccountTypeBPSOAuth))
 }
+
+func TestValidateExcelBPSModelsExtra(t *testing.T) {
+	require.NoError(t, validateExcelBPSModelsExtra(nil))
+	require.NoError(t, validateExcelBPSModelsExtra(map[string]any{}))
+	require.NoError(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: nil}))
+	require.NoError(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []string{"gpt-6-astra"}}))
+	require.NoError(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []any{"", "gpt-6-astra"}}))
+	require.Error(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []string{}}))
+	require.Error(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []any{" "}}))
+	require.Error(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []any{1}}))
+	require.Error(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: "gpt-6-astra"}))
+}

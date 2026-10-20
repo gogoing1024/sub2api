@@ -552,6 +552,11 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err := validateBPSOAuthCredentials(account.Platform, account.Type, account.Credentials); err != nil {
 		return nil, err
 	}
+	if account.IsBPSOAuth() {
+		if err := validateExcelBPSModelsExtra(account.Extra); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.ValidateAccountGroupBindings(ctx, groupIDs); err != nil {
 		return nil, err
 	}
@@ -640,6 +645,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		if err := validateBPSOAuthCredentials(account.Platform, effectiveType, effectiveCredentials); err != nil {
 			return nil, err
+		}
+		if effectiveType == AccountTypeBPSOAuth && input.Extra != nil {
+			if err := validateExcelBPSModelsExtra(input.Extra); err != nil {
+				return nil, err
+			}
 		}
 	}
 	previousProbeIdentity := upstreamBillingProbeIdentity(account)

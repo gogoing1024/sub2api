@@ -2382,6 +2382,13 @@ const handleSubmit = async () => {
     return
   }
 
+  // An empty BPS whitelist would leave the BPS-only accounts unable to serve.
+  if (applyExcelBPS.value && allBPSOAuthOnly.value && !excelBPSAllModels.value &&
+    !excelBPSModels.value.some(model => model.trim())) {
+    appStore.showError(t('admin.accounts.oauth.openai.excelModelsRequired'))
+    return
+  }
+
   // base_url 现在也会作用于 Grok OAuth 订阅账号的转发端点；坏值会让请求期
   // 校验失败、账号请求全挂，因此保存前强制格式校验（与单账号编辑一致）。
   if (enableBaseUrl.value) {

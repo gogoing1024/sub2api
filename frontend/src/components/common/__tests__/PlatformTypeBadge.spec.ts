@@ -23,6 +23,18 @@ describe('PlatformTypeBadge', () => {
     expect(wrapper.text()).not.toContain('bps-oauth')
   })
 
+  it('shows the privacy badge on OpenAI BPS OAuth accounts', () => {
+    const wrapper = mount(PlatformTypeBadge, {
+      props: {
+        platform: 'openai',
+        type: 'bps-oauth',
+        privacyMode: 'training_off'
+      }
+    })
+
+    expect(wrapper.text()).toContain('Private')
+  })
+
   it('uses Kiro theme instead of Anthropic orange theme', () => {
     const wrapper = mount(PlatformTypeBadge, {
       props: {

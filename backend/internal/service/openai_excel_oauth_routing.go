@@ -52,6 +52,40 @@ func validateBPSOAuthCredentials(platform, accountType string, credentials map[s
 	return nil
 }
 
+// ExcelBPSModelsExtraKey holds a BPS-only account's model whitelist.
+const ExcelBPSModelsExtraKey = "openai_excel_bps_models"
+
+// validateExcelBPSModelsExtra rejects a stored whitelist that selects no
+// model: a BPS-only account with it would stay active but never serve. A
+// missing key (or nil, which removes it) keeps every BPS model.
+func validateExcelBPSModelsExtra(extra map[string]any) error {
+	raw, exists := extra[ExcelBPSModelsExtraKey]
+	if !exists || raw == nil {
+		return nil
+	}
+	var models []string
+	switch value := raw.(type) {
+	case []string:
+		models = value
+	case []any:
+		for _, item := range value {
+			model, ok := item.(string)
+			if !ok {
+				return infraerrors.BadRequest("BPS_OAUTH_INVALID", "BPS OAuth model whitelist must be a list of model names")
+			}
+			models = append(models, model)
+		}
+	default:
+		return infraerrors.BadRequest("BPS_OAUTH_INVALID", "BPS OAuth model whitelist must be a list of model names")
+	}
+	for _, model := range models {
+		if strings.TrimSpace(model) != "" {
+			return nil
+		}
+	}
+	return infraerrors.BadRequest("BPS_OAUTH_INVALID", "BPS OAuth accounts need at least one model in the whitelist")
+}
+
 // validateBPSOAuthTypeChange keeps BPS-only accounts out of type changes. An
 // update may drop client_id (it is not a preserved sensitive key) while the
 // stored Excel access token stays, so the credential check alone cannot tell
