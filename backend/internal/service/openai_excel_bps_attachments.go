@@ -43,9 +43,11 @@ func excelBPSAttachmentFailure(stage, kind string, upstreamStatus int, cause err
 }
 
 // uploadExcelBPSAttachment exchanges one validated inline image for a BPS file
-// ID over the account's own proxy. Account-level BPS rejections (401/402/403)
+// ID over the account's own proxy. Account-level outcomes (401/402, 5xx/529)
 // are recorded here, where the response body is still available; the caller
-// decides on failover from the returned status.
+// decides on failover from the returned status. A 403 leaves the account
+// alone: BPS may refuse attachments for an account whose text requests still
+// work, so it must not count toward the account's 403 strikes.
 func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, account *Account, token, accountID, proxyURL, model string, img basispoints.InlineAttachment) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -78,12 +80,10 @@ func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, acc
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		switch resp.StatusCode {
-		case http.StatusUnauthorized:
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized:
 			s.handleExcelBPSUnauthorized(ctx, account, resp.StatusCode, resp.Header, raw)
-		case http.StatusForbidden:
-			s.handleExcelBPSForbidden(ctx, account, resp.Header, raw, token)
-		case http.StatusPaymentRequired:
+		case resp.StatusCode == http.StatusPaymentRequired || resp.StatusCode >= 500:
 			s.handleExcelBPSAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, token, model)
 		}
 		status := resp.StatusCode

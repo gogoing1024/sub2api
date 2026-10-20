@@ -126,32 +126,40 @@ func TestExcelBPSNativeAttachmentForward(t *testing.T) {
 	}
 }
 
-// Upload failures follow the BPS rules for a rejection before output: 429
-// cools only the BPS route and 401/402/403 disqualify the account, both moving
-// the request on; anything else answers once without touching the account.
+// Upload failures happen before any output. 429 cools only the BPS route,
+// 401/402 disqualify the account, and 5xx/529 or transport failures move on
+// (529 also marks the account overloaded); all of these fail over. A 403
+// answers directly without touching the account (BPS may refuse attachments
+// while text still works), and so does anything else.
 func TestExcelBPSNativeUploadFailures(t *testing.T) {
 	cases := []struct {
-		name       string
-		status     int
-		body       string
-		transport  bool
-		wantReason GatewayFailureReason
-		want       int
+		name         string
+		status       int
+		body         string
+		transport    bool
+		wantReason   GatewayFailureReason
+		wantClient   int
+		want         int
+		wantOverload bool
 	}{
-		{name: "429", status: 429, body: "PRIVATE_BODY", wantReason: ExcelBPSRateLimitedReason},
-		{name: "401", status: 401, body: "PRIVATE_BODY", wantReason: ExcelBPSAccountRejectedReason},
-		{name: "402", status: 402, body: "PRIVATE_BODY", wantReason: ExcelBPSAccountRejectedReason},
-		{name: "403", status: 403, body: "PRIVATE_BODY", wantReason: ExcelBPSAccountRejectedReason},
-		{name: "500", status: 500, body: "PRIVATE_BODY", want: 500},
+		{name: "429", status: 429, body: "PRIVATE_BODY", wantReason: ExcelBPSRateLimitedReason, wantClient: 429},
+		{name: "401", status: 401, body: "PRIVATE_BODY", wantReason: ExcelBPSAccountRejectedReason, wantClient: 502},
+		{name: "402", status: 402, body: "PRIVATE_BODY", wantReason: ExcelBPSAccountRejectedReason, wantClient: 502},
+		{name: "500", status: 500, body: "PRIVATE_BODY", wantReason: ExcelBPSUpstreamErrorReason, wantClient: 502},
+		{name: "529", status: 529, body: "PRIVATE_BODY", wantReason: ExcelBPSUpstreamErrorReason, wantClient: 503, wantOverload: true},
+		{name: "transport", transport: true, wantReason: ExcelBPSUpstreamErrorReason, wantClient: 502},
+		{name: "403", status: 403, body: "{\"error\":{\"code\":\"forbidden\",\"message\":\"PRIVATE_BODY\"}}", want: 403},
+		{name: "413", status: 413, body: "PRIVATE_BODY", want: 413},
 		{name: "redirect", status: 307, body: "PRIVATE_BODY", want: 502},
 		{name: "wrong ID", status: 200, body: "{\"openai_file_id\":\"PRIVATE_BODY\"}", want: 502},
 		{name: "invalid JSON", status: 200, body: "PRIVATE_BODY", want: 502},
 		{name: "oversized JSON", status: 200, body: strings.Repeat("X", (64<<10)+1), want: 502},
-		{name: "transport", transport: true, want: 502},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := openAIClientToolsTestService(nil)
+			repo := &excelBPSAccountStateRepo{}
+			svc.rateLimitService = NewRateLimitService(repo, nil, svc.cfg, nil, nil)
 			calls := 0
 			closed := &nativeAttachmentBody{Reader: strings.NewReader(tc.body)}
 			svc.httpUpstream = &nativeAttachmentUpstream{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
@@ -175,6 +183,7 @@ func TestExcelBPSNativeUploadFailures(t *testing.T) {
 			require.NotContains(t, rec.Body.String(), "PRIVATE")
 			require.NotContains(t, err.Error(), "PRIVATE")
 			require.Equal(t, tc.status == http.StatusTooManyRequests, svc.isExcelBPSCoolingDown(account, "gpt-6-astra"))
+			require.Equal(t, tc.wantOverload, len(repo.overloaded) > 0)
 			if tc.wantReason != "" {
 				if tc.status == http.StatusTooManyRequests {
 					requireExcelBPSRateLimitFailover(t, err, c)
@@ -182,12 +191,18 @@ func TestExcelBPSNativeUploadFailures(t *testing.T) {
 				var failover *UpstreamFailoverError
 				require.ErrorAs(t, err, &failover)
 				require.Equal(t, tc.wantReason, failover.Reason)
+				require.Equal(t, tc.wantClient, failover.ClientStatusCode)
 				require.True(t, failover.ShouldRetryNextAccount())
 				require.Zero(t, rec.Body.Len(), "leave the response to the handler")
 			} else {
+				var failover *UpstreamFailoverError
+				require.False(t, errors.As(err, &failover))
 				require.Equal(t, tc.want, rec.Code)
 				require.Equal(t, "basispoints_attachment_error", gjson.Get(rec.Body.String(), "error.code").String())
 				require.True(t, IsResponseCommitted(c))
+				require.Empty(t, repo.errors, "the account is not touched")
+				require.Empty(t, repo.tempUnschedulable)
+				require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
 			}
 			if !tc.transport {
 				require.True(t, closed.closed)

@@ -301,17 +301,27 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			if errors.Is(err, basispoints.ErrAttachmentBusy) {
 				status = http.StatusServiceUnavailable
 			}
-			// Same rules as a Responses rejection before output: 429 cools only
-			// the BPS route, 401/402/403 disqualify the account (recorded by the
-			// upload), and both move the request to another account.
+			// Nothing was generated yet, so the Responses rules before output
+			// apply: 429 cools only the BPS route, 401/402 disqualify the account
+			// and 5xx/529 follow the account policy (all recorded by the upload),
+			// and each moves the request to another account. A transport failure
+			// moves on too: resending an upload only leaves an unused attachment.
+			// A 403 and anything else answer directly (see uploadExcelBPSAttachment).
 			if uploadError != nil {
-				switch status {
-				case http.StatusTooManyRequests:
+				switch {
+				case status == http.StatusTooManyRequests:
 					recordExcelBPSAttachmentFailure(ctx, c, account, err, true)
 					return failoverRateLimited(uploadError.retryAfter)
-				case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
+				case status == http.StatusUnauthorized || status == http.StatusPaymentRequired:
 					recordExcelBPSAttachmentFailure(ctx, c, account, err, true)
 					return failoverAccountRejected(status)
+				case uploadError.stage == "attachment_http" && uploadError.upstreamStatus >= 500,
+					uploadError.stage == "attachment_transport":
+					recordExcelBPSAttachmentFailure(ctx, c, account, err, true)
+					if isExcelBPSClientCancellation(c, ctx.Err()) {
+						return clientCanceled()
+					}
+					return nil, newExcelBPSUpstreamFailoverError(status)
 				}
 			}
 			recordExcelBPSAttachmentFailure(ctx, c, account, err, false)
