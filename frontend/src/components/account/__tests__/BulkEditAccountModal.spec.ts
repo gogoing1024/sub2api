@@ -447,7 +447,7 @@ describe('BulkEditAccountModal', () => {
   })
 
   it('OpenAI 支持类型展示长上下文设置，混合平台隐藏全部新增设置', () => {
-    for (const selectedTypes of [['oauth'], ['setup-token'], ['apikey'], ['oauth', 'setup-token', 'apikey']]) {
+    for (const selectedTypes of [['oauth'], ['setup-token'], ['apikey'], ['bps-oauth'], ['oauth', 'setup-token', 'apikey', 'bps-oauth']]) {
       const wrapper = mountModal({
         selectedPlatforms: ['openai'],
         selectedTypes
@@ -509,6 +509,24 @@ describe('BulkEditAccountModal', () => {
 
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
       extra: { openai_long_context_billing_enabled: false }
+    })
+  })
+
+  it('BPS OAuth 账号可批量设置长上下文计费，透传与 Compact 仍隐藏', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['bps-oauth']
+    })
+    expect(wrapper.find('#bulk-edit-openai-passthrough-enabled').exists()).toBe(false)
+    expect(wrapper.find('#bulk-edit-openai-compact-mode-enabled').exists()).toBe(false)
+
+    await wrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-edit-openai-long-context-billing-toggle"]').trigger('click')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], {
+      extra: { openai_long_context_billing_enabled: true }
     })
   })
 
