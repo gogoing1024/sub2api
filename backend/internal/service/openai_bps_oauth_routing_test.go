@@ -450,3 +450,42 @@ func TestWSIngressRejectsBPSOAuthAccounts(t *testing.T) {
 		})
 	}
 }
+
+// With every BPS account cooling down, the legacy schedulers name the BPS
+// cooldown in "no available accounts" diagnostics, so the handler answers 429
+// (rate_limited=N) instead of a generic 503.
+func TestLegacySelectionReportsBPSCooldowns(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cool  func(svc *OpenAIGatewayService, bps *Account)
+		label string
+	}{
+		{name: "BPS 429 cooldown", cool: bpsCooldownCases[0].cool, label: excelBPSRateLimitedFilterReason + "=2"},
+		{name: "model permission cooldown", cool: bpsCooldownCases[1].cool, label: excelBPSModelPermissionFilterReason + "=2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newSvc := func() *OpenAIGatewayService {
+				first, second := bpsRoutingBPSAccount(1), bpsRoutingBPSAccount(2)
+				cfg := &config.Config{RunMode: config.RunModeStandard}
+				cfg.Gateway.Scheduling.LoadBatchEnabled = true
+				svc := &OpenAIGatewayService{
+					accountRepo:        stubOpenAIAccountRepo{accounts: []Account{first, second}},
+					cache:              &stubGatewayCache{},
+					cfg:                cfg,
+					concurrencyService: NewConcurrencyService(stubConcurrencyCache{}),
+				}
+				tc.cool(svc, &first)
+				tc.cool(svc, &second)
+				return svc
+			}
+
+			_, err := newSvc().SelectAccountForModelWithExclusions(context.Background(), nil, "", "gpt-5.6-sol", nil)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.label, "selectBestAccount")
+
+			_, err = newSvc().SelectAccountWithLoadAwareness(context.Background(), nil, "", "gpt-5.6-sol", nil)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.label, "load-aware selection")
+		})
+	}
+}

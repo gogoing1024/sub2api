@@ -84,8 +84,10 @@ func TestExcelBPSModelPermission403FailsOverWithoutRejectingAccount(t *testing.T
 // upstream error policy.
 type excelBPSAccountStateRepo struct {
 	AccountRepository
-	errors     map[int64]string
-	overloaded map[int64]time.Time
+	errors            map[int64]string
+	overloaded        map[int64]time.Time
+	modelLimits       map[int64][]string
+	tempUnschedulable map[int64]int
 }
 
 func (r *excelBPSAccountStateRepo) SetError(_ context.Context, id int64, message string) error {
@@ -93,6 +95,22 @@ func (r *excelBPSAccountStateRepo) SetError(_ context.Context, id int64, message
 		r.errors = map[int64]string{}
 	}
 	r.errors[id] = message
+	return nil
+}
+
+func (r *excelBPSAccountStateRepo) SetModelRateLimit(_ context.Context, id int64, scope string, _ time.Time, _ ...string) error {
+	if r.modelLimits == nil {
+		r.modelLimits = map[int64][]string{}
+	}
+	r.modelLimits[id] = append(r.modelLimits[id], scope)
+	return nil
+}
+
+func (r *excelBPSAccountStateRepo) SetTempUnschedulable(_ context.Context, id int64, _ time.Time, _ string) error {
+	if r.tempUnschedulable == nil {
+		r.tempUnschedulable = map[int64]int{}
+	}
+	r.tempUnschedulable[id]++
 	return nil
 }
 
@@ -104,7 +122,7 @@ func (r *excelBPSAccountStateRepo) SetOverloaded(_ context.Context, id int64, un
 	return nil
 }
 
-func forwardExcelBPSWithAccountPolicy(t *testing.T, status int, body string) (*httptest.ResponseRecorder, *excelBPSAccountStateRepo, error) {
+func forwardExcelBPSWithAccountPolicy(t *testing.T, status int, body string, configure ...func(*Account)) (*httptest.ResponseRecorder, *excelBPSAccountStateRepo, error) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}}
@@ -116,7 +134,11 @@ func forwardExcelBPSWithAccountPolicy(t *testing.T, status int, body string) (*h
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(request))
-	_, err = svc.Forward(context.Background(), c, excelAccount(), request)
+	account := excelAccount()
+	for _, apply := range configure {
+		apply(account)
+	}
+	_, err = svc.Forward(context.Background(), c, account, request)
 	require.Len(t, upstream.requests, 1)
 	return rec, repo, err
 }
@@ -199,4 +221,20 @@ func TestBPSOAuthChatGPTAccountIdentity(t *testing.T) {
 
 	apiKey := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"chatgpt_account_id": "x"}}
 	require.Empty(t, apiKey.GetChatGPTAccountID())
+}
+
+// Like the native path, the BPS account policy knows the upstream model, so a
+// default-scope temporary-unschedulable rule cools only (account, model).
+func TestExcelBPS5xxTempUnschedulableRuleIsModelScoped(t *testing.T) {
+	rec, repo, err := forwardExcelBPSWithAccountPolicy(t, http.StatusInternalServerError, `{"error":{"message":"server overloaded"}}`, func(account *Account) {
+		account.Credentials["temp_unschedulable_enabled"] = true
+		account.Credentials["temp_unschedulable_rules"] = []any{map[string]any{"error_code": 500, "keywords": []any{"overloaded"}, "duration_minutes": 5}}
+	})
+
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, err, &failover)
+	require.Equal(t, ExcelBPSUpstreamErrorReason, failover.Reason)
+	require.Zero(t, rec.Body.Len())
+	require.Equal(t, []string{"gpt-5.6-sol"}, repo.modelLimits[300])
+	require.Zero(t, repo.tempUnschedulable[300], "the account's other models stay schedulable")
 }

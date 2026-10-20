@@ -59,10 +59,12 @@ func newExcelBPSImageUnsupportedFailoverError(message string) *UpstreamFailoverE
 // handleExcelBPSAccountUpstreamError hands a BPS 402 or 5xx to the same
 // account-level policy as the native path (handleOpenAIAccountUpstreamError):
 // a deactivated workspace marks the account as an error, 529 marks it
-// overloaded and other 5xx are only logged. BPS bodies can echo request data,
-// so only identifier-like codes (error.code, detail.code) and a redacted
-// message are passed on.
-func (s *OpenAIGatewayService) handleExcelBPSAccountUpstreamError(ctx context.Context, account *Account, status int, headers http.Header, raw []byte, token string) {
+// overloaded and other 5xx are only logged. model is the upstream (mapped)
+// model, as on the native path, so model-scoped temporary-unschedulable rules
+// cool only (account, model). BPS bodies can echo request data, so only
+// identifier-like codes (error.code, detail.code) and a redacted message are
+// passed on.
+func (s *OpenAIGatewayService) handleExcelBPSAccountUpstreamError(ctx context.Context, account *Account, status int, headers http.Header, raw []byte, token, model string) {
 	if s == nil || account == nil || (status != http.StatusPaymentRequired && status < 500) {
 		return
 	}
@@ -80,7 +82,7 @@ func (s *OpenAIGatewayService) handleExcelBPSAccountUpstreamError(ctx context.Co
 	body, _ := json.Marshal(safe)
 	stateCtx, cancel := openAIAccountStateContext(ctx)
 	defer cancel()
-	s.handleOpenAIAccountUpstreamError(stateCtx, account, status, headers, body)
+	s.handleOpenAIAccountUpstreamError(stateCtx, account, status, headers, body, model)
 }
 
 // ExcelBPSFailoverClientError maps an exhausted BPS failover to its fixed

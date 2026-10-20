@@ -1063,6 +1063,17 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 			filterStats.exclude("excluded")
 			continue
 		}
+		// Name the in-memory BPS cooldowns before the generic eligibility
+		// checks (which also see them as runtime blocks): an all-cooling BPS
+		// pool must report them so the handler answers 429, not 503.
+		if s.isExcelBPSModelCoolingDown(acc, requestedModel) {
+			filterStats.exclude(excelBPSModelPermissionFilterReason)
+			continue
+		}
+		if s.isExcelBPSCoolingDown(acc, requestedModel) {
+			filterStats.exclude(excelBPSRateLimitedFilterReason)
+			continue
+		}
 
 		fresh := s.resolveFreshSchedulableOpenAIAccountBeforeProfit(ctx, acc, platform, requestedModel, false, requiredCapability)
 		if fresh == nil {
@@ -1090,14 +1101,6 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 				filterStats.exclude("compact_unsupported")
 				continue
 			}
-		}
-		if s.isExcelBPSModelCoolingDown(fresh, requestedModel) {
-			filterStats.exclude(excelBPSModelPermissionFilterReason)
-			continue
-		}
-		if s.isExcelBPSCoolingDown(fresh, requestedModel) {
-			filterStats.exclude(excelBPSRateLimitedFilterReason)
-			continue
 		}
 
 		eligible = append(eligible, fresh)
@@ -1330,16 +1333,18 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			filterStats.exclude("shadow_parent_unhealthy")
 			continue
 		}
-		if s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel, requireCompact) {
-			filterStats.exclude("runtime_blocked")
-			continue
-		}
+		// BPS cooldowns are runtime blocks too; name them first (see
+		// selectBestAccount).
 		if s.isExcelBPSModelCoolingDown(acc, requestedModel) {
 			filterStats.exclude(excelBPSModelPermissionFilterReason)
 			continue
 		}
 		if s.isExcelBPSCoolingDown(acc, requestedModel) {
 			filterStats.exclude(excelBPSRateLimitedFilterReason)
+			continue
+		}
+		if s.isOpenAIAccountRequestRuntimeBlocked(acc, requestedModel, requireCompact) {
+			filterStats.exclude("runtime_blocked")
 			continue
 		}
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, acc, requestedModel, requireCompact) {

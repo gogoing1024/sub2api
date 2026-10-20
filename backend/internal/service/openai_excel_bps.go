@@ -287,7 +287,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		body, err = images.Upload(ctx, &s.excelBPSAttachments, attachmentScope, func(uploadCtx context.Context, img basispoints.InlineAttachment) (string, error) {
 			SetActualOpenAIUpstreamEndpoint(c, "/basispoints/api/attachments")
-			return s.uploadExcelBPSAttachment(uploadCtx, account, token, accountID, attachmentProxy, img)
+			return s.uploadExcelBPSAttachment(uploadCtx, account, token, accountID, attachmentProxy, model, img)
 		})
 		if err != nil {
 			if isExcelBPSClientCancellation(c, err) {
@@ -446,11 +446,11 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		// 402 (e.g. a deactivated workspace) and 5xx/529 follow the native
 		// account policy; nothing was generated, so another account may serve.
 		if resp.StatusCode == http.StatusPaymentRequired {
-			s.handleExcelBPSAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, token)
+			s.handleExcelBPSAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, token, model)
 			return failoverAccountRejected(resp.StatusCode)
 		}
 		if resp.StatusCode >= 500 {
-			s.handleExcelBPSAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, token)
+			s.handleExcelBPSAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, token, model)
 			if isExcelBPSClientCancellation(c, ctx.Err()) {
 				return clientCanceled()
 			}
@@ -502,7 +502,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			// Output was already accepted, so the request cannot move to another
 			// account; only the account-level state is updated.
 			s.handleExcelBPSUnauthorized(repairCtx, account, repairResp.StatusCode, repairResp.Header, raw)
-			s.handleExcelBPSAccountUpstreamError(repairCtx, account, repairResp.StatusCode, repairResp.Header, raw, token)
+			s.handleExcelBPSAccountUpstreamError(repairCtx, account, repairResp.StatusCode, repairResp.Header, raw, token, model)
 			if isExcelBPSModelPermissionError(repairResp.StatusCode, gjson.GetBytes(raw, "error.code").String()) {
 				s.coolDownExcelBPSModel(account, model)
 			} else if repairResp.StatusCode == http.StatusForbidden {
@@ -542,7 +542,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			// Output was already accepted, so the request cannot move to another
 			// account; only the account-level state is updated.
 			s.handleExcelBPSUnauthorized(repairCtx, account, repaired.StatusCode, repaired.Header, raw)
-			s.handleExcelBPSAccountUpstreamError(repairCtx, account, repaired.StatusCode, repaired.Header, raw, token)
+			s.handleExcelBPSAccountUpstreamError(repairCtx, account, repaired.StatusCode, repaired.Header, raw, token, model)
 			if isExcelBPSModelPermissionError(repaired.StatusCode, gjson.GetBytes(raw, "error.code").String()) {
 				s.coolDownExcelBPSModel(account, model)
 			} else if repaired.StatusCode == http.StatusForbidden {

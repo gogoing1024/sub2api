@@ -46,7 +46,7 @@ func excelBPSAttachmentFailure(stage, kind string, upstreamStatus int, cause err
 // ID over the account's own proxy. Account-level BPS rejections (401/402/403)
 // are recorded here, where the response body is still available; the caller
 // decides on failover from the returned status.
-func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, account *Account, token, accountID, proxyURL string, img basispoints.InlineAttachment) (string, error) {
+func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, account *Account, token, accountID, proxyURL, model string, img basispoints.InlineAttachment) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	ctx = WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(ctx, HTTPUpstreamProfileExcelBPS))
@@ -84,7 +84,7 @@ func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, acc
 		case http.StatusForbidden:
 			s.handleExcelBPSForbidden(ctx, account, resp.Header, raw, token)
 		case http.StatusPaymentRequired:
-			s.handleExcelBPSAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, token)
+			s.handleExcelBPSAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, token, model)
 		}
 		status := resp.StatusCode
 		if status < 400 || status > 599 {
