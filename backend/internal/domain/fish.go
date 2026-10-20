@@ -5,45 +5,20 @@ import (
 	"strings"
 )
 
-// FishSizeMode 描述 fish.audio 一个模型的尺寸参数语义（2026-10 抓包 +
-// price Oracle 穷举确认）：
-//
-//   - FishSizePixels：gpt-image 家族。params.image_size 用固定像素串，
-//     仅允许 FishPixelSizes 列出的 12 个值；quality 三档（low/medium/high）。
-//   - FishSizeTier：nano-banana / gemini 系。image_size 用档位字符串
-//     "1K"/"2K"/"4K"（2-lite 仅 "1K"），与宽高比无关；quality 不参与。
-//   - FishSizeFree：seedream 系。任意尺寸一口价，像素串原样透传。
-type FishSizeMode string
-
-const (
-	FishSizePixels FishSizeMode = "pixels"
-	FishSizeTier   FishSizeMode = "tier"
-	FishSizeFree   FishSizeMode = "free"
-)
-
 // FishModel 是 fish.audio 平台的一个对外模型。Name 同时是上游 modelId
-//（fish 上游模型名即对外名，无需 slug 换算）。
+//（fish 上游模型名即对外名）。首版只暴露 gpt-image 家族——全部走固定像素
+// 白名单（FishPixelSizes）+ quality 三档（low/medium/high）。
 type FishModel struct {
-	Name     string
-	SizeMode FishSizeMode
-	// TierOnly 对 FishSizeTier 模型列出允许的档位（如 nano-banana-2-lite 仅 1K）。
-	Tiers []string
+	Name string
 }
 
-// FishModels 是 fish.audio 平台首版暴露的生图模型（展示顺序）。
-// grok-imagine-image（费率键未探明）与 topaz/image/enhance（scaleFactor
-// 参数体系）不在首版范围。列表是 2026-10-20 实测快照；fish 的 /models
-// 端点是活的，账号连通性测试会顺带校验漂移。
+// FishModels 是 fish.audio 平台暴露的生图模型（展示顺序）。
+// nano-banana / gemini / seedream 系已按需求移除（2026-10）；
+// fish 的 /models 端点是活的，账号连通性测试可顺带校验漂移。
 var FishModels = []FishModel{
-	{Name: "gpt-image-2", SizeMode: FishSizePixels},
-	{Name: "gpt-image-2.5-flare", SizeMode: FishSizePixels},
-	{Name: "gpt-image-2.5-sunburst", SizeMode: FishSizePixels},
-	{Name: "nano-banana", SizeMode: FishSizeTier, Tiers: []string{"1K", "2K", "4K"}},
-	{Name: "nano-banana-2-lite", SizeMode: FishSizeTier, Tiers: []string{"1K"}},
-	{Name: "nano-banana-2-1", SizeMode: FishSizeTier, Tiers: []string{"1K", "2K", "4K"}},
-	{Name: "gemini-3-pro-image", SizeMode: FishSizeTier, Tiers: []string{"1K", "2K", "4K"}},
-	{Name: "seedream-4-5", SizeMode: FishSizeFree},
-	{Name: "seedream-5-0", SizeMode: FishSizeFree},
+	{Name: "gpt-image-2"},
+	{Name: "gpt-image-2.5-flare"},
+	{Name: "gpt-image-2.5-sunburst"},
 }
 
 // DefaultFishModelMapping 是 fish 账号的默认模型映射：对外名恒等映射。
@@ -57,7 +32,8 @@ var DefaultFishModelMapping = func() map[string]string {
 
 // FishPixelSizes 是 gpt-image 家族（gpt-image-2 / 2.5-flare / 2.5-sunburst）
 // 的全部合法像素值（三家共享同一矩阵，2026-10-20 price Oracle 实测；
-// 矩阵不对称：21:9 只有横版，4K 只有 1:1）。
+// 矩阵不对称：21:9 只有横版，4K 只有 1:1）。白名单外的尺寸由 handler
+// 路由到 OpenAI 兼容中转账号。
 var FishPixelSizes = []string{
 	// 1K 档
 	"1024x1024", "768x1024", "1024x768", "608x1088", "1088x608", "1344x576",
@@ -75,97 +51,31 @@ var fishPixelSizeSet = func() map[string]bool {
 	return set
 }()
 
-// fishTierByPixels 把像素面积映射到档位字符串（Gemini 系模型的
-// OpenAI size → fish 档位换算）。面积阈值按 gpt 家族矩阵反推：
-// 1K 档上限 ~1.1MP（1024²），2K 档上限 ~4.3MP（2048²），其余归 4K。
-func fishTierByPixels(width, height int) string {
-	pixels := width * height
-	switch {
-	case pixels <= 1_200_000:
-		return "1K"
-	case pixels <= 4_400_000:
-		return "2K"
-	default:
-		return "4K"
+// FishResolveSize 把 OpenAI Images 请求的 size（空串用默认 1024x1024）
+// 翻译为 fish params.image_size 的值。白名单外的尺寸返回错误——调用方
+//（handler）据此把请求路由到中转账号，而不是打 fish 原生。
+func FishResolveSize(model FishModel, size string) (string, error) {
+	normalized := strings.TrimSpace(strings.ToLower(size))
+	if normalized == "" {
+		normalized = "1024x1024"
 	}
-}
-
-// ParsePixelSize 把 "WxH" 解析为宽高。
-func ParsePixelSize(size string) (int, int, error) {
-	parts := strings.SplitN(strings.TrimSpace(strings.ToLower(size)), "x", 2)
-	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("invalid image size %q", size)
-	}
-	var width, height int
-	if _, err := fmt.Sscanf(parts[0], "%d", &width); err != nil {
-		return 0, 0, fmt.Errorf("invalid image size %q", size)
-	}
-	if _, err := fmt.Sscanf(parts[1], "%d", &height); err != nil {
-		return 0, 0, fmt.Errorf("invalid image size %q", size)
-	}
-	if width <= 0 || height <= 0 {
-		return 0, 0, fmt.Errorf("invalid image size %q", size)
-	}
-	return width, height, nil
-}
-
-// FishResolveSize 把 OpenAI Images 请求的 size（如 "1024x1024"；
-// 空串用默认）翻译为 fish params.image_size 的值。返回的 qualityAllowed
-// 报告该模型是否接受 quality 参数（仅 gpt 家族）。
-func FishResolveSize(model FishModel, size string) (imageSize string, qualityAllowed bool, err error) {
-	size = strings.TrimSpace(strings.ToLower(size))
-	switch model.SizeMode {
-	case FishSizePixels:
-		if size == "" {
-			size = "1024x1024"
-		}
-		if !fishPixelSizeSet[size] {
-			return "", false, fmt.Errorf(
-				"model %s does not support size %q; allowed: %s",
-				model.Name, size, strings.Join(FishPixelSizes, ", "),
-			)
-		}
-		return size, true, nil
-	case FishSizeTier:
-		if size == "" {
-			tier := "1K"
-			if len(model.Tiers) > 0 {
-				tier = model.Tiers[0]
-			}
-			return tier, false, nil
-		}
-		// 档位串直接用（大小写归一），像素串按面积换算
-		normalized := strings.ToUpper(size)
-		for _, tier := range model.Tiers {
-			if tier == normalized {
-				return tier, false, nil
-			}
-		}
-		width, height, perr := ParsePixelSize(size)
-		if perr != nil {
-			return "", false, fmt.Errorf("invalid image size %q", size)
-		}
-		tier := fishTierByPixels(width, height)
-		for _, allowed := range model.Tiers {
-			if allowed == tier {
-				return tier, false, nil
-			}
-		}
-		return "", false, fmt.Errorf(
-			"model %s resolves size %q to tier %s which it does not support (allowed: %s)",
-			model.Name, size, tier, strings.Join(model.Tiers, ", "),
+	if !fishPixelSizeSet[normalized] {
+		return "", fmt.Errorf(
+			"model %s does not support size %q natively; allowed: %s",
+			model.Name, size, strings.Join(FishPixelSizes, ", "),
 		)
-	case FishSizeFree:
-		if size == "" {
-			return "1024x1024", false, nil
-		}
-		width, height, perr := ParsePixelSize(size)
-		if perr != nil {
-			return "", false, fmt.Errorf("invalid image size %q", size)
-		}
-		return fmt.Sprintf("%dx%d", width, height), false, nil
 	}
-	return "", false, fmt.Errorf("unknown size mode for model %s", model.Name)
+	return normalized, nil
+}
+
+// FishSizeSupported 报告 size 是否在 fish 原生白名单内（空串视为默认尺寸，
+// 恒支持）。handler 的中转判定用。
+func FishSizeSupported(size string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(size))
+	if normalized == "" {
+		return true
+	}
+	return fishPixelSizeSet[normalized]
 }
 
 // LookupFishModel 按模型名查表（大小写不敏感）。

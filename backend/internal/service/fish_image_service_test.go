@@ -90,43 +90,6 @@ func TestFishGenerateCallHappyPath(t *testing.T) {
 	}
 }
 
-func TestFishGenerateCallTierModelAndQualityOmission(t *testing.T) {
-	var priceParams, generateParams map[string]any
-	service, account, _ := newFishTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/tools/image-video/price":
-			priceParams = decodeFishBody(t, r)["params"].(map[string]any)
-			_, _ = w.Write([]byte(`{"credits":680,"pricingVersion":"pv"}`))
-		case "/tools/image-video/generate":
-			generateParams = decodeFishBody(t, r)["params"].(map[string]any)
-			_, _ = w.Write([]byte(`{"id":"g","status":"generating","results":[]}`))
-		case "/task/group/g":
-			_, _ = w.Write([]byte(`{"id":"g","status":"done","results":[{"id":"m","status":"done","mediaItem":{"id":"m","url":"http://` + r.Host + `/x.png"}}]}`))
-		case "/x.png":
-			_, _ = w.Write([]byte("img"))
-		default:
-			w.WriteHeader(404)
-		}
-	}))
-	// 像素 2048x2048 + quality hd → 档位 "2K"（面积映射），quality 不发送
-	result, err := service.Generate(context.Background(), account, "tok", fishImageRequest("nano-banana-2-1", "2048x2048", "hd", 1))
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	if priceParams["image_size"] != "2K" || generateParams["image_size"] != "2K" {
-		t.Fatalf("image_size mapping: price=%v generate=%v", priceParams["image_size"], generateParams["image_size"])
-	}
-	if _, has := priceParams["quality"]; has {
-		t.Fatalf("quality must be omitted for tier models")
-	}
-	if result.Quality != "" {
-		t.Fatalf("Quality = %q, want empty", result.Quality)
-	}
-	if result.Forward.ImageSize != ImageBillingSize2K {
-		t.Fatalf("billing size = %q", result.Forward.ImageSize)
-	}
-}
-
 func TestFishGenerateCallEditsFlow(t *testing.T) {
 	png := []byte("ref-image")
 	var variant string
@@ -274,21 +237,19 @@ func decodeFishBody(t *testing.T, r *http.Request) map[string]any {
 func TestFishQualityForRequest(t *testing.T) {
 	cases := []struct {
 		requested string
-		allowed   bool
 		want      string
 	}{
-		{"medium", true, "medium"},
-		{"standard", true, "medium"},
-		{"hd", true, "high"},
-		{"high", true, "high"},
-		{"low", true, "low"},
-		{"", true, "medium"},
-		{"high", false, ""},
-		{"", false, ""},
+		{"medium", "medium"},
+		{"standard", "medium"},
+		{"hd", "high"},
+		{"high", "high"},
+		{"low", "low"},
+		{"", "medium"},
+		{"auto", "medium"},
 	}
 	for _, tc := range cases {
-		if got := fishQualityForRequest(tc.requested, tc.allowed); got != tc.want {
-			t.Errorf("fishQualityForRequest(%q,%v) = %q, want %q", tc.requested, tc.allowed, got, tc.want)
+		if got := fishQualityForRequest(tc.requested); got != tc.want {
+			t.Errorf("fishQualityForRequest(%q) = %q, want %q", tc.requested, got, tc.want)
 		}
 	}
 }

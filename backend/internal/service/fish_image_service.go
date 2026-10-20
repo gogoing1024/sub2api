@@ -149,11 +149,11 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 	if !ok {
 		return nil, fish.NewRequestError(fmt.Sprintf("fish: model %q is not a fish image model", mappedModel))
 	}
-	imageSize, qualityAllowed, err := domain.FishResolveSize(model, parsed.Size)
+	imageSize, err := domain.FishResolveSize(model, parsed.Size)
 	if err != nil {
 		return nil, fish.NewRequestError(err.Error())
 	}
-	quality := fishQualityForRequest(parsed.Quality, qualityAllowed)
+	quality := fishQualityForRequest(parsed.Quality)
 	count := parsed.N
 	if count < 1 {
 		count = 1
@@ -368,12 +368,9 @@ func (s *FishImageService) loadInputs(ctx context.Context, call *FishImageCall) 
 
 // ── 内部工具 ──
 
-// fishQualityForRequest 归一 OpenAI 质量（standard/hd）到 fish 档位；
-// 模型不支持 quality 时返回空（不发送）。
-func fishQualityForRequest(requested string, allowed bool) string {
-	if !allowed {
-		return ""
-	}
+// fishQualityForRequest 归一 OpenAI 质量（standard/hd）到 fish 档位。
+// gpt-image 家族恒支持 quality 三档。
+func fishQualityForRequest(requested string) string {
 	switch strings.ToLower(strings.TrimSpace(requested)) {
 	case "low":
 		return "low"
