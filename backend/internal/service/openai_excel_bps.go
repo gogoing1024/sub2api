@@ -89,11 +89,6 @@ func excelBPSAccountID(account *Account, accessToken string) string {
 	if accountID := strings.TrimSpace(account.GetChatGPTAccountID()); accountID != "" {
 		return accountID
 	}
-	// GetChatGPTAccountID covers Codex OAuth types only; BPS-only accounts store
-	// the same credential key.
-	if accountID := strings.TrimSpace(account.GetCredential("chatgpt_account_id")); accountID != "" {
-		return accountID
-	}
 	claims, err := openai.DecodeIDToken(accessToken)
 	if err != nil || claims.OpenAIAuth == nil {
 		return ""
@@ -384,6 +379,19 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			s.handleExcelBPSForbidden(ctx, account, resp.Header, raw, token)
 			return failoverAccountRejected(resp.StatusCode)
 		}
+		// 402 (e.g. a deactivated workspace) and 5xx/529 follow the native
+		// account policy; nothing was generated, so another account may serve.
+		if resp.StatusCode == http.StatusPaymentRequired {
+			s.handleExcelBPSAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, token)
+			return failoverAccountRejected(resp.StatusCode)
+		}
+		if resp.StatusCode >= 500 {
+			s.handleExcelBPSAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, token)
+			if isExcelBPSClientCancellation(c, ctx.Err()) {
+				return clientCanceled()
+			}
+			return nil, newExcelBPSUpstreamFailoverError(resp.StatusCode)
+		}
 		message := "Excel BPS rejected this request; account scheduling was not changed"
 		errorCode := "basispoints_upstream_error"
 		if resp.StatusCode == http.StatusBadRequest && isExcelBPSInvalidEncryptedContent(raw) {
@@ -430,6 +438,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			// Output was already accepted, so the request cannot move to another
 			// account; only the account-level state is updated.
 			s.handleExcelBPSUnauthorized(repairCtx, account, repairResp.StatusCode, repairResp.Header, raw)
+			s.handleExcelBPSAccountUpstreamError(repairCtx, account, repairResp.StatusCode, repairResp.Header, raw, token)
 			if isExcelBPSModelPermissionError(repairResp.StatusCode, gjson.GetBytes(raw, "error.code").String()) {
 				s.coolDownExcelBPSModel(account, model)
 			} else if repairResp.StatusCode == http.StatusForbidden {
@@ -469,6 +478,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			// Output was already accepted, so the request cannot move to another
 			// account; only the account-level state is updated.
 			s.handleExcelBPSUnauthorized(repairCtx, account, repaired.StatusCode, repaired.Header, raw)
+			s.handleExcelBPSAccountUpstreamError(repairCtx, account, repaired.StatusCode, repaired.Header, raw, token)
 			if isExcelBPSModelPermissionError(repaired.StatusCode, gjson.GetBytes(raw, "error.code").String()) {
 				s.coolDownExcelBPSModel(account, model)
 			} else if repaired.StatusCode == http.StatusForbidden {

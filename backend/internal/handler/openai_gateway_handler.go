@@ -1627,6 +1627,14 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 	if failoverErr != nil {
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
+	if status, errType, _, message, ok := service.ExcelBPSFailoverClientError(failoverErr); ok {
+		if errType != "invalid_request_error" && errType != "rate_limit_error" {
+			errType = "api_error"
+		}
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, message, "")
+		h.anthropicStreamingAwareError(c, status, errType, message, streamStarted)
+		return
+	}
 	if failoverErr != nil && failoverErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(failoverErr)
 		h.anthropicStreamingAwareError(c, status, "api_error", message, streamStarted)
@@ -3565,15 +3573,11 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		return
 	}
 	// BPS rejections may echo request data: keep the fixed code and message
-	// instead of passthrough rules or the upstream body.
-	if failoverErr.Reason == service.ExcelBPSRateLimitedReason {
-		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.ClientMessage, "")
-		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, "rate_limit_error", string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
-		return
-	}
-	if failoverErr.Reason == service.ExcelBPSModelNotAllowedReason {
-		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.ClientMessage, "")
-		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, "invalid_request_error", string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
+	// instead of passthrough rules, the upstream body or the generic
+	// credential-failure message.
+	if status, errType, code, message, ok := service.ExcelBPSFailoverClientError(failoverErr); ok {
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, message, "")
+		h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, streamStarted, false)
 		return
 	}
 	if failoverErr.Reason == service.OpenAIImagesInsufficientBalanceReason {

@@ -239,7 +239,7 @@ func TestForwardBPSOAuthRouteUnavailableFailsOver(t *testing.T) {
 
 			var failover *UpstreamFailoverError
 			require.True(t, errors.As(err, &failover))
-			require.Equal(t, excelOAuthRouteUnavailableReason, failover.Reason)
+			require.Equal(t, ExcelOAuthRouteUnavailableReason, failover.Reason)
 			require.True(t, failover.ShouldRetryNextAccount())
 			require.Empty(t, upstream.requests)
 			require.Zero(t, rec.Body.Len(), "leave the response to the handler")
@@ -402,7 +402,7 @@ func TestForwardBPSOAuthReadsSwitchOnce(t *testing.T) {
 
 	var failover *UpstreamFailoverError
 	require.ErrorAs(t, err, &failover)
-	require.Equal(t, excelOAuthRouteUnavailableReason, failover.Reason)
+	require.Equal(t, ExcelOAuthRouteUnavailableReason, failover.Reason)
 	require.Equal(t, 1, repo.reads)
 	require.Empty(t, upstream.requests)
 }

@@ -735,14 +735,15 @@ func (e *UpstreamFailoverError) IsCredentialFailure() bool {
 // credential failures from being misattributed to the selected account. Legacy
 // and inference failures retain their existing scheduler-health behavior,
 // except the Excel BPS failovers that only say this BPS account cannot serve
-// this request right now (its BPS route or this model is cooling down, or the
-// request has no BPS route); they say nothing about the account's health.
+// this request right now (its BPS route or this model is cooling down, the
+// request has no BPS route, or BPS cannot carry its images); they say nothing
+// about the account's health.
 func (e *UpstreamFailoverError) ShouldReportAccountScheduleFailure() bool {
 	if e == nil {
 		return false
 	}
 	switch e.Reason {
-	case ExcelBPSRateLimitedReason, ExcelBPSModelNotAllowedReason, excelOAuthRouteUnavailableReason, bpsUnsupportedInboundReason:
+	case ExcelBPSRateLimitedReason, ExcelBPSModelNotAllowedReason, ExcelOAuthRouteUnavailableReason, BPSUnsupportedInboundReason, ExcelBPSImageUnsupportedReason:
 		return false
 	}
 	return !e.IsCredentialFailure() || e.Scope == GatewayFailureScopeAccount

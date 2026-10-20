@@ -1859,15 +1859,19 @@ func (a *Account) GetOpenAIUserAgent() string {
 	return a.GetCredential("user_agent")
 }
 
+// GetChatGPTAccountID returns the ChatGPT workspace of an OpenAI subscription
+// credential (Codex OAuth, setup token or BPS-only). It identifies the account
+// only; callers that send ChatGPT headers gate on the native protocol
+// themselves (see openai_chatgpt_headers.go).
 func (a *Account) GetChatGPTAccountID() string {
-	if !a.IsOpenAIOAuthLike() {
+	if !a.IsOpenAIOAuthLike() && !a.IsBPSOAuth() {
 		return ""
 	}
 	return a.GetCredential("chatgpt_account_id")
 }
 
 func (a *Account) IsChatGPTAccountFedRAMP() bool {
-	if !a.IsOpenAIOAuthLike() || a.Credentials == nil {
+	if (!a.IsOpenAIOAuthLike() && !a.IsBPSOAuth()) || a.Credentials == nil {
 		return false
 	}
 	v, ok := a.Credentials["chatgpt_account_is_fedramp"]

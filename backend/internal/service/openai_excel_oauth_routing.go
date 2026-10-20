@@ -72,7 +72,7 @@ func isBPSUnsupportedInbound(ctx context.Context) bool {
 // errBPSUnsupportedInbound is the forward-time backstop of the same rule.
 var errBPSUnsupportedInbound = errors.New("BPS OAuth accounts only serve the Responses API")
 
-const bpsUnsupportedInboundReason = GatewayFailureReason("basispoints_inbound_unsupported")
+const BPSUnsupportedInboundReason = GatewayFailureReason("basispoints_inbound_unsupported")
 
 // newBPSUnsupportedInboundFailoverError lets the handler move on to an account
 // that can serve the entry point if a BPS-only account was selected anyway.
@@ -80,7 +80,7 @@ func newBPSUnsupportedInboundFailoverError() *UpstreamFailoverError {
 	return &UpstreamFailoverError{
 		StatusCode:        http.StatusBadGateway,
 		Scope:             GatewayFailureScopeAccount,
-		Reason:            bpsUnsupportedInboundReason,
+		Reason:            BPSUnsupportedInboundReason,
 		NextAccountAction: NextAccountRetry,
 		ClientStatusCode:  http.StatusBadGateway,
 		ClientMessage:     errBPSUnsupportedInbound.Error(),
@@ -89,7 +89,7 @@ func newBPSUnsupportedInboundFailoverError() *UpstreamFailoverError {
 
 var errExcelOAuthRouteUnavailable = errors.New("an enabled Excel BPS route is required for Excel OAuth credentials and the requested model; native Codex is unavailable")
 
-const excelOAuthRouteUnavailableReason = GatewayFailureReason("excel_oauth_route_unavailable")
+const ExcelOAuthRouteUnavailableReason = GatewayFailureReason("excel_oauth_route_unavailable")
 
 // validateExcelOAuthRoute takes the global switch as read by the caller, which
 // must route with that same value: a second read could flip to off and send a
@@ -109,7 +109,7 @@ func newExcelOAuthRouteFailoverError() *UpstreamFailoverError {
 	return &UpstreamFailoverError{
 		StatusCode:        http.StatusBadGateway,
 		Scope:             GatewayFailureScopeAccount,
-		Reason:            excelOAuthRouteUnavailableReason,
+		Reason:            ExcelOAuthRouteUnavailableReason,
 		NextAccountAction: NextAccountRetry,
 		ClientStatusCode:  http.StatusBadGateway,
 		ClientMessage:     errExcelOAuthRouteUnavailable.Error(),

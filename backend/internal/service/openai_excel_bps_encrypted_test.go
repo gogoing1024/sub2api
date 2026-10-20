@@ -186,6 +186,13 @@ func TestExcelBPSInvalidEncryptedContentRetryIsBounded(t *testing.T) {
 				return
 			}
 			var failover *UpstreamFailoverError
+			if status == http.StatusInternalServerError {
+				// Still no output: another account may serve, but not this route again.
+				require.ErrorAs(t, err, &failover)
+				require.Equal(t, ExcelBPSUpstreamErrorReason, failover.Reason)
+				require.Zero(t, rec.Body.Len())
+				return
+			}
 			require.NotErrorAs(t, err, &failover)
 			require.Equal(t, status, rec.Code)
 			require.NotContains(t, rec.Body.String(), "private upstream diagnostic")
@@ -216,6 +223,12 @@ func TestExcelBPSInvalidEncryptedContentDoesNotRetryOtherFailures(t *testing.T) 
 			_, err := svc.Forward(context.Background(), c, excelAccount(), []byte(tc.body))
 			require.Error(t, err)
 			require.Len(t, upstream.requests, 1)
+			if tc.status >= 500 {
+				var failover *UpstreamFailoverError
+				require.ErrorAs(t, err, &failover, "a 5xx fails over instead of retrying here")
+				require.Zero(t, rec.Body.Len())
+				return
+			}
 			require.Equal(t, tc.status, rec.Code)
 		})
 	}
