@@ -135,7 +135,7 @@
 
       <!-- OpenAI API long-context billing -->
       <div
-        v-if="allOpenAIPassthroughCapable"
+        v-if="allOpenAILongContextCapable"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="mb-3 flex items-center justify-between gap-4">
@@ -191,6 +191,49 @@
         >
           {{ t('admin.accounts.bulkEdit.longContextShadowHint') }}
         </p>
+      </div>
+
+      <!-- Excel / BPS 协议：仅当所选账号全部为 BPS OAuth 时提供 -->
+      <div
+        v-if="allBPSOAuthOnly"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="bulk-edit-excel-bps-section"
+      >
+        <div class="mb-3 flex items-center justify-between gap-4">
+          <div class="flex-1">
+            <label class="input-label mb-0" for="bulk-edit-excel-bps-enabled">
+              {{ t('admin.accounts.openai.excelBPS') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.excelBPSDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="applyExcelBPS"
+            id="bulk-edit-excel-bps-enabled"
+            type="checkbox"
+            data-testid="bulk-edit-excel-bps-apply"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div v-if="applyExcelBPS" class="mt-3 space-y-3">
+          <label class="flex items-center gap-2 text-sm">
+            <input v-model="excelBPSAllModels" type="checkbox" data-testid="bulk-edit-excel-bps-all-models" />
+            <span>{{ t('admin.accounts.openai.excelBPSAllModels') }}</span>
+          </label>
+          <div v-if="!excelBPSAllModels">
+            <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
+            <ModelWhitelistSelector v-model="excelBPSModels" platform="openai" />
+          </div>
+          <label class="flex items-center gap-2">
+            <input v-model="excelBPSIgnoreEncryptedContent" type="checkbox" data-testid="bulk-edit-excel-bps-ignore-encrypted-content" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContent') }}</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input v-model="excelBPSCacheCreationAsInput" type="checkbox" data-testid="bulk-edit-excel-bps-cache-creation-as-input" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSCacheCreationAsInput') }}</span>
+          </label>
+        </div>
       </div>
 
       <!-- Base URL (API Key only) -->
@@ -1538,6 +1581,7 @@ import Select from '@/components/common/Select.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import { DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
 import Icon from '@/components/icons/Icon.vue'
 import {
   buildModelMappingObject as buildModelMappingPayload,
@@ -1610,6 +1654,16 @@ const allOpenAIPassthroughCapable = computed(() => {
   )
 })
 
+// 长上下文计费是账号级计费开关，BPS OAuth 账号同样适用（与单账号编辑一致）
+const allOpenAILongContextCapable = computed(() => {
+  return (
+    targetSelectedPlatforms.value.length === 1 &&
+    targetSelectedPlatforms.value[0] === 'openai' &&
+    targetSelectedTypes.value.length > 0 &&
+    targetSelectedTypes.value.every(t => t === 'oauth' || t === 'setup-token' || t === 'apikey' || t === 'bps-oauth')
+  )
+})
+
 const allOpenAIOAuth = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
@@ -1628,6 +1682,14 @@ const allOpenAIOAuthOnly = computed(() => {
     targetSelectedTypes.value.every(t => t === 'oauth')
   )
 })
+
+// BPS 设置只属于 BPS-only（BPS OAuth）账号，仅在所选账号全部是该类型时提供
+const allBPSOAuthOnly = computed(() =>
+  targetSelectedPlatforms.value.length === 1 &&
+  targetSelectedPlatforms.value[0] === 'openai' &&
+  targetSelectedTypes.value.length > 0 &&
+  targetSelectedTypes.value.every(t => t === 'bps-oauth')
+)
 
 const allOpenAIAPIKey = computed(() => {
   return (
@@ -1707,6 +1769,11 @@ const enableGroups = ref(false)
 const enableOpenAIPassthrough = ref(false)
 const enableOpenAIFlattenNamespaces = ref(false)
 const enableOpenAILongContextBilling = ref(false)
+const applyExcelBPS = ref(false)
+const excelBPSAllModels = ref(false)
+const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
+const excelBPSIgnoreEncryptedContent = ref(false)
+const excelBPSCacheCreationAsInput = ref(false)
 const enableOpenAIEndpointCapabilities = ref(false)
 const enableOpenAIResponsesMode = ref(false)
 const enableOpenAIWSMode = ref(false)
@@ -1990,7 +2057,7 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   const credentials: Record<string, unknown> = {}
   let credentialsChanged = false
   const applyOpenAILongContextBilling =
-    enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value
+    enableOpenAILongContextBilling.value && allOpenAILongContextCapable.value
   const applyOpenAIEndpointCapabilities =
     enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value
   const applyOpenAIResponsesMode = enableOpenAIResponsesMode.value && allOpenAIAPIKey.value
@@ -2057,6 +2124,16 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   if (applyOpenAILongContextBilling) {
     const extra = ensureExtra()
     extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
+  }
+
+  if (applyExcelBPS.value && allBPSOAuthOnly.value) {
+    const extra = ensureExtra()
+    // null 让后端移除白名单键，恢复「全部模型」
+    extra.openai_excel_bps_models = excelBPSAllModels.value
+      ? null
+      : [...new Set(excelBPSModels.value.map(m => m.trim()).filter(Boolean))]
+    extra.openai_excel_bps_ignore_encrypted_content = excelBPSIgnoreEncryptedContent.value
+    extra.openai_excel_bps_cache_creation_as_input = excelBPSCacheCreationAsInput.value
   }
 
   if (applyOpenAIEndpointCapabilities) {
@@ -2273,9 +2350,10 @@ const handleSubmit = async () => {
     enableBaseUrl.value ||
     enableOpenAIPassthrough.value ||
     enableOpenAIFlattenNamespaces.value ||
-    (enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value) ||
+    (enableOpenAILongContextBilling.value && allOpenAILongContextCapable.value) ||
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
     (enableOpenAIResponsesMode.value && allOpenAIAPIKey.value) ||
+    (applyExcelBPS.value && allBPSOAuthOnly.value) ||
     enableModelRestriction.value ||
     enableCustomErrorCodes.value ||
     enableInterceptWarmup.value ||
@@ -2301,6 +2379,13 @@ const handleSubmit = async () => {
 
   if (!hasAnyFieldEnabled) {
     appStore.showError(t('admin.accounts.bulkEdit.noFieldsSelected'))
+    return
+  }
+
+  // An empty BPS whitelist would leave the BPS-only accounts unable to serve.
+  if (applyExcelBPS.value && allBPSOAuthOnly.value && !excelBPSAllModels.value &&
+    !excelBPSModels.value.some(model => model.trim())) {
+    appStore.showError(t('admin.accounts.oauth.openai.excelModelsRequired'))
     return
   }
 
@@ -2457,6 +2542,11 @@ watch(
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAILongContextBillingEnabled.value = false
+      applyExcelBPS.value = false
+      excelBPSAllModels.value = false
+      excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
+      excelBPSIgnoreEncryptedContent.value = false
+      excelBPSCacheCreationAsInput.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openAIResponsesMode.value = 'auto'
       modelRestrictionMode.value = 'whitelist'

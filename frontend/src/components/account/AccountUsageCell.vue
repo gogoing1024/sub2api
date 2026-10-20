@@ -123,7 +123,7 @@
     </template>
 
     <!-- OpenAI Codex accounts: ticket status; usage querying remains OAuth-only. -->
-    <template v-else-if="account.platform === 'openai' && (account.type === 'oauth' || account.type === 'setup-token')">
+    <template v-else-if="account.platform === 'openai' && (account.type === 'oauth' || account.type === 'setup-token' || account.type === 'bps-oauth')">
       <div v-if="codexTurnTickets.length" class="mb-1 space-y-0.5">
         <div
           v-for="ticket in codexTurnTickets"
@@ -982,6 +982,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   kiroUsageMeta: [meta: { plan_type?: string }]
+  leonardoUsageMeta: [meta: { plan_type?: string }]
   fishUsageMeta: [meta: { plan_type?: string }]
   'account-updated': [account: Account]
   'usage-loaded': [usage: AccountUsageInfo]
@@ -1043,7 +1044,7 @@ const showUsageWindows = computed(() => {
   if (isMultiProtocolApiKeyPlatform(props.account.platform)) {
     return true
   }
-  return props.account.type === 'oauth' || props.account.type === 'setup-token'
+  return props.account.type === 'oauth' || props.account.type === 'setup-token' || props.account.type === 'bps-oauth'
 })
 
 const shouldFetchUsage = computed(() => {
@@ -1064,7 +1065,7 @@ const shouldFetchUsage = computed(() => {
     return props.account.type === 'oauth'
   }
   if (props.account.platform === 'openai') {
-    return props.account.type === 'oauth'
+    return props.account.type === 'oauth' || props.account.type === 'bps-oauth'
   }
   // Leonardo Cookie 号查积分余额；中转号没有 Leonardo 用量。必须与
   // isLeonardoUsageAccount 同口径，否则积分模板永远拿不到数据。
@@ -1101,7 +1102,7 @@ const geminiUsageAvailable = computed(() => {
 })
 
 const hasOpenAIUsageFallback = computed(() => {
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
+  if (props.account.platform !== 'openai' || (props.account.type !== 'oauth' && props.account.type !== 'bps-oauth')) return false
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
 })
 
@@ -1803,6 +1804,21 @@ const syncKiroUsageMeta = (info?: AccountUsageInfo | null) => {
   })
 }
 
+// Leonardo 套餐与 Kiro 同源（用量接口），优先展示名（如 Ultimate），回退原始 plan 码。
+const syncLeonardoUsageMeta = (info?: AccountUsageInfo | null) => {
+  if (!isLeonardoUsageAccount.value) return
+
+  const planType = (
+    info?.leonardo_plan_name ||
+    info?.leonardo_plan ||
+    ''
+  ).trim()
+
+  emit('leonardoUsageMeta', {
+    ...(planType ? { plan_type: planType } : {})
+  })
+}
+
 const syncFishUsageMeta = (info?: AccountUsageInfo | null) => {
   if (!isFishUsageAccount.value) return
   const planType = (info?.fish_plan || '').trim()
@@ -1813,6 +1829,7 @@ const syncFishUsageMeta = (info?: AccountUsageInfo | null) => {
 
 const syncUsageMeta = (info?: AccountUsageInfo | null) => {
   syncKiroUsageMeta(info)
+  syncLeonardoUsageMeta(info)
   syncFishUsageMeta(info)
 }
 
@@ -2221,7 +2238,7 @@ watch(
 
 watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   if (!prevKey || nextKey === prevKey) return
-  if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return
+  if (props.account.platform !== 'openai' || (props.account.type !== 'oauth' && props.account.type !== 'bps-oauth')) return
 
   if (isBatchManaged.value) {
     requestParentBatchUsage({ force: true })

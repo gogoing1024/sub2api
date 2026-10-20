@@ -763,3 +763,53 @@ func TestAccountHandlerGetAvailableModels_TypeSafeOnlyReturnsJev(t *testing.T) {
 		require.Equal(t, "jev-latest", resp.Data[0].ID)
 	}
 }
+
+// A BPS-only account's test picker lists only models on its BPS whitelist, in a
+// stable order with a whitelisted default first, and never the native defaults.
+func TestAccountHandlerGetAvailableModels_BPSOAuthFiltersByWhitelist(t *testing.T) {
+	for name, tc := range map[string]struct {
+		credentials map[string]any
+		extra       map[string]any
+		want        []string
+	}{
+		"mapping synced from upstream": {
+			credentials: map[string]any{"client_id": "excel", "model_mapping": map[string]any{
+				"gpt-7-new": "gpt-7-new", "z-sol": "gpt-5.6-sol", "a-terra": "gpt-5.6-terra", "gpt-image-2": "gpt-image-2",
+			}},
+			extra: map[string]any{service.ExcelBPSModelsExtraKey: []any{"gpt-5.6-terra", "gpt-5.6-sol"}},
+			want:  []string{"a-terra", "z-sol"},
+		},
+		"whitelist only": {
+			credentials: map[string]any{"client_id": "excel"},
+			extra:       map[string]any{service.ExcelBPSModelsExtraKey: []any{"gpt-6-astra", "gpt-5.6-sol"}},
+			want:        []string{"gpt-6-astra", "gpt-5.6-sol"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := &availableModelsAdminService{
+				stubAdminService: newStubAdminService(),
+				account: service.Account{
+					ID: 48, Name: "bps", Platform: service.PlatformOpenAI, Type: service.AccountTypeBPSOAuth,
+					Status: service.StatusActive, Credentials: tc.credentials, Extra: tc.extra,
+				},
+			}
+			router := setupAvailableModelsRouter(svc)
+			for i := 0; i < 3; i++ {
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts/48/models", nil))
+				require.Equal(t, http.StatusOK, rec.Code)
+				var resp struct {
+					Data []struct {
+						ID string `json:"id"`
+					} `json:"data"`
+				}
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+				ids := make([]string, 0, len(resp.Data))
+				for _, model := range resp.Data {
+					ids = append(ids, model.ID)
+				}
+				require.Equal(t, tc.want, ids)
+			}
+		})
+	}
+}

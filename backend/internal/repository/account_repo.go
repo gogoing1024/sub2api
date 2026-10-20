@@ -1339,12 +1339,14 @@ func (r *accountRepository) ListOAuthRefreshCandidatePage(ctx context.Context, o
 		query += `
 			AND status = 'active'`
 	}
+	// bps-oauth (OpenAI Excel/BPS-only) accounts hold OAuth credentials refreshed
+	// through the same OpenAI lifecycle as oauth accounts.
 	if options.IncludeSetupToken {
 		query += `
-			AND type IN ('oauth', 'setup-token')`
+			AND type IN ('oauth', 'setup-token', 'bps-oauth')`
 	} else {
 		query += `
-			AND type = 'oauth'`
+			AND type IN ('oauth', 'bps-oauth')`
 	}
 	args := []any{pq.Array(options.Platforms), options.AfterID, options.Limit}
 	if options.RequireRefreshToken {
@@ -3338,6 +3340,14 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			extraExpression += " || $" + itoa(idx) + "::jsonb"
 			args = append(args, payload)
 			idx++
+			// JSON null is a present scope and would disable every model.
+			// Remove the key to restore the all-models routing contract.
+			if scope, exists := updates.Extra["openai_excel_bps_models"]; exists && scope == nil {
+				extraExpression = "(" + extraExpression + ") - 'openai_excel_bps_models'"
+			}
+			if enabled, exists := updates.Extra["openai_excel_bps_cache_creation_as_input"].(bool); exists && !enabled {
+				extraExpression = "(" + extraExpression + ") - 'openai_excel_bps_cache_creation_as_input'"
+			}
 			if upstreamBillingProbeExplicitlyDisabled(updates.Extra) || upstreamBillingProbeSnapshotClearRequested(updates.Extra) {
 				extraExpression = "(" + extraExpression + ") - 'upstream_billing_probe'"
 			}

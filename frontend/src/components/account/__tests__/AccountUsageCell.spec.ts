@@ -2197,6 +2197,12 @@ describe('AccountUsageCell Leonardo', () => {
     await flushPromises()
 
     expect(getUsage).toHaveBeenCalledWith(4001, 'passive', false)
+    // 套餐桥接：把展示名回传给父组件，供「平台/类型」列渲染徽章
+    expect(wrapper.emitted('leonardoUsageMeta')?.[0]).toEqual([
+      {
+        plan_type: 'Premium'
+      }
+    ])
     expect(wrapper.text()).toContain('Premium')
     const fast = wrapper.get('[data-testid="leonardo-fast"]')
     expect(fast.text()).toContain('admin.accounts.usageWindow.leonardoFast')
@@ -2219,6 +2225,12 @@ describe('AccountUsageCell Leonardo', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('ENTERPRISE')
+    // 无展示名时回退原始 plan 码
+    expect(wrapper.emitted('leonardoUsageMeta')?.[0]).toEqual([
+      {
+        plan_type: 'ENTERPRISE'
+      }
+    ])
     const fast = wrapper.get('[data-testid="leonardo-fast"]')
     expect(fast.text()).toContain((1000).toLocaleString())
     expect(fast.text()).not.toContain('/')

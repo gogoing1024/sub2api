@@ -52,12 +52,21 @@ const (
 
 // TestEvent represents a SSE event for account testing
 type TestEvent struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Code     string `json:"code,omitempty"`
-	ImageURL string `json:"image_url,omitempty"`
+	Type   string `json:"type"`
+	Text   string `json:"text,omitempty"`
+	Model  string `json:"model,omitempty"`
+	Status string `json:"status,omitempty"`
+	Code   string `json:"code,omitempty"`
+	// BPS evidence: upstream HTTP status, model, request ID and error code
+	// captured during an admin account test round trip.
+	UpstreamStatus    int    `json:"upstream_status,omitempty"`
+	UpstreamModel     string `json:"upstream_model,omitempty"`
+	RequestID         string `json:"request_id,omitempty"`
+	UpstreamErrorCode string `json:"upstream_error_code,omitempty"`
+	// UpstreamErrorMessage is BPS's own rejection message, redacted of the
+	// request token and account secrets.
+	UpstreamErrorMessage string `json:"upstream_error_message,omitempty"`
+	ImageURL             string `json:"image_url,omitempty"`
 	// AudioURL / VideoURL are data: or https URLs for in-browser media players.
 	AudioURL string `json:"audio_url,omitempty"`
 	VideoURL string `json:"video_url,omitempty"`
@@ -164,6 +173,8 @@ type AccountTestService struct {
 	leonardoTokenProvider *LeonardoTokenProvider
 	// leonardoImageService 为 nil 时用测试专用的出图服务实例（单测注入用）。
 	leonardoImageService *LeonardoImageService
+	bpsProbeMu           sync.Mutex
+	bpsProbeAccounts     map[int64]struct{}
 }
 
 func (s *AccountTestService) SetSettingService(settingService *SettingService) {
@@ -268,6 +279,20 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 		}
 	}
 	return payload.Data, nil
+}
+
+// ListExcelBPSAccountModels lists a BPS-only account's test models: live BPS
+// discovery within its whitelist, else its configured whitelist (see
+// OpenAIGatewayService.ListExcelBPSAccountModels).
+func (s *AccountTestService) ListExcelBPSAccountModels(ctx context.Context, account *Account) []openai.Model {
+	if s == nil || s.openaiGatewayService == nil {
+		return ExcelBPSConfiguredModels(account)
+	}
+	models := s.openaiGatewayService.ListExcelBPSAccountModels(ctx, account)
+	if models == nil {
+		models = []openai.Model{}
+	}
+	return models
 }
 
 // NewAccountTestService creates a new AccountTestService
@@ -994,6 +1019,15 @@ func (s *AccountTestService) testBedrockAccountConnection(c *gin.Context, ctx co
 func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string, prompt string, mode string) error {
 	ctx := c.Request.Context()
 	mode = normalizeAccountTestMode(mode)
+	// BPS-only accounts are tested on the same gateway path as user Responses
+	// requests and never reach the native probes below, which would send the
+	// Excel token to ChatGPT Codex.
+	if account.IsBPSOAuth() {
+		return s.testBPSOAuthAccountConnection(c, account, modelID, prompt, mode)
+	}
+	if mode == AccountTestModeBPSTools {
+		return s.sendErrorAndEnd(c, "BPS tool probe requires a BPS OAuth account")
+	}
 
 	// Default to openai.DefaultTestModel for OpenAI testing
 	testModelID := modelID

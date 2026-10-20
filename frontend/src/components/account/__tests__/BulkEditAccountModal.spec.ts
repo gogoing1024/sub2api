@@ -447,7 +447,7 @@ describe('BulkEditAccountModal', () => {
   })
 
   it('OpenAI 支持类型展示长上下文设置，混合平台隐藏全部新增设置', () => {
-    for (const selectedTypes of [['oauth'], ['setup-token'], ['apikey'], ['oauth', 'setup-token', 'apikey']]) {
+    for (const selectedTypes of [['oauth'], ['setup-token'], ['apikey'], ['bps-oauth'], ['oauth', 'setup-token', 'apikey', 'bps-oauth']]) {
       const wrapper = mountModal({
         selectedPlatforms: ['openai'],
         selectedTypes
@@ -509,6 +509,24 @@ describe('BulkEditAccountModal', () => {
 
     expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
       extra: { openai_long_context_billing_enabled: false }
+    })
+  })
+
+  it('BPS OAuth 账号可批量设置长上下文计费，透传与 Compact 仍隐藏', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['bps-oauth']
+    })
+    expect(wrapper.find('#bulk-edit-openai-passthrough-enabled').exists()).toBe(false)
+    expect(wrapper.find('#bulk-edit-openai-compact-mode-enabled').exists()).toBe(false)
+
+    await wrapper.get('#bulk-edit-openai-long-context-billing-enabled').setValue(true)
+    await wrapper.get('[data-testid="bulk-edit-openai-long-context-billing-toggle"]').trigger('click')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], {
+      extra: { openai_long_context_billing_enabled: true }
     })
   })
 
@@ -662,6 +680,45 @@ describe('BulkEditAccountModal', () => {
     expect((wrapper.get('#bulk-edit-openai-endpoint-capabilities-enabled').element as HTMLInputElement).checked).toBe(false)
     expect((wrapper.get('[data-testid="bulk-edit-openai-endpoint-capability-chat_completions"]').element as HTMLInputElement).checked).toBe(true)
     expect((wrapper.get('[data-testid="bulk-edit-openai-responses-mode-select"]').element as HTMLSelectElement).value).toBe('auto')
+  })
+
+  it('只有所选账号全部为 BPS OAuth 时才提供批量 BPS 设置', async () => {
+    const codex = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth'] })
+    expect(codex.find('[data-testid="bulk-edit-excel-bps-section"]').exists()).toBe(false)
+
+    const mixed = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['oauth', 'bps-oauth'] })
+    expect(mixed.find('[data-testid="bulk-edit-excel-bps-section"]').exists()).toBe(false)
+
+    const bps = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['bps-oauth'] })
+    expect(bps.find('[data-testid="bulk-edit-excel-bps-section"]').exists()).toBe(true)
+    await bps.get('[data-testid="bulk-edit-excel-bps-apply"]').setValue(true)
+    await bps.get('[data-testid="bulk-edit-excel-bps-all-models"]').setValue(true)
+    await bps.get('[data-testid="bulk-edit-excel-bps-cache-creation-as-input"]').setValue(true)
+    await bps.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = vi.mocked(adminAPI.accounts.bulkUpdate).mock.calls.at(-1)?.[1] as any
+    expect(payload?.extra).toMatchObject({
+      openai_excel_bps_models: null,
+      openai_excel_bps_ignore_encrypted_content: false,
+      openai_excel_bps_cache_creation_as_input: true
+    })
+    expect(payload?.extra).not.toHaveProperty('openai_excel_bps')
+  })
+
+  it('不允许批量保存空的 BPS 模型白名单', async () => {
+    const bps = mountModal({ selectedPlatforms: ['openai'], selectedTypes: ['bps-oauth'] })
+    vi.mocked(adminAPI.accounts.bulkUpdate).mockClear()
+    await bps.get('[data-testid="bulk-edit-excel-bps-apply"]').setValue(true)
+    await bps
+      .get('[data-testid="bulk-edit-excel-bps-section"]')
+      .findComponent({ name: 'ModelWhitelistSelector' })
+      .vm.$emit('update:modelValue', [])
+    await bps.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(showError).toHaveBeenCalledWith('admin.accounts.oauth.openai.excelModelsRequired')
+    expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
   })
 
   it('筛选全量模式固定展示影子继承说明并按 filters 提交', async () => {

@@ -349,7 +349,7 @@ func TestAdminServiceBulkUpdateAccounts_NormalizesOpenAISettings(t *testing.T) {
 }
 
 func TestAdminServiceBulkUpdateAccounts_AcceptsLongContextAccountTypes(t *testing.T) {
-	for _, accountType := range []string{AccountTypeOAuth, AccountTypeSetupToken, AccountTypeAPIKey} {
+	for _, accountType := range []string{AccountTypeOAuth, AccountTypeSetupToken, AccountTypeBPSOAuth, AccountTypeAPIKey} {
 		t.Run(accountType, func(t *testing.T) {
 			repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{{
 				ID: 1, Platform: PlatformOpenAI, Type: accountType,
@@ -594,4 +594,37 @@ func TestAdminServiceBulkUpdateAccounts_ValidatesFilterResolvedOpenAITargets(t *
 	requireApplicationErrorReason(t, err, "OPENAI_BULK_TARGET_INVALID")
 	require.Equal(t, []int64{7}, repo.getByIDsIDs)
 	require.Zero(t, repo.bulkUpdateCalls)
+}
+
+// An empty BPS whitelist would leave the BPS-only accounts active but unable
+// to serve anything; nil still removes the key (every BPS model).
+func TestAdminServiceBulkUpdateAccounts_ExcelBPSModelsWhitelist(t *testing.T) {
+	for name, tc := range map[string]struct {
+		models  any
+		wantErr bool
+	}{
+		"empty list":  {models: []any{}, wantErr: true},
+		"blank names": {models: []any{" ", ""}, wantErr: true},
+		"not a list":  {models: "gpt-6-astra", wantErr: true},
+		"models":      {models: []any{"gpt-6-astra"}},
+		"all models":  {models: nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := &accountRepoStubForBulkUpdate{getByIDsAccounts: []*Account{{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeBPSOAuth}}}
+			svc := &adminServiceImpl{accountRepo: repo}
+
+			_, err := svc.BulkUpdateAccounts(context.Background(), &BulkUpdateAccountsInput{
+				AccountIDs: []int64{1},
+				Extra:      map[string]any{ExcelBPSModelsExtraKey: tc.models},
+			})
+
+			if tc.wantErr {
+				require.Equal(t, "BPS_OAUTH_INVALID", infraerrors.Reason(err))
+				require.Zero(t, repo.bulkUpdateCalls)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, 1, repo.bulkUpdateCalls)
+		})
+	}
 }

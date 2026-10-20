@@ -960,7 +960,7 @@
 
       <!-- OpenAI / Kiro / Grok / Leonardo OAuth Model Mapping (OAuth 类型没有 apikey 容器，需要独立区域) -->
       <div
-        v-if="(account.platform === 'openai' || account.platform === 'kiro' || account.platform === 'grok' || account.platform === 'leonardo') && account.type === 'oauth'"
+        v-if="((account.platform === 'openai' || account.platform === 'kiro' || account.platform === 'grok' || account.platform === 'leonardo') && account.type === 'oauth') || (account.platform === 'openai' && account.type === 'bps-oauth')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
         data-testid="oauth-model-mapping-section"
       >
@@ -2603,7 +2603,7 @@
 
       <!-- OpenAI API 长上下文计费开关 -->
       <div
-        v-if="account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
+        v-if="account?.platform === 'openai' && !isSparkShadow && !hideAccountLongContextBilling && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey' || account?.type === 'bps-oauth')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="flex items-center justify-between gap-4">
@@ -2631,6 +2631,43 @@
               ]"
             />
           </button>
+        </div>
+      </div>
+
+      <!-- Excel / BPS 协议区：BPS-only（BPS OAuth）账号只走 BPS，按模型白名单服务 -->
+      <div
+        v-if="isBPSOAuthAccount && !isSparkShadow"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="excel-bps-section"
+      >
+        <label class="input-label mb-0">{{ t('admin.accounts.openai.excelBPS') }}</label>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {{ t('admin.accounts.openai.excelBPSDesc') }}
+        </p>
+        <div class="mt-3 space-y-3">
+          <label class="flex items-center gap-2 text-sm" data-testid="excel-bps-all-models-label">
+            <input v-model="excelBPSAllModels" type="checkbox" data-testid="excel-bps-all-models" />
+            <span>{{ t('admin.accounts.openai.excelBPSAllModels') }}</span>
+          </label>
+          <div v-if="!excelBPSAllModels" data-testid="excel-bps-model-selection">
+            <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
+            <ModelWhitelistSelector v-model="excelBPSModels" platform="openai" />
+          </div>
+          <div class="mt-3">
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSIgnoreEncryptedContent" type="checkbox" data-testid="excel-bps-ignore-encrypted-content" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContent') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContentDesc') }}</p>
+          </div>
+          <div class="mt-3">
+            <label class="flex items-center gap-2">
+              <input v-model="excelBPSCacheCreationAsInput" type="checkbox" data-testid="excel-bps-cache-creation-as-input" />
+              <span class="text-sm">{{ t('admin.accounts.openai.excelBPSCacheCreationAsInput') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSCacheCreationAsInputDesc') }}</p>
+          </div>
+          <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.excelBPSNotice') }}</p>
         </div>
       </div>
 
@@ -3608,7 +3645,7 @@ import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { isKiroDirectApiKeyAccount, isKiroRelayAccount } from '@/utils/kiroAccount'
 import { getAccountExpiryTimestamp } from '@/components/account/accountExpiry'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
-import { VERTEX_LOCATION_SELECT_OPTIONS } from '@/constants/account'
+import { DEFAULT_EXCEL_BPS_MODELS, VERTEX_LOCATION_SELECT_OPTIONS } from '@/constants/account'
 import { KIRO_REGION_SELECT_OPTIONS } from '@/constants/kiroRegions'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -3660,6 +3697,11 @@ const selectableGroups = computed(() => {
 // Spark 影子账号(parent_account_id 非空):代理恒继承母账号,不可独立编辑(外审 B/P1),
 // 故隐藏代理选择器。
 const isSparkShadow = computed(() => props.account?.parent_account_id != null)
+
+// BPS-only（BPS OAuth）账号：官方 Excel 客户端授权，只能走 BPS。
+const isBPSOAuthAccount = computed(() =>
+  props.account?.platform === 'openai' && props.account?.type === 'bps-oauth'
+)
 
 const codexTurnTickets = computed(() => props.account?.codex_turn_tickets ?? [])
 
@@ -4222,6 +4264,10 @@ const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
+const excelBPSAllModels = ref(false)
+const excelBPSModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
+const excelBPSIgnoreEncryptedContent = ref(false)
+const excelBPSCacheCreationAsInput = ref(false)
 // OpenAI 订阅档位（Plus / Pro 20x / Pro 5x / Business Standard / Business Premium / Free）手动覆盖值,
 // 存于 credentials.plan_type;'' 表示清空/自动识别
 const editPlanType = ref<string>('')
@@ -4741,6 +4787,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
+  excelBPSAllModels.value = false
+  excelBPSModels.value = [...DEFAULT_EXCEL_BPS_MODELS]
+  excelBPSIgnoreEncryptedContent.value = false
+  excelBPSCacheCreationAsInput.value = false
   editPlanType.value = ''
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
@@ -4816,6 +4866,17 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     if (compactMappings && typeof compactMappings === 'object') {
       openAICompactModelMappings.value = Object.entries(compactMappings).map(([from, to]) => ({ from, to }))
     }
+  }
+  // BPS-only（BPS OAuth）账号只有 BPS 设置与通用的长上下文计费，不读取任何 Codex 专属设置。
+  if (newAccount.platform === 'openai' && newAccount.type === 'bps-oauth') {
+    openAILongContextBillingEnabled.value = extra?.openai_long_context_billing_enabled === true
+    const bpsModels = extra?.openai_excel_bps_models
+    excelBPSAllModels.value = !Array.isArray(bpsModels)
+    excelBPSModels.value = Array.isArray(bpsModels)
+      ? bpsModels.filter((m): m is string => typeof m === 'string' && m.trim() !== '')
+      : [...DEFAULT_EXCEL_BPS_MODELS]
+    excelBPSIgnoreEncryptedContent.value = extra?.openai_excel_bps_ignore_encrypted_content === true
+    excelBPSCacheCreationAsInput.value = extra?.openai_excel_bps_cache_creation_as_input === true
   }
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
     anthropicPassthroughEnabled.value = extra?.anthropic_passthrough === true
@@ -5753,12 +5814,41 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
   }
 }
 
+// OpenAI 自动暂停阈值（5h/7d 用量窗口），OAuth 与 BPS OAuth 账号共用。
+const applyOpenAIAutoPauseExtra = (newExtra: Record<string, unknown>) => {
+  if (autoPause5hThreshold.value != null && autoPause5hThreshold.value > 0) {
+    newExtra.auto_pause_5h_threshold = autoPause5hThreshold.value / 100
+  } else {
+    delete newExtra.auto_pause_5h_threshold
+  }
+  if (autoPause7dThreshold.value != null && autoPause7dThreshold.value > 0) {
+    newExtra.auto_pause_7d_threshold = autoPause7dThreshold.value / 100
+  } else {
+    delete newExtra.auto_pause_7d_threshold
+  }
+  if (autoPause5hDisabled.value) {
+    newExtra.auto_pause_5h_disabled = true
+  } else {
+    delete newExtra.auto_pause_5h_disabled
+  }
+  if (autoPause7dDisabled.value) {
+    newExtra.auto_pause_7d_disabled = true
+  } else {
+    delete newExtra.auto_pause_7d_disabled
+  }
+}
+
 const handleSubmit = async () => {
   if (!props.account) return
   const accountID = props.account.id
 
   if (form.status !== 'active' && form.status !== 'inactive' && form.status !== 'error') {
     appStore.showError(t('admin.accounts.pleaseSelectStatus'))
+    return
+  }
+  // An empty BPS whitelist would leave a BPS-only account unable to serve.
+  if (isBPSOAuthAccount.value && !excelBPSAllModels.value && !excelBPSModels.value.some(model => model.trim())) {
+    appStore.showError(t('admin.accounts.oauth.openai.excelModelsRequired'))
     return
   }
 	if (autoResetCreditEnabled.value) {
@@ -6147,7 +6237,7 @@ const handleSubmit = async () => {
     }
 
     // OpenAI/Grok OAuth: persist model mapping to credentials
-    if ((props.account.platform === 'openai' || props.account.platform === 'grok') && props.account.type === 'oauth') {
+    if ((props.account.platform === 'openai' || props.account.platform === 'grok') && (props.account.type === 'oauth' || props.account.type === 'bps-oauth')) {
       const currentCredentials = isSparkShadow.value
         ? {}
         : (updatePayload.credentials as Record<string, unknown>) ||
@@ -6465,26 +6555,7 @@ const handleSubmit = async () => {
           newExtra.web_search_emulation = webSearchEmulationMode.value
         }
 		}
-		if (autoPause5hThreshold.value != null && autoPause5hThreshold.value > 0) {
-			newExtra.auto_pause_5h_threshold = autoPause5hThreshold.value / 100
-		} else {
-			delete newExtra.auto_pause_5h_threshold
-		}
-		if (autoPause7dThreshold.value != null && autoPause7dThreshold.value > 0) {
-			newExtra.auto_pause_7d_threshold = autoPause7dThreshold.value / 100
-		} else {
-			delete newExtra.auto_pause_7d_threshold
-		}
-		if (autoPause5hDisabled.value) {
-			newExtra.auto_pause_5h_disabled = true
-		} else {
-			delete newExtra.auto_pause_5h_disabled
-		}
-		if (autoPause7dDisabled.value) {
-			newExtra.auto_pause_7d_disabled = true
-		} else {
-			delete newExtra.auto_pause_7d_disabled
-		}
+		applyOpenAIAutoPauseExtra(newExtra)
 		if (props.account.type === 'oauth' && !isSparkShadow.value) {
 			newExtra.auto_reset_credit_enabled = autoResetCreditEnabled.value
 			newExtra.auto_reset_credit_5h_threshold = autoResetCredit5hThreshold.value / 100
@@ -6546,6 +6617,29 @@ const handleSubmit = async () => {
         }
       }
 
+      updatePayload.extra = newExtra
+    }
+
+    // BPS-only（BPS OAuth）账号：只保存 BPS 设置、长上下文计费与自动暂停，不写任何 Codex 专属设置。
+    if (props.account.platform === 'openai' && props.account.type === 'bps-oauth') {
+      const newExtra: Record<string, unknown> = { ...((props.account.extra as Record<string, unknown>) || {}) }
+      newExtra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
+      if (excelBPSAllModels.value) {
+        delete newExtra.openai_excel_bps_models
+      } else {
+        newExtra.openai_excel_bps_models = [...new Set(excelBPSModels.value.map(m => m.trim()).filter(Boolean))]
+      }
+      if (excelBPSIgnoreEncryptedContent.value) {
+        newExtra.openai_excel_bps_ignore_encrypted_content = true
+      } else {
+        delete newExtra.openai_excel_bps_ignore_encrypted_content
+      }
+      if (excelBPSCacheCreationAsInput.value) {
+        newExtra.openai_excel_bps_cache_creation_as_input = true
+      } else {
+        delete newExtra.openai_excel_bps_cache_creation_as_input
+      }
+      applyOpenAIAutoPauseExtra(newExtra)
       updatePayload.extra = newExtra
     }
 
