@@ -134,9 +134,11 @@ func (c *Client) applyBrowserHeaders(req *http.Request, token string, identity I
 	}
 }
 
-// apiErrorEnvelope 是 fish 的统一错误信封。
+// apiErrorEnvelope 是 fish 的统一错误信封。Code 是稳定机器码
+//（如 402 的 OUT_OF_CREDITS，2026-10-20 实测），部分错误没有。
 type apiErrorEnvelope struct {
 	Status  int    `json:"status"`
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
@@ -178,6 +180,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, token string, 
 			if len(envelope.Message) > maxErrorBodySnippet {
 				envelope.Message = envelope.Message[:maxErrorBodySnippet]
 			}
+		}
+		if code := strings.TrimSpace(envelope.Code); code != "" {
+			envelope.Message = code + ": " + envelope.Message
 		}
 		return classifyAPIError(resp.StatusCode, envelope.Message)
 	}

@@ -14,9 +14,12 @@ import (
 // fishRateLimitCooldown 是上游 429 后账号的冷却时长。
 const fishRateLimitCooldown = 5 * time.Minute
 
-// fishInsufficientCooldown 是 credits 不足/配额耗尽时的冷却时长：
-// 余额靠充值/每日重置回补，冷却只是避免反复撞空。
-const fishInsufficientCooldown = 10 * time.Minute
+// fishInsufficientCooldown 是 credits 不足/配额耗尽（402 OUT_OF_CREDITS）
+// 时的冷却时长。上游错误不带 resetAt；free 档 ~6900 credits/天的共享预算
+// 在 UTC 零点重置，但钱包/日赠额语义未定——2h 意味着每天至多 ~12 次免费
+// 探测（402 预检拒绝不扣费），比到零点保守、比短冷却省探测。抓到带
+// resetAt 的样本后升级为解析式。
+const fishInsufficientCooldown = 2 * time.Hour
 
 // fish 失败原因，进入 UpstreamFailoverError.Reason 供 ops 归因。
 const (

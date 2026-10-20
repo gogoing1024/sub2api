@@ -77,9 +77,11 @@ func (s *AccountTestService) testFishAccountConnectionWithBase(c *gin.Context, a
 		s.sendEvent(c, TestEvent{Type: "status",
 			Text: fmt.Sprintf("Credits: %d / %d (%s)", wallet.Balance, wallet.Total, wallet.Type)})
 	}
-	if entitlements, err := client.QueryEntitlements(ctx, token, identity); err == nil && entitlements != nil {
+	var entitlements *fish.Entitlements
+	if ent, err := client.QueryEntitlements(ctx, token, identity); err == nil && ent != nil {
+		entitlements = ent
 		s.sendEvent(c, TestEvent{Type: "status",
-			Text: fmt.Sprintf("Plan: %s, max images per generation: %d", entitlements.Plan, entitlements.MaxImagesPerGeneration)})
+			Text: fmt.Sprintf("Plan: %s, max images per generation: %d", ent.Plan, ent.MaxImagesPerGeneration)})
 	}
 
 	if account.ID > 0 {
@@ -87,6 +89,9 @@ func (s *AccountTestService) testFishAccountConnectionWithBase(c *gin.Context, a
 		credentials[fishCredentialToken] = token
 		credentials[fishCredentialTeamID] = self.ID
 		credentials[fishCredentialDeviceID] = deviceID
+		if entitlements != nil && entitlements.MaxImagesPerGeneration >= 1 {
+			credentials[fishCredentialMaxPerGen] = entitlements.MaxImagesPerGeneration
+		}
 		// 内存态先更新（repo 缺失时 persistAccountCredentials 直接跳过），
 		// 再走标准持久化。
 		account.Credentials = credentials

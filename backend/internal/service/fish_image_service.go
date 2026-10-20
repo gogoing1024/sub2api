@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,9 @@ const (
 	fishCredentialToken    = "token"
 	fishCredentialTeamID   = "team_id"
 	fishCredentialDeviceID = "device_id"
+	// fishCredentialMaxPerGen 是账号单次生图上限（entitlements
+	// maxImagesPerGeneration：free=2 / plus=4 / pro=8），连通性测试回填。
+	fishCredentialMaxPerGen = "max_images_per_generation"
 )
 
 const (
@@ -108,18 +112,43 @@ type FishImageResult struct {
 // fishInputImage 是一张待上传的参考图（复用 leonardoInputImage 形状）。
 type fishInputImage = leonardoInputImage
 
-// FishImageCall 跨账号切换保持的请求级状态（参考图只取一次）。
+// FishImageCall 跨账号切换保持的请求级状态：参考图只取一次；已交付的图
+// 与剩余张数在换号续跑间累计——重跑只生成缺口，绝不重生成已交付图（防双扣）。
 type FishImageCall struct {
 	Request            *OpenAIImagesRequest
 	ChannelMappedModel string
 	inputsOnce         sync.Once
 	inputs             []*fishInputImage
 	inputsErr          error
+	// delivered 是已下载入内存的成品图（跨账号累计）。
+	delivered [][]byte
+	// remaining 是还需生成的张数（NewFishImageCall 时 = n）。
+	remaining int
 }
 
 // NewFishImageCall 构造一次调用的共享状态。
 func NewFishImageCall(req *OpenAIImagesRequest, channelMappedModel string) *FishImageCall {
-	return &FishImageCall{Request: req, ChannelMappedModel: channelMappedModel}
+	n := 1
+	if req != nil && req.N > 1 {
+		n = req.N
+	}
+	return &FishImageCall{Request: req, ChannelMappedModel: channelMappedModel, remaining: n}
+}
+
+// Remaining 返回还需生成的张数（handler 日志用）。
+func (c *FishImageCall) Remaining() int {
+	if c == nil {
+		return 0
+	}
+	return c.remaining
+}
+
+// Delivered 返回已交付张数（handler 判断部分成功用）。
+func (c *FishImageCall) Delivered() int {
+	if c == nil {
+		return 0
+	}
+	return len(c.delivered)
 }
 
 // Generate 是 GenerateCall 的薄封装（单账号直调 / 测试用）。
@@ -135,7 +164,36 @@ func fishIdentityFromAccount(account *Account) fish.Identity {
 	}
 }
 
-// GenerateCall 在指定账号上完成一次 fish 生图。
+// accountFishImageCap 返回账号单次生图上限：凭据回填的
+// max_images_per_generation（连通性测试写入），非法/缺失回落模型层 8。
+func accountFishImageCap(account *Account) int {
+	if account == nil {
+		return fishMaxImagesPerRequest
+	}
+	if cap, err := strconv.Atoi(strings.TrimSpace(account.GetCredential(fishCredentialMaxPerGen))); err == nil &&
+		cap >= 1 && cap <= fishMaxImagesPerRequest {
+		return cap
+	}
+	return fishMaxImagesPerRequest
+}
+
+// fishPendingBatch 是提交段产出：一个已受理的任务组及其张数。
+type fishPendingBatch struct {
+	groupID string
+	count   int
+}
+
+// GenerateCall 在指定账号上尽量完成 call.remaining 张图（三段式）：
+//
+//  1. 提交段（串行）：n > 账号单次上限时拆多个子生成（计价按张线性，
+//     拆分不改变总成本）。提交错分类处理：网络错=结果不明（停止提交，
+//     已提交的照走完）；配额/429/5xx 等可换号错（停止提交，走完已提交
+//     的，错误随进度返回——handler 换号续跑只生成缺口）。
+//  2. 轮询段：逐组 poll 到终态；failed 的组不交付（remaining 不减）。
+//  3. 下载段：done 的产物下载进 call.delivered。
+//
+// remaining 清零 → 用全部 delivered（含前序账号进度）构建响应；
+// remaining > 0 → 返回「最有分量的错误」（提交错优先于组内 failed）。
 func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, token string, call *FishImageCall) (*FishImageResult, error) {
 	if call == nil || call.Request == nil {
 		return nil, fmt.Errorf("fish: nil call")
@@ -154,12 +212,11 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 		return nil, fish.NewRequestError(err.Error())
 	}
 	quality := fishQualityForRequest(parsed.Quality)
-	count := parsed.N
-	if count < 1 {
-		count = 1
+	if call.remaining < 1 {
+		call.remaining = 1
 	}
-	if count > fishMaxImagesPerRequest {
-		return nil, fish.NewRequestError(fmt.Sprintf("fish: n=%d exceeds max %d per generation", count, fishMaxImagesPerRequest))
+	if call.remaining > fishMaxImagesPerRequest {
+		return nil, fish.NewRequestError(fmt.Sprintf("fish: n=%d exceeds max %d per generation", call.remaining, fishMaxImagesPerRequest))
 	}
 	if strings.TrimSpace(parsed.Prompt) == "" {
 		return nil, fish.NewRequestError("fish: prompt is required")
@@ -167,6 +224,7 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 
 	client := s.clients.clientForAccount(account)
 	identity := fishIdentityFromAccount(account)
+	cap := accountFishImageCap(account)
 
 	// 参考图（/v1/images/edits）：跨账号只取一次
 	var refAssets []fish.RefAsset
@@ -188,65 +246,182 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 		variant = fish.VariantEdit
 	}
 
-	// 计价（同时校验参数组合合法性）
-	price, err := client.Price(ctx, token, identity, fish.PriceParams{
-		Model: model.Name, Variant: variant, ImageSize: imageSize,
-		Quality: quality, Count: count, RefImageCount: len(refAssets),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// 提交（预算内）；网络错误 = 结果不明，绝不重试
-	submitCtx, cancel := context.WithTimeout(ctx, fishSubmitBudget)
-	group, err := client.SubmitGeneration(submitCtx, token, identity, fish.GenerateRequest{
-		Model: model.Name, Variant: variant, Prompt: parsed.Prompt,
-		Count: count, ImageSize: imageSize, Quality: quality,
-		RefAssets: refAssets, ExpectedCredits: price.Credits, PricingVersion: price.PricingVersion,
-	})
-	cancel()
-	if err != nil {
-		if isFishNetworkErr(err) {
-			return nil, &fishSubmitIndeterminateError{err: err}
+	// ── 提交段（串行）──
+	var pending []fishPendingBatch
+	var submitErr error      // 可换号的提交错误（配额/429/5xx…）
+	var indeterminate error  // 提交结果不明（网络错）
+	remaining := call.remaining
+	for remaining > 0 {
+		batch := minInt(cap, remaining)
+		price, err := client.Price(ctx, token, identity, fish.PriceParams{
+			Model: model.Name, Variant: variant, ImageSize: imageSize,
+			Quality: quality, Count: batch, RefImageCount: len(refAssets),
+		})
+		if err != nil {
+			submitErr = err
+			break
 		}
-		return nil, err
+		submitCtx, cancel := context.WithTimeout(ctx, fishSubmitBudget)
+		group, err := client.SubmitGeneration(submitCtx, token, identity, fish.GenerateRequest{
+			Model: model.Name, Variant: variant, Prompt: parsed.Prompt,
+			Count: batch, ImageSize: imageSize, Quality: quality,
+			RefAssets: refAssets, ExpectedCredits: price.Credits, PricingVersion: price.PricingVersion,
+		})
+		cancel()
+		if err != nil {
+			if isFishNetworkErr(err) {
+				indeterminate = &fishSubmitIndeterminateError{err: err}
+			} else {
+				submitErr = err
+			}
+			break
+		}
+		pending = append(pending, fishPendingBatch{groupID: group.ID, count: batch})
+		remaining -= batch
+	}
+	// 提交段一个都没成且无不明 → 参数类错误直接终态（没有进度可言）
+	if len(pending) == 0 && indeterminate == nil && submitErr != nil && !isFishFailoverClass(submitErr) {
+		return nil, submitErr
 	}
 
-	// 轮询与下载脱离请求生命周期（客户端断开不打断）
+	// ── 轮询段 + 下载段（脱离请求生命周期；客户端断开不打断）──
 	pollCtx, pollCancel := context.WithTimeout(context.WithoutCancel(ctx), fishPollTimeout)
 	defer pollCancel()
-	finalGroup, err := s.pollUntilDone(pollCtx, client, token, identity, group.ID)
-	if err != nil {
-		return nil, err
-	}
-	mediaItems := collectFishMedia(finalGroup)
-	if len(mediaItems) == 0 {
-		return nil, &fishResultUnavailableError{groupID: group.ID, err: fmt.Errorf("task finished without media")}
-	}
-	images := make([][]byte, 0, len(mediaItems))
-	for _, item := range mediaItems {
-		data, err := s.downloadWithRetry(pollCtx, client, item.URL)
+	var lastGroupErr error
+	for _, batch := range pending {
+		finalGroup, err := s.pollUntilDone(pollCtx, client, token, identity, batch.groupID)
 		if err != nil {
-			return nil, &fishResultUnavailableError{groupID: group.ID, err: err}
+			var generationFailed *fishGenerationFailedError
+			if errors.As(err, &generationFailed) {
+				// 组内失败（审核等）：这批不交付，继续下一组
+				lastGroupErr = err
+				continue
+			}
+			// 轮询/结果不可得：保留进度，错误上抛（不换号重提语义）
+			call.remaining = clampRemaining(call, pending, batch)
+			return nil, err
 		}
-		images = append(images, data)
+		mediaItems := collectFishMedia(finalGroup)
+		if len(mediaItems) == 0 {
+			lastGroupErr = &fishResultUnavailableError{groupID: batch.groupID, err: fmt.Errorf("task finished without media")}
+			continue
+		}
+		for _, item := range mediaItems {
+			data, err := s.downloadWithRetry(pollCtx, client, item.URL)
+			if err != nil {
+				call.remaining = clampRemaining(call, pending, batch)
+				return nil, &fishResultUnavailableError{groupID: batch.groupID, err: err}
+			}
+			call.delivered = append(call.delivered, data)
+		}
+	}
+	// remaining 重算：n - 已交付
+	call.remaining = callInitialN(call) - len(call.delivered)
+	if call.remaining <= 0 {
+		body, err := s.buildResponseBody(ctx, call.delivered, imageSize, quality)
+		if err != nil {
+			return nil, err
+		}
+		return &FishImageResult{
+			Body: body,
+			Forward: &OpenAIForwardResult{
+				Model:      parsed.Model,
+				ImageCount: len(call.delivered),
+				ImageSize:  fishBillingSize(imageSize),
+			},
+			GroupID: fishFirstGroupID(pending),
+			Size:    imageSize,
+			Quality: quality,
+		}, nil
 	}
 
-	body, err := s.buildResponseBody(ctx, images, imageSize, quality)
+	// 还有缺口：按分量返回错误（不明 > 可换号提交错 > 组内失败）
+	if indeterminate != nil {
+		return nil, indeterminate
+	}
+	if submitErr != nil {
+		return nil, submitErr
+	}
+	if lastGroupErr != nil {
+		return nil, lastGroupErr
+	}
+	return nil, &fishResultUnavailableError{groupID: fishFirstGroupID(pending), err: fmt.Errorf("generation incomplete: %d of %d delivered", len(call.delivered), callInitialN(call))}
+}
+
+// callInitialN 返回本次请求的初始张数。
+func callInitialN(call *FishImageCall) int {
+	n := 1
+	if call != nil && call.Request != nil && call.Request.N > 1 {
+		n = call.Request.N
+	}
+	return n
+}
+
+// clampRemaining 在轮询/下载中途失败时重算缺口 = 初始 n - 已交付。
+func clampRemaining(call *FishImageCall, pending []fishPendingBatch, failed fishPendingBatch) int {
+	return callInitialN(call) - len(call.delivered)
+}
+
+func fishFirstGroupID(pending []fishPendingBatch) string {
+	if len(pending) > 0 {
+		return pending[0].groupID
+	}
+	return ""
+}
+
+// isFishFailoverClass 报告错误是否属于可换号类（配额/限流/暂态/显式失败）。
+func isFishFailoverClass(err error) bool {
+	failure := classifyFishError(err)
+	return failure.Failover != nil && failure.Failover.ShouldRetryNextAccount()
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// BuildFishPartialResult 为「有进度但终止」的请求构建部分成功响应：
+// 张数=实际交付数，计费按实际张数。调用方（handler）负责日志标注 partial。
+func (s *FishImageService) BuildFishPartialResult(ctx context.Context, call *FishImageCall) *FishImageResult {
+	if call == nil || call.Request == nil || len(call.delivered) == 0 {
+		return nil
+	}
+	parsed := call.Request
+	shape := domainFishResolveLoose(parsed)
+	body, err := s.buildResponseBody(ctx, call.delivered, shape.size, shape.quality)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	return &FishImageResult{
 		Body: body,
 		Forward: &OpenAIForwardResult{
 			Model:      parsed.Model,
-			ImageCount: len(images),
-			ImageSize:  fishBillingSize(imageSize),
+			ImageCount: len(call.delivered),
+			ImageSize:  fishBillingSize(shape.size),
 		},
-		GroupID: group.ID,
-		Size:    imageSize,
-		Quality: quality,
-	}, nil
+		Size:    shape.size,
+		Quality: shape.quality,
+	}
+}
+
+// fishResolvedShape 是已解析的尺寸/质量（BuildFishPartialResult 用）。
+type fishResolvedShape struct{ size, quality string }
+
+func domainFishResolveLoose(parsed *OpenAIImagesRequest) fishResolvedShape {
+	mapped := strings.TrimSpace(parsed.Model)
+	model, ok := domain.LookupFishModel(mapped)
+	if !ok {
+		if len(domain.FishModels) > 0 {
+			model = domain.FishModels[0]
+		}
+	}
+	size, err := domain.FishResolveSize(model, parsed.Size)
+	if err != nil {
+		size = "1024x1024"
+	}
+	return fishResolvedShape{size: size, quality: fishQualityForRequest(parsed.Quality)}
 }
 
 // pollUntilDone 轮询任务组到终态。429/5xx/网络是暂态（退避重试）；

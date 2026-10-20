@@ -2,6 +2,7 @@ package fish
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -146,5 +147,21 @@ func TestDownloadImage(t *testing.T) {
 	}
 	if requestPath != "/img.png" {
 		t.Fatalf("unexpected path %q", requestPath)
+	}
+}
+
+func TestOutOfCreditsEnvelopeCarriesCode(t *testing.T) {
+	client, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(402)
+		_, _ = w.Write([]byte(`{"status":402,"code":"OUT_OF_CREDITS","message":"Out of credits","ctaKind":"upgrade_plan"}`))
+	}))
+	_, err := client.Price(context.Background(), "tok", Identity{}, PriceParams{Model: "gpt-image-2", ImageSize: "1024x1024", Count: 1})
+	var insufficient *InsufficientCreditsError
+	if !errors.As(err, &insufficient) {
+		t.Fatalf("err = %v, want InsufficientCreditsError", err)
+	}
+	if !strings.Contains(err.Error(), "OUT_OF_CREDITS") {
+		t.Fatalf("error message must carry stable code, got %q", err.Error())
 	}
 }

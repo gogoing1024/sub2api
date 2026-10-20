@@ -247,7 +247,7 @@ func (h *GatewayHandler) runFishImagesFailover(
 				fishImagesAccountsBusyError(c, reqLog, busyAccountIDs)
 				return
 			}
-			h.finishFishImagesWithoutAccount(c, reqLog, apiKey, parsed, failedAccountIDs, lastFailover, err)
+			h.finishFishImagesWithoutAccount(c, reqLog, apiKey, subject, subscription, req, failedAccountIDs, lastFailover, err)
 			return
 		}
 		setOpsSelectedAccount(c, account.ID, account.Platform)
@@ -329,7 +329,18 @@ func (h *GatewayHandler) runFishImagesFailover(
 			return
 		}
 		if !failover.ShouldRetryNextAccount() {
-			// 请求本身的问题（含提交结果不明），换号救不了。原始错误完整进日志。
+			// 请求本身的问题（含提交结果不明），换号救不了——但已交付的图
+			// 不丢弃：有进度时按部分成功收尾（张数=实际交付，按张计费）。
+			if req.call.Delivered() > 0 {
+				reqLog.Warn("fish_images.partial_success_after_terminal_error",
+					zap.Int64("account_id", account.ID),
+					zap.Int("delivered", req.call.Delivered()),
+					zap.String("reason", string(failover.Reason)),
+					zap.Error(err),
+				)
+				h.finishFishImagesPartialSuccess(c, reqLog, apiKey, subject, subscription, account, req)
+				return
+			}
 			reqLog.Warn("fish_images.request_failed",
 				zap.Int64("account_id", account.ID),
 				zap.String("reason", string(failover.Reason)),
@@ -341,6 +352,17 @@ func (h *GatewayHandler) runFishImagesFailover(
 			return
 		}
 
+		// 可换号且有进度：不重置 call，下一账号只生成缺口（remaining），
+		// 已交付图绝不再生成（防双扣）。
+		if req.call.Delivered() > 0 {
+			reqLog.Warn("fish_images.account_failover_with_progress",
+				zap.Int64("account_id", account.ID),
+				zap.Int("delivered", req.call.Delivered()),
+				zap.Int("remaining", req.call.Remaining()),
+				zap.String("reason", string(failover.Reason)),
+				zap.Error(err),
+			)
+		}
 		reqLog.Warn("fish_images.account_failover",
 			zap.Int64("account_id", account.ID),
 			zap.String("reason", string(failover.Reason)),
@@ -352,6 +374,15 @@ func (h *GatewayHandler) runFishImagesFailover(
 		lastFailover = failover
 	}
 
+	// 换号预算用尽 / 无号可换：有交付按部分成功收尾。
+	if req.call.Delivered() > 0 {
+		reqLog.Warn("fish_images.partial_success_exhausted_failover",
+			zap.Int("delivered", req.call.Delivered()),
+			zap.Int("requested_n", req.parsed.N),
+		)
+		h.finishFishImagesPartialSuccess(c, reqLog, apiKey, subject, subscription, nil, req)
+		return
+	}
 	if lastFailover != nil {
 		fishImagesFailoverError(c, lastFailover)
 		return
@@ -363,16 +394,49 @@ func (h *GatewayHandler) runFishImagesFailover(
 	fishImagesError(c, http.StatusServiceUnavailable, "api_error", "No available fish accounts")
 }
 
+// finishFishImagesPartialSuccess 用已交付图构建部分成功响应（张数=实际
+// 交付、按张计费）。account 可为 nil（无号可换路径——记账跳过账号维度）。
+func (h *GatewayHandler) finishFishImagesPartialSuccess(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	apiKey *service.APIKey,
+	subject middleware2.AuthSubject,
+	subscription *service.UserSubscription,
+	account *service.Account,
+	req *fishImagesRequest,
+) {
+	result := h.fishImageService.BuildFishPartialResult(c.Request.Context(), req.call)
+	if result == nil {
+		reqLog.Error("fish_images.partial_build_failed")
+		fishImagesError(c, http.StatusBadGateway, "api_error", "Upstream request failed")
+		return
+	}
+	if fakeStream := leonardoFakeStreamFromContext(c); fakeStream != nil {
+		fakeStream.writeEvents(service.FishImagesStreamEvents(req.parsed, result))
+	} else {
+		c.Data(http.StatusOK, "application/json", result.Body)
+	}
+	if account != nil {
+		h.recordFishImagesUsage(c, apiKey, subject, subscription, account, result.Forward, req)
+	}
+	reqLog.Info("fish_images.partial_success_completed",
+		zap.Int("delivered", result.Forward.ImageCount),
+	)
+}
+
 // finishFishImagesWithoutAccount 处理「选不出账号」。
 func (h *GatewayHandler) finishFishImagesWithoutAccount(
 	c *gin.Context,
 	reqLog *zap.Logger,
 	apiKey *service.APIKey,
-	parsed *service.OpenAIImagesRequest,
+	subject middleware2.AuthSubject,
+	subscription *service.UserSubscription,
+	req *fishImagesRequest,
 	failedAccountIDs map[int64]struct{},
 	lastFailover *service.UpstreamFailoverError,
 	selectErr error,
 ) {
+	parsed := req.parsed
 	if failoverClientGone(c) {
 		return
 	}
@@ -380,6 +444,13 @@ func (h *GatewayHandler) finishFishImagesWithoutAccount(
 		zap.Int("excluded_account_count", len(failedAccountIDs)),
 		zap.Error(selectErr))
 
+	if req.call.Delivered() > 0 {
+		reqLog.Warn("fish_images.partial_success_no_account",
+			zap.Int("delivered", req.call.Delivered()),
+		)
+		h.finishFishImagesPartialSuccess(c, reqLog, apiKey, subject, subscription, nil, req)
+		return
+	}
 	if lastFailover != nil {
 		fishImagesFailoverError(c, lastFailover)
 		return

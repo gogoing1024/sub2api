@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/fish"
 )
@@ -26,8 +27,8 @@ func TestClassifyFishErrorInsufficientCredits(t *testing.T) {
 	if failure.Failover == nil || failure.Failover.Reason != fishFailureInsufficientCredits {
 		t.Fatalf("failover = %+v", failure.Failover)
 	}
-	if failure.Cooldown != fishInsufficientCooldown {
-		t.Fatalf("cooldown = %v", failure.Cooldown)
+	if failure.Cooldown != 2*time.Hour {
+		t.Fatalf("cooldown = %v, want 2h (quota class)", failure.Cooldown)
 	}
 	if failure.Failover.NextAccountAction != NextAccountRetry {
 		t.Fatal("insufficient credits should retry next account")
