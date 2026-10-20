@@ -26,8 +26,36 @@
         <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
       </div>
 
+      <!-- Fish：token 原生号（更新 token）或中转号（base_url + api_key）。
+           通用 apikey 区块对 fish 隐藏——其 base_url 默认值会把原生号误变成中转号。 -->
+      <div v-if="account.platform === 'fish' && account.type === 'apikey' && isFishRelayEdit" class="space-y-4">
+        <div>
+          <label class="input-label">Base URL（中转）</label>
+          <input v-model="editBaseUrl" type="text" class="input font-mono text-xs" placeholder="https://api.openai.com" />
+          <p class="input-hint">承接 fish 原生无法处理的请求；模型名经渠道映射改写。</p>
+        </div>
+        <div>
+          <label class="input-label">API Key（中转）</label>
+          <input v-model="editApiKey" type="password" class="input font-mono" placeholder="sk-..." />
+          <p class="input-hint">{{ t('admin.accounts.leaveEmptyToKeep') }}</p>
+        </div>
+      </div>
+      <div v-else-if="account.platform === 'fish' && account.type === 'apikey'" class="space-y-4">
+        <div>
+          <label class="input-label">fish.audio 会话 Token</label>
+          <textarea
+            v-model="fishTokenEdit"
+            rows="3"
+            class="input font-mono text-xs"
+            placeholder="留空保持不变；粘贴新 token 覆盖"
+            data-testid="fish-token-edit"
+          ></textarea>
+          <p class="input-hint">token 失效（上游 401）时账号自动置 error——重新导出并粘贴新 token 即可恢复。</p>
+        </div>
+      </div>
+
       <!-- API Key fields (only for apikey type) -->
-      <div v-if="account.type === 'apikey'" class="space-y-4">
+      <div v-else-if="account.type === 'apikey'" class="space-y-4">
         <!-- Kiro 直连 AWS 账号不使用 Base URL,隐藏;Kiro 外部中转账号(已配 base_url)显示可编辑 -->
         <!-- 国产供应商 adaptive 协议下 Base URL 由各协议入口单独配置,此处隐藏 -->
         <div
@@ -3657,6 +3685,12 @@ const isKiroRelay = computed(() => isKiroRelayAccount(props.account))
 const isKiroDirectApiKey = computed(() => isKiroDirectApiKeyAccount(props.account))
 // Leonardo Cookie 账号(oauth)消耗 Leonardo 积分;中转账号(apikey)不消耗,故只对前者展示积分单价。
 const isLeonardoCookieAccount = computed(() => props.account?.platform === 'leonardo' && props.account?.type === 'oauth')
+// Fish：凭据里有 base_url = 中转号；只有 token = 原生号。
+const isFishRelayEdit = computed(() => {
+  const credentials = (props.account?.credentials as Record<string, unknown>) || {}
+  return typeof credentials.base_url === 'string' && credentials.base_url.trim() !== ''
+})
+const fishTokenEdit = ref('')
 
 const resolveKiroAPIRegionInput = (credentials: Record<string, unknown>) => {
   const value = credentials.api_region
@@ -5655,8 +5689,33 @@ const handleSubmit = async () => {
       }
     }
 
-    // For apikey type, handle credentials update
-    if (props.account.type === 'apikey') {
+    // Fish：原生号只更新 token（留空保持）；中转号走 base_url + api_key。
+    // 不落通用 apikey 路径——其 base_url 默认值逻辑会把原生号误变成中转号。
+    if (props.account.platform === 'fish' && props.account.type === 'apikey') {
+      const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
+      const newCredentials: Record<string, unknown> = { ...currentCredentials }
+      if (isFishRelayEdit.value) {
+        const newBaseURL = editBaseUrl.value.trim()
+        if (newBaseURL) {
+          newCredentials.base_url = newBaseURL
+        }
+        if (editApiKey.value.trim()) {
+          newCredentials.api_key = editApiKey.value.trim()
+        }
+      } else {
+        const newToken = fishTokenEdit.value.trim()
+        if (newToken) {
+          newCredentials.token = newToken
+        }
+      }
+      const fishMapping = buildModelRestrictionMapping()
+      if (fishMapping) {
+        newCredentials.model_mapping = fishMapping
+      } else {
+        delete newCredentials.model_mapping
+      }
+      updatePayload.credentials = newCredentials
+    } else if (props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
       // Kiro API Key 账号直连 AWS,base_url 可选;其余平台留空时回落到默认上游。
       const newBaseUrl = props.account.platform === 'kiro'

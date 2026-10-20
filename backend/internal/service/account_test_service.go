@@ -445,7 +445,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	if account.Platform == PlatformFish {
-		return s.testFishAccountConnection(c, account)
+		return s.testFishAccountConnection(c, account, modelID, prompt)
 	}
 
 	// 按模型分流的多模型聚合平台（OpenCode、Command Code 等）。

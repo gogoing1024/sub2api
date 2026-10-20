@@ -17,8 +17,25 @@ const fishTestTimeout = 30 * time.Second
 // testFishAccountConnection 验证 fish 账号 token 并回填 team_id / device_id
 //（指纹身份持久化；上游已验证这两个头可省，回填只为更完整的浏览器指纹）。
 // 不做真实生成——fish 免费额度每日仅 3 张，测试出图太贵。
-func (s *AccountTestService) testFishAccountConnection(c *gin.Context, account *Account) error {
+func (s *AccountTestService) testFishAccountConnection(c *gin.Context, account *Account, modelID, prompt string) error {
+	if isFishRelayAccount(account) {
+		testModel := strings.TrimSpace(modelID)
+		if testModel == "" {
+			if ids := FishModelIDs(); len(ids) > 0 {
+				testModel = ids[0]
+			}
+		}
+		return s.testOpenAIImageAPIKey(c, c.Request.Context(), account, account.GetMappedModel(testModel), resolveFishTestPrompt(prompt))
+	}
 	return s.testFishAccountConnectionWithBase(c, account, "")
+}
+
+// resolveFishTestPrompt 补默认测试提示词（中转号连通性测试用）。
+func resolveFishTestPrompt(prompt string) string {
+	if strings.TrimSpace(prompt) != "" {
+		return prompt
+	}
+	return "a red cube on a white background"
 }
 
 func (s *AccountTestService) testFishAccountConnectionWithBase(c *gin.Context, account *Account, apiBase string) error {

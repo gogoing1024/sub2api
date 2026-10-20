@@ -213,16 +213,36 @@ func (h *GatewayHandler) runFishImagesFailover(
 		defer stopJSONKeepalive()
 	}
 
+	requireRelay := service.FishRequiresRelay(parsed)
+	deferredNatives := make(map[int64]struct{})
+
 	attempts := 0
 	for round := 0; attempts <= h.maxAccountSwitches && round < fishImagesMaxSelectionRounds; round++ {
 		if failoverClientGone(c) {
 			return
 		}
 
-		excluded := mergeLeonardoAccountIDSets(failedAccountIDs, busyAccountIDs)
+		excluded := service.FishRelaySelectionExclusions(
+			mergeLeonardoAccountIDSets(failedAccountIDs, busyAccountIDs), requireRelay, deferredNatives)
+		if requireRelay {
+			h.gatewayService.ExcludeFishNativeAccounts(requestCtx, apiKey.GroupID, excluded)
+		}
 		account, err := h.gatewayService.SelectAccountForModelWithExclusions(
 			requestCtx, apiKey.GroupID, "", req.routingModel, excluded)
 		if err != nil || account == nil {
+			if requireRelay && len(failedAccountIDs) == 0 {
+				reqLog.Warn("fish_images.relay_required_unavailable",
+					zap.String("model", parsed.Model),
+					zap.String("size", parsed.Size),
+					zap.Bool("mask", parsed.HasMask),
+					zap.Int("n", parsed.N),
+					zap.String("output_format", parsed.OutputFormat),
+					zap.Error(err),
+				)
+				fishImagesError(c, http.StatusBadRequest, "invalid_request_error",
+					"This request uses a size or parameter that fish native accounts do not support; configure an OpenAI-compatible relay account (base_url + api_key) in this group to serve it")
+				return
+			}
 			if lastFailover == nil && len(busyAccountIDs) > 0 {
 				fishImagesAccountsBusyError(c, reqLog, busyAccountIDs)
 				return
@@ -237,6 +257,12 @@ func (h *GatewayHandler) runFishImagesFailover(
 				zap.Int64("account_id", account.ID),
 				zap.String("forward_model", forwardModel))
 			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
+
+		if requireRelay && !service.IsFishRelayAccount(account) {
+			// listing 漏网的原生号：推迟处理（requireRelay 下不会真的执行它们）。
+			deferredNatives[account.ID] = struct{}{}
 			continue
 		}
 
@@ -257,6 +283,23 @@ func (h *GatewayHandler) runFishImagesFailover(
 		}
 
 		attempts++
+		if service.IsFishRelayAccount(account) {
+			// 中转号对 stream=true 是真流式、自写响应头：转发期间暂停假流式保活。
+			if fakeStream != nil {
+				fakeStream.pause()
+			}
+			_, done := h.tryFishImagesRelay(
+				c, reqLog, apiKey, subject, subscription, account, req, failedAccountIDs, &lastFailover, attempts)
+			releaseAccount()
+			if done {
+				return
+			}
+			if fakeStream != nil {
+				fakeStream.resume()
+			}
+			continue
+		}
+
 		token := account.GetCredential("token")
 		if strings.TrimSpace(token) == "" {
 			releaseAccount()
@@ -457,4 +500,114 @@ func fishImagesError(c *gin.Context, status int, errType, message string) {
 		return
 	}
 	c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": message, "param": nil, "code": nil}})
+}
+
+// tryFishImagesRelay 把 OpenAI Images 形状的请求原样转发到中转号的 base_url
+//（镜像 tryLeonardoImagesRelay）。done=true 表示已经给客户端写了成功或终态
+// 错误；switched=true 表示应换下一个账号。
+func (h *GatewayHandler) tryFishImagesRelay(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	apiKey *service.APIKey,
+	subject middleware2.AuthSubject,
+	subscription *service.UserSubscription,
+	account *service.Account,
+	req *fishImagesRequest,
+	failedAccountIDs map[int64]struct{},
+	lastFailover **service.UpstreamFailoverError,
+	attempts int,
+) (switched bool, done bool) {
+	if h.openAIGatewayService == nil {
+		reqLog.Error("fish_images.relay_unavailable", zap.Int64("account_id", account.ID))
+		fishImagesError(c, http.StatusBadGateway, "api_error", "Fish relay forwarding is not available")
+		return false, true
+	}
+
+	result, err := h.openAIGatewayService.ForwardImages(
+		c.Request.Context(), c, account, req.body, req.parsed, req.channelMapping.MappedModel)
+	if err == nil {
+		h.finishFishImagesRelaySuccess(c, reqLog, apiKey, subject, subscription, account, result, req)
+		return false, true
+	}
+
+	// 中转流式中途断开时已经把部分图片交给了客户端：先按实际张数记账，再处理错误。
+	partial := result != nil && result.ImageCount > 0
+	if partial {
+		reqLog.Warn("fish_images.relay_partial_error_with_image_result",
+			zap.Int64("account_id", account.ID),
+			zap.Int("image_count", result.ImageCount),
+			zap.Error(err))
+		h.recordFishImagesUsage(c, apiKey, subject, subscription, account, result, req)
+	}
+
+	if errors.Is(err, context.Canceled) || failoverClientGone(c) {
+		reqLog.Info("fish_images.relay_aborted_client_disconnected", zap.Int64("account_id", account.ID))
+		return false, true
+	}
+
+	if partial || service.IsResponseCommitted(c) {
+		reqLog.Warn("fish_images.relay_failed_after_flush",
+			zap.Int64("account_id", account.ID), zap.Error(err))
+		return false, true
+	}
+
+	var failover *service.UpstreamFailoverError
+	if errors.As(err, &failover) && failover.ShouldRetryNextAccount() {
+		reqLog.Warn("fish_images.relay_failover",
+			zap.Int64("account_id", account.ID),
+			zap.Int("upstream_status", failover.StatusCode),
+			zap.Int("attempts", attempts),
+		)
+		failedAccountIDs[account.ID] = struct{}{}
+		*lastFailover = failover
+		return true, false
+	}
+
+	reqLog.Error("fish_images.relay_failed",
+		zap.Int64("account_id", account.ID), zap.Error(err))
+	if failover != nil {
+		fishImagesFailoverError(c, failover)
+		return false, true
+	}
+	var upErr *service.OpenAIImagesUpstreamError
+	if errors.As(err, &upErr) && upErr != nil {
+		status := upErr.StatusCode
+		if status <= 0 {
+			status = http.StatusBadGateway
+		}
+		message := strings.TrimSpace(upErr.Message)
+		if message == "" {
+			message = "Upstream request failed"
+		}
+		errType := strings.TrimSpace(upErr.ErrorType)
+		if errType == "" {
+			errType = "api_error"
+		}
+		fishImagesError(c, status, errType, message)
+		return false, true
+	}
+	fishImagesError(c, http.StatusBadGateway, "api_error", "Upstream request failed")
+	return false, true
+}
+
+// finishFishImagesRelaySuccess 记账。响应体已由 ForwardImages 写入 gin，不能再 c.Data。
+func (h *GatewayHandler) finishFishImagesRelaySuccess(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	apiKey *service.APIKey,
+	subject middleware2.AuthSubject,
+	subscription *service.UserSubscription,
+	account *service.Account,
+	result *service.OpenAIForwardResult,
+	req *fishImagesRequest,
+) {
+	h.recordFishImagesUsage(c, apiKey, subject, subscription, account, result, req)
+	upstreamModel := ""
+	if result != nil {
+		upstreamModel = result.UpstreamModel
+	}
+	reqLog.Debug("fish_images.relay_completed",
+		zap.Int64("account_id", account.ID),
+		zap.String("upstream_model", upstreamModel),
+	)
 }

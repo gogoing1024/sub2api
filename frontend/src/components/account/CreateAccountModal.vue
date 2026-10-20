@@ -305,6 +305,20 @@
             <PlatformIcon platform="leonardo" size="sm" />
             Leonardo
           </button>
+          <button
+            type="button"
+            @click="form.platform = 'fish'"
+            :class="[
+              'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-2.5 text-xs font-medium transition-all sm:gap-2 sm:px-4 sm:text-sm',
+              form.platform === 'fish'
+                ? 'bg-white text-cyan-600 shadow-sm dark:bg-dark-600 dark:text-cyan-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+            data-testid="platform-tab-fish"
+          >
+            <PlatformIcon platform="fish" size="sm" />
+            Fish Audio
+          </button>
         </div>
       </div>
 
@@ -4490,6 +4504,52 @@
           <p class="input-hint">{{ t('admin.accounts.leonardo.cookieHint') }}</p>
         </div>
       </div>
+      <!-- Fish：token 原生号（网页会话 Bearer）或 OpenAI 兼容中转号兜底。 -->
+      <div v-else-if="form.platform === 'fish'" class="space-y-4">
+        <div>
+          <label class="input-label">账号类型</label>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              class="btn flex-1"
+              :class="fishAccountMode === 'token' ? 'btn-primary' : 'btn-secondary'"
+              data-testid="fish-mode-token"
+              @click="fishAccountMode = 'token'"
+            >Token 原生（fish.audio 网页会话）</button>
+            <button
+              type="button"
+              class="btn flex-1"
+              :class="fishAccountMode === 'relay' ? 'btn-primary' : 'btn-secondary'"
+              data-testid="fish-mode-relay"
+              @click="fishAccountMode = 'relay'"
+            >API 中转（OpenAI 兼容兜底）</button>
+          </div>
+        </div>
+        <div v-if="fishAccountMode === 'token'">
+          <label class="input-label">fish.audio 会话 Token</label>
+          <textarea
+            v-model="fishToken"
+            rows="3"
+            class="input font-mono text-xs"
+            placeholder="46471c2b-7cdc-4671-acc4-c0b2fd111817"
+            data-testid="fish-token-input"
+          ></textarea>
+          <p class="input-hint">已登录 fish.audio 的浏览器 localStorage 里的 token 值（36 位 UUID，长期会话无刷新；失效后需重新导出）。team_id / device_id 会在连通性测试时自动回填。</p>
+        </div>
+        <template v-else>
+          <div>
+            <label class="input-label">Base URL</label>
+            <input v-model="fishRelayBaseUrl" type="text" class="input font-mono text-xs"
+              placeholder="https://api.openai.com" data-testid="fish-relay-base-url" />
+            <p class="input-hint">承接 fish 原生无法处理的请求（白名单外尺寸 / mask / n&gt;8 / webp）。模型名经渠道映射改写（如 gpt-image-2 → gpt-image-1）。</p>
+          </div>
+          <div>
+            <label class="input-label">API Key</label>
+            <input v-model="fishRelayApiKey" type="password" class="input font-mono text-xs"
+              placeholder="sk-..." data-testid="fish-relay-api-key" />
+          </div>
+        </template>
+      </div>
       <div v-else-if="isKiroImportMode" class="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-900/20">
         <!-- Provider 选择:决定字段显隐与必填、示例 -->
         <div>
@@ -4619,6 +4679,16 @@
           class="btn btn-primary"
           data-testid="leonardo-create-account"
           @click="handleLeonardoCreate"
+        >
+          {{ submitting ? t('admin.accounts.creating') : t('common.create') }}
+        </button>
+        <button
+          v-else-if="form.platform === 'fish'"
+          type="button"
+          :disabled="submitting"
+          class="btn btn-primary"
+          data-testid="fish-create-account"
+          @click="handleFishCreate"
         >
           {{ submitting ? t('admin.accounts.creating') : t('common.create') }}
         </button>
@@ -5622,6 +5692,45 @@ const kiroCreateSyncCredentials = computed(() => {
 })
 // Leonardo Cookie 建号：cookie 必填；空白名单 = 不下发 model_mapping，
 // 由后端回落到平台默认映射。
+// Fish 建号：token 原生号（{token}）或 OpenAI 兼容中转号（{base_url, api_key}）。
+const fishAccountMode = ref<'token' | 'relay'>('token')
+const fishToken = ref('')
+const fishRelayBaseUrl = ref('')
+const fishRelayApiKey = ref('')
+const handleFishCreate = async () => {
+  if (!form.name.trim()) {
+    appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+    return
+  }
+  const credentials: Record<string, unknown> = {}
+  if (fishAccountMode.value === 'token') {
+    const token = fishToken.value.trim()
+    if (!token) {
+      appStore.showError('请粘贴 fish.audio 会话 token')
+      return
+    }
+    credentials.token = token
+  } else {
+    const baseURL = fishRelayBaseUrl.value.trim()
+    const apiKey = fishRelayApiKey.value.trim()
+    if (!baseURL || !apiKey) {
+      appStore.showError('中转账号需要 Base URL 和 API Key')
+      return
+    }
+    credentials.base_url = baseURL
+    credentials.api_key = apiKey
+  }
+  const modelMapping = buildModelMappingObject(
+    modelRestrictionMode.value,
+    allowedModels.value,
+    modelMappings.value
+  )
+  if (modelMapping) {
+    credentials.model_mapping = modelMapping
+  }
+  await createAccountAndFinish('fish', 'apikey' as AccountType, credentials)
+}
+
 const handleLeonardoCreate = async () => {
   if (!form.name.trim()) {
     appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
@@ -5997,7 +6106,8 @@ const isOAuthFlow = computed(() => {
 // Leonardo 与 OAuth 一样分两步：第一步基础信息，第二步再粘贴 cookie；
 // 中转（apikey-relay）单步直接建号。
 const needsCredentialStep = computed(() =>
-  isOAuthFlow.value || (form.platform === 'leonardo' && accountCategory.value !== 'apikey-relay')
+  isOAuthFlow.value || (form.platform === 'leonardo' && accountCategory.value !== 'apikey-relay') ||
+  form.platform === 'fish'
 )
 
 const isKiroImportMode = computed(() => form.platform === 'kiro' && kiroAccountType.value === 'import')

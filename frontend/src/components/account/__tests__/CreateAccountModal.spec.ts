@@ -261,7 +261,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  it('renders all 15 platforms in one grid with Kiro and Leonardo last', () => {
+  it('renders all 16 platforms in one grid with Kiro, Leonardo and Fish last', () => {
     const wrapper = mountModal()
     const platformSelector = wrapper.get('[data-tour="account-form-platform"]')
 
@@ -281,6 +281,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       'Cline',
       'Kiro',
       'Leonardo',
+      'Fish Audio',
     ])
   })
 
@@ -726,7 +727,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       .get('[data-tour="account-form-platform"]')
       .findAll('button')
       .map((button) => button.text().trim())
-    expect(labels.slice(-5)).toEqual(['OpenCode', 'Command Code', 'Cline', 'Kiro', 'Leonardo'])
+    expect(labels.slice(-6)).toEqual(['OpenCode', 'Command Code', 'Cline', 'Kiro', 'Leonardo', 'Fish Audio'])
     expect(labels.slice(5, 10)).toEqual(['TypeSafe / Jev', 'Kimi', 'Zhipu GLM', 'DeepSeek', 'MiniMax'])
   })
 

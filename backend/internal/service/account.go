@@ -958,6 +958,10 @@ func (a *Account) isModelMappingSupported(requestedModel string) bool {
 	if a.Platform == PlatformLeonardo {
 		return leonardoAccountSupportsModel(a, requestedModel)
 	}
+	// fish 同理：token 原生号与中转号都只承接 fish 公共名（gpt-image 家族）。
+	if a.Platform == PlatformFish {
+		return fishAccountSupportsModel(a, requestedModel)
+	}
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
 		if a.IsOpenAIOAuth() {
@@ -1492,9 +1496,9 @@ func (a *Account) IsOpenAIApiKey() bool {
 // 适用 openai、国产 OpenAI 兼容供应商（kimi/zhipu/deepseek）与 OpenCode Go；
 // grok 走 GetGrokBaseURL，此处对 grok 返回 "" 以保持原有行为。
 func (a *Account) GetOpenAIBaseURL() string {
-	// Leonardo 中转号借用 OpenAI Images 转发链路做分组兜底，必须返回它自己的
-	// base_url，否则会落到 api.openai.com。
-	if isLeonardoRelayAccount(a) {
+	// Leonardo / fish 中转号借用 OpenAI Images 转发链路做分组兜底，必须返回它
+	// 自己的 base_url，否则会落到 api.openai.com。
+	if isLeonardoRelayAccount(a) || isFishRelayAccount(a) {
 		return strings.TrimRight(strings.TrimSpace(a.GetCredential("base_url")), "/")
 	}
 	if !a.IsOpenAI() && !a.IsMultiProtocolAPIKey() {
@@ -1838,7 +1842,7 @@ func (a *Account) GetOpenAIProtocolAPIKey() string {
 	if a == nil {
 		return ""
 	}
-	if isLeonardoRelayAccount(a) {
+	if isLeonardoRelayAccount(a) || isFishRelayAccount(a) {
 		return a.GetCredential("api_key")
 	}
 	if a.IsMultiProtocolAPIKey() {
