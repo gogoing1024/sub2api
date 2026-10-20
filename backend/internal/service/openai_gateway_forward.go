@@ -64,7 +64,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 
 	modelForBPS := gjson.GetBytes(body, "model").String()
 	if err := s.validateExcelOAuthRoute(ctx, account, modelForBPS); err != nil {
-		return nil, writeExcelOAuthRouteError(c)
+		return nil, newExcelOAuthRouteFailoverError()
 	}
 	// The BPS tools probe must exercise BPS itself; a silent native fallback
 	// would report a passing BPS test without touching BPS.

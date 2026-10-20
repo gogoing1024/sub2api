@@ -8,7 +8,6 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
-	"github.com/gin-gonic/gin"
 )
 
 // IsBPSOAuth reports a BPS-only OpenAI account: authorized through the official
@@ -90,7 +89,7 @@ func newBPSUnsupportedInboundFailoverError() *UpstreamFailoverError {
 
 var errExcelOAuthRouteUnavailable = errors.New("an enabled Excel BPS route is required for Excel OAuth credentials and the requested model; native Codex is unavailable")
 
-const excelOAuthRouteErrorCode = "excel_oauth_route_unavailable"
+const excelOAuthRouteUnavailableReason = GatewayFailureReason("excel_oauth_route_unavailable")
 
 func (s *OpenAIGatewayService) validateExcelOAuthRoute(ctx context.Context, account *Account, model string) error {
 	if account.IsBPSOAuth() && (!account.IsExcelBPSEnabledForModel(model) || !s.excelBPSGloballyEnabled(ctx)) {
@@ -99,10 +98,40 @@ func (s *OpenAIGatewayService) validateExcelOAuthRoute(ctx context.Context, acco
 	return nil
 }
 
-func writeExcelOAuthRouteError(c *gin.Context) error {
-	c.JSON(http.StatusBadRequest, gin.H{"error": gin.H{
-		"type": "invalid_request_error", "code": excelOAuthRouteErrorCode,
-		"message": errExcelOAuthRouteUnavailable.Error(),
-	}})
-	return errExcelOAuthRouteUnavailable
+// newExcelOAuthRouteFailoverError is the forward-time backstop for a BPS-only
+// account that cannot serve this request (the global switch went off under a
+// sticky session, or channel mapping changed the model after selection): the
+// handler moves on to another account instead of answering 400.
+func newExcelOAuthRouteFailoverError() *UpstreamFailoverError {
+	return &UpstreamFailoverError{
+		StatusCode:        http.StatusBadGateway,
+		Scope:             GatewayFailureScopeAccount,
+		Reason:            excelOAuthRouteUnavailableReason,
+		NextAccountAction: NextAccountRetry,
+		ClientStatusCode:  http.StatusBadGateway,
+		ClientMessage:     errExcelOAuthRouteUnavailable.Error(),
+	}
+}
+
+// stickyShouldYieldToBPS reports whether a sticky binding to a native account
+// must give way to BPS: only when the request's entry point has a BPS route and
+// the pool holds another BPS-only account that the caller's scheduler would
+// actually pick for this very request. Chat Completions, Anthropic Messages and
+// count_tokens keep their native binding (and its prompt cache), and so does
+// every request while the BPS candidates are cooling down or otherwise
+// unschedulable; evicting then would only move the session to another native
+// account.
+func stickyShouldYieldToBPS(ctx context.Context, sticky *Account, candidates []Account, requestedModel string, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability, schedulable func(*Account) bool) bool {
+	if sticky == nil || sticky.IsExcelBPSEnabledForModel(requestedModel) || isBPSUnsupportedInbound(ctx) {
+		return false
+	}
+	for i := range candidates {
+		candidate := &candidates[i]
+		if candidate.ID != sticky.ID && candidate.IsBPSOAuth() &&
+			accountSupportsOpenAICapabilitiesForRequest(ctx, candidate, requestedModel, requiredCapability, requiredImageCapability) &&
+			schedulable(candidate) {
+			return true
+		}
+	}
+	return false
 }

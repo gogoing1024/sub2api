@@ -443,7 +443,10 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 	if requestedModel != "" && !supportsOpenAIRequestModel(account, requestedModel, requireCompact) {
 		return "model_not_supported"
 	}
-	if !account.SupportsOpenAIEndpointCapability(requiredCapability) {
+	// The BPS-aware check keeps legacy candidate filtering, sticky hits and DB
+	// rechecks on the same BPS-only rules as the advanced scheduler (model
+	// whitelist and entry points without a BPS route).
+	if !accountSupportsOpenAICapabilitiesForRequest(ctx, account, requestedModel, requiredCapability, "") {
 		if account.IsGrok() && requiredCapability == OpenAIEndpointCapabilityGrokMediaGeneration {
 			_, reason := account.GrokMediaGenerationEligibility()
 			slog.Debug("grok_media_account_ineligible", "account_id", account.ID, "reason", reason)
@@ -985,17 +988,22 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
-	// A stale sticky binding must not bypass BPS after it is enabled on the
-	// requested model. Clear it and let normal selection choose an eligible BPS
+	// A stale sticky binding must not bypass BPS once a BPS account can serve
+	// this request. Clear it and let normal selection choose an eligible BPS
 	// account instead of silently forwarding this turn to /v1/responses.
-	if platform == PlatformOpenAI && strings.TrimSpace(requestedModel) != "" && !account.IsExcelBPSEnabledForModel(requestedModel) {
-		if candidates, listErr := s.listSchedulableAccounts(ctx, groupID, platform); listErr == nil {
-			for i := range candidates {
-				if candidates[i].ID != account.ID && candidates[i].IsExcelBPSEnabledForModel(requestedModel) {
-					_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-					return nil
-				}
+	if platform == PlatformOpenAI && strings.TrimSpace(requestedModel) != "" && !isBPSUnsupportedInbound(ctx) && !account.IsExcelBPSEnabledForModel(requestedModel) {
+		schedulable := func(candidate *Account) bool {
+			if _, excluded := excludedIDs[candidate.ID]; excluded {
+				return false
 			}
+			return isOpenAICompatibleAccountEligibleForRequest(ctx, candidate, platform, requestedModel, requireCompact, requiredCapability) &&
+				!s.isOpenAIAccountRequestRuntimeBlocked(candidate, requestedModel, requireCompact) &&
+				!s.isExcelBPSRouteCoolingDown(candidate, requestedModel)
+		}
+		if candidates, listErr := s.listSchedulableAccounts(ctx, groupID, platform); listErr == nil &&
+			stickyShouldYieldToBPS(ctx, account, candidates, requestedModel, requiredCapability, "", schedulable) {
+			_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
+			return nil
 		}
 	}
 
@@ -1548,6 +1556,7 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		if platform == PlatformGrok {
 			accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 		}
+		accounts = s.filterBPSOAuthAccountsWhenDisabled(ctx, accounts)
 		return accounts, nil
 	}
 	var accounts []Account
@@ -1566,6 +1575,7 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	if platform == PlatformGrok {
 		accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 	}
+	accounts = s.filterBPSOAuthAccountsWhenDisabled(ctx, accounts)
 	return accounts, nil
 }
 

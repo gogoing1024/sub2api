@@ -544,17 +544,23 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		clearBinding()
 		return nil, false, nil
 	}
-	// A sticky binding created before BPS was enabled may still point at a
-	// native account. Do not let that old binding bypass the explicit BPS route
-	// while an eligible BPS account is available for this model.
-	if req.Platform == PlatformOpenAI && strings.TrimSpace(req.RequestedModel) != "" && !account.IsExcelBPSEnabledForModel(req.RequestedModel) {
-		if candidates, listErr := s.service.listSchedulableAccounts(ctx, req.GroupID, req.Platform); listErr == nil {
-			for i := range candidates {
-				if candidates[i].ID != account.ID && candidates[i].IsExcelBPSEnabledForModel(req.RequestedModel) {
-					clearBinding()
-					return nil, false, nil
-				}
+	// A sticky binding created before a BPS account joined the group may still
+	// point at a native account. Do not let that old binding bypass the explicit
+	// BPS route while a BPS account can serve this request.
+	if req.Platform == PlatformOpenAI && strings.TrimSpace(req.RequestedModel) != "" && !isBPSUnsupportedInbound(ctx) && !account.IsExcelBPSEnabledForModel(req.RequestedModel) {
+		schedulable := func(candidate *Account) bool {
+			if _, excluded := req.ExcludedIDs[candidate.ID]; excluded {
+				return false
 			}
+			return candidate.IsSchedulableForModelWithContext(ctx, req.RequestedModel) &&
+				s.isAccountRequestCompatible(ctx, candidate, req) &&
+				s.isAccountTransportCompatible(candidate, req.RequiredTransport, req.RequestedModel) &&
+				!s.service.isExcelBPSRouteCoolingDown(candidate, req.RequestedModel)
+		}
+		if candidates, listErr := s.service.listSchedulableAccounts(ctx, req.GroupID, req.Platform); listErr == nil &&
+			stickyShouldYieldToBPS(ctx, account, candidates, req.RequestedModel, req.RequiredCapability, req.RequiredImageCapability, schedulable) {
+			clearBinding()
+			return nil, false, nil
 		}
 	}
 	// Free-tier soft gate: sticky session must not pin an over-quota free OAuth account.
@@ -2567,7 +2573,9 @@ func accountSupportsOpenAICapabilities(account *Account, requiredCapability Open
 // set for BPS-only accounts: they answer text Responses through the Excel
 // plugin protocol, never run the Codex endpoint probes that populate the stored
 // capability set, and cannot serve image requests or entry points without a
-// BPS route (Chat Completions, Anthropic Messages).
+// BPS route (Chat Completions, Anthropic Messages). A model-less selection
+// (Codex / OpenAI model listing) skips the BPS model whitelist: those callers
+// route BPS-only accounts to BPS model discovery instead of a model request.
 func accountSupportsOpenAICapabilitiesForRequest(ctx context.Context, account *Account, requestedModel string, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
 	if account != nil && account.IsBPSOAuth() {
 		if requiredImageCapability != "" || isBPSUnsupportedInbound(ctx) {
@@ -2575,6 +2583,9 @@ func accountSupportsOpenAICapabilitiesForRequest(ctx context.Context, account *A
 		}
 		switch requiredCapability {
 		case "", OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityResponses:
+			if strings.TrimSpace(requestedModel) == "" {
+				return account.IsExcelBPSEnabled()
+			}
 			return account.IsExcelBPSEnabledForModel(requestedModel)
 		}
 		return false
@@ -2601,8 +2612,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 		return false
 	}
 	// BPS only speaks HTTP/SSE; WS ingress closes a BPS-routed session with a
-	// policy violation and no failover, so never schedule one onto it.
-	if len(requestedModels) > 0 && account.IsExcelBPSEnabledForModel(requestedModels[0]) {
+	// policy violation and no failover, so never schedule one onto it. A
+	// BPS-only account has no other route, whatever the model.
+	if account.IsBPSOAuth() {
 		return false
 	}
 	if requiredTransport == OpenAIUpstreamTransportResponsesWebsocketV2Ingress {
