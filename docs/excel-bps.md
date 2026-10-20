@@ -67,8 +67,11 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
 - **粘性会话冷却**：粘在 BPS 账号上的会话同样受 BPS 429 冷却和模型权限冷却约束，冷却期间改选其他账号。高级调度和旧调度都会在"无可用账号"诊断里标出 BPS 冷却；分组里可用账号全部处于 BPS 429 冷却时返回 429。
 - **传输**：BPS 走独立 HTTP 上游 profile（`excel_bps`），经 HTTP 代理出现 H2 流错误时该代理短时熔断降级 HTTP/1.1（1 分钟试探，独立连接池）。
 - **计费**：`/basispoints/api/responses` 端点按 Responses 计费；`cache_creation_as_input` 打开后缓存创建并入普通输入。
-- **模型发现**：`GET /basispoints/api/responses/access?include_models=true` 实时读取 allowed/restricted/efforts，60 秒缓存 + singleflight；模型列表与 Codex manifest 按白名单裁剪。账号的"同步上游模型"也走这个接口，返回 BPS 当前可用的全部模型（不按白名单裁剪），便于挑选白名单与映射。
-- **账号测试**：默认测试走与用户请求相同的网关转发路径；另可选"BPS 工具往返"（nonce → echo 工具 → 回传核对，最多 3 次上游请求）。BPS 拒绝请求时，测试弹窗显示上游 HTTP 状态码、Request ID、错误码和脱敏后的错误消息，错误行末尾附 `(HTTP <状态码>)`。
+- **模型发现**：`GET /basispoints/api/responses/access?include_models=true` 实时读取 allowed/restricted/efforts，60 秒缓存 + singleflight。
+  - BPS OAuth 账号的测试下拉、普通 `/v1/models` 和 composite 列表都用这份发现结果：先按白名单裁剪，再经账号映射投影成对外名字。发现失败时回落到账号配置——有映射就取映射后落在白名单内的映射键，没有映射就取白名单本身——不会列出原生 OpenAI 默认模型。分组里没有 BPS OAuth 账号时，这些列表的结果不变。
+  - 带 `client_version` 的 Codex manifest 选中 BPS OAuth 账号时，只返回它在白名单内的 BPS 模型。已知问题：混合分组的 manifest 会随选中的账号来回变化，暂不处理。
+  - 账号的"同步上游模型"也走这个接口，返回 BPS 当前可用的全部模型（不按白名单裁剪），便于挑选白名单与映射。
+- **账号测试**：默认测试走与用户请求相同的网关转发路径，测试模型和用户请求一样用对外名字，只做一次映射；没选模型时用测试下拉里的第一个 BPS 模型，账号没有可用的 BPS 模型时直接报错。另可选"BPS 工具往返"（nonce → echo 工具 → 回传核对，最多 3 次上游请求）。BPS 拒绝请求时，测试弹窗显示上游 HTTP 状态码、Request ID、错误码和脱敏后的错误消息，错误行末尾附 `(HTTP <状态码>)`。
 
 ## 图片输入
 
