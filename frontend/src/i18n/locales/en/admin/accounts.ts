@@ -247,8 +247,8 @@ export default {
         kiroApikeyRelay: 'Relay via external API Key + Base URL',
         leonardoOauth: 'Leonardo web Cookie, direct GraphQL',
         leonardoApikeyRelay: 'OpenAI-compatible relay fallback',
-        fishOauthToken: 'Oauth Token',
-        fishOauth: 'Connect to Fish Audio directly with an Oauth Token',
+        fishOauthToken: 'API Key',
+        fishOauth: 'Connect to Fish Audio directly with an API Key',
         fishApikeyRelay: 'OpenAI-compatible relay fallback',
         kiroOauth: 'Social OAuth / AWS Builder ID / Import',
         antigravityApikey: 'Connect via Base URL + API Key',
@@ -1784,9 +1784,9 @@ export default {
         leonardoCredits: 'Credits Used'
       },
       fish: {
-        tokenLabel: 'fish.audio session token',
-        tokenHint: 'The token value from localStorage in a logged-in fish.audio browser session (36-character UUID, long-lived, no refresh). team_id and device_id are filled in by the connectivity test.',
-        tokenRequired: 'Paste the fish.audio session token',
+        tokenLabel: 'API Key',
+        tokenHint: 'The session value from localStorage in a logged-in fish.audio browser (36-character UUID, long-lived, no refresh), stored as credentials.api_key. team_id and device_id are filled in by the connectivity test.',
+        tokenRequired: 'Paste the fish.audio API key',
         relayApiKeyHint: 'API key for the relay upstream (sent as Authorization: Bearer)',
         relayBaseUrlHint: 'Handles requests fish native accounts cannot (sizes outside the allowlist, mask, n>8, webp). Channel mapping rewrites the model name, for example gpt-image-2 to gpt-image-1.'
       },

@@ -21,7 +21,7 @@ const fishRelayImageQuantityCap = 8
 // 带 base_url。这类账号不打 fish 原生 API，而是把 /v1/images/generations|edits
 // 原样转发到 {base_url}（官方 OpenAI 或三方兼容端点），承接 fish 原生
 // 无法处理的请求（白名单外尺寸、mask、n>8、webp 等）。
-// 无 base_url 的 fish apikey 号即 token 原生号——fish 无官方 Platform API。
+// 无 base_url 的 fish apikey 号即原生号——密钥在 api_key，fish 无官方 Platform API。
 func IsFishRelayAccount(account *Account) bool {
 	if account == nil || account.Platform != PlatformFish || account.Type != AccountTypeAPIKey {
 		return false
@@ -33,7 +33,7 @@ func isFishRelayAccount(account *Account) bool {
 	return IsFishRelayAccount(account)
 }
 
-// isFishTokenAccount 报告账号是否为 fish token 原生号：有 token 且非中转。
+// isFishTokenAccount 报告账号是否为 fish 原生号：有 api_key 且非中转。
 func isFishTokenAccount(account *Account) bool {
 	if account == nil || account.Platform != PlatformFish {
 		return false

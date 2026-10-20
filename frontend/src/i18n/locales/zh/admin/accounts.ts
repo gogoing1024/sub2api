@@ -450,8 +450,8 @@ export default {
         kiroApikeyRelay: '通过外部 API Key + Base URL 中转',
         leonardoOauth: 'Leonardo 网页版 Cookie 直连',
         leonardoApikeyRelay: 'OpenAI 兼容 API 中转兜底',
-        fishOauthToken: 'Oauth Token',
-        fishOauth: '通过 Oauth Token 直连 Fish Audio',
+        fishOauthToken: 'API Key',
+        fishOauth: '通过 API Key 直连 Fish Audio',
         fishApikeyRelay: 'OpenAI 兼容 API 中转兜底',
         kiroOauth: '社交 OAuth / AWS Builder ID / 导入',
         antigravityApikey: '通过 Base URL + API Key 连接',
@@ -545,9 +545,9 @@ export default {
         }
       },
       fish: {
-        tokenLabel: 'fish.audio 会话 Token',
-        tokenHint: '已登录 fish.audio 的浏览器 localStorage 里的 token 值（36 位 UUID，长期会话无刷新；失效后需重新导出）。team_id / device_id 会在连通性测试时自动回填。',
-        tokenRequired: '请粘贴 fish.audio 会话 token',
+        tokenLabel: 'API Key',
+        tokenHint: '已登录 fish.audio 的浏览器 localStorage 里的会话值（36 位 UUID，长期有效、无刷新；失效后需重新导出），写入 credentials.api_key。team_id / device_id 会在连通性测试时自动回填。',
+        tokenRequired: '请粘贴 fish.audio API Key',
         relayApiKeyHint: '该外部上游的 API Key（通过 Authorization: Bearer 发送）',
         relayBaseUrlHint: '承接 fish 原生无法处理的请求（白名单外尺寸 / mask / n>8 / webp）。模型名经渠道映射改写（如 gpt-image-2 → gpt-image-1）。'
       },

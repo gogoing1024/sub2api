@@ -5864,7 +5864,7 @@ const handleFishCreate = async () => {
     appStore.showError(t('admin.accounts.fish.tokenRequired'))
     return
   }
-  const credentials: Record<string, unknown> = { token }
+  const credentials: Record<string, unknown> = { api_key: token }
   const modelMapping = buildModelMappingObject(
     modelRestrictionMode.value,
     allowedModels.value,

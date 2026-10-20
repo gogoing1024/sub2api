@@ -26,7 +26,7 @@
         <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
       </div>
 
-      <!-- Fish：token 原生号（更新 token）或中转号（base_url + api_key）。
+      <!-- Fish：原生号更新 api_key；中转号走 base_url + api_key。
            通用 apikey 区块对 fish 隐藏——其 base_url 默认值会把原生号误变成中转号。 -->
       <div v-if="account.platform === 'fish' && account.type === 'apikey' && isFishRelayEdit" class="space-y-4">
         <div>
@@ -42,15 +42,15 @@
       </div>
       <div v-else-if="account.platform === 'fish' && account.type === 'apikey'" class="space-y-4">
         <div>
-          <label class="input-label">fish.audio 会话 Token</label>
+          <label class="input-label">{{ t('admin.accounts.fish.tokenLabel') }}</label>
           <textarea
             v-model="fishTokenEdit"
             rows="3"
             class="input font-mono text-xs"
-            placeholder="留空保持不变；粘贴新 token 覆盖"
+            placeholder="留空保持不变；粘贴新 API Key 覆盖"
             data-testid="fish-token-edit"
           ></textarea>
-          <p class="input-hint">token 失效（上游 401）时账号自动置 error——重新导出并粘贴新 token 即可恢复。</p>
+          <p class="input-hint">{{ t('admin.accounts.fish.tokenHint') }}</p>
         </div>
       </div>
 
@@ -3826,7 +3826,7 @@ const isKiroRelay = computed(() => isKiroRelayAccount(props.account))
 const isKiroDirectApiKey = computed(() => isKiroDirectApiKeyAccount(props.account))
 // Leonardo Cookie 账号(oauth)消耗 Leonardo 积分;中转账号(apikey)不消耗,故只对前者展示积分单价。
 const isLeonardoCookieAccount = computed(() => props.account?.platform === 'leonardo' && props.account?.type === 'oauth')
-// Fish：凭据里有 base_url = 中转号；只有 token = 原生号。
+// Fish：凭据里有 base_url = 中转号；没有 base_url = 原生号（密钥在 api_key）。
 const isFishRelayEdit = computed(() => {
   const credentials = (props.account?.credentials as Record<string, unknown>) || {}
   return typeof credentials.base_url === 'string' && credentials.base_url.trim() !== ''
@@ -5869,7 +5869,7 @@ const handleSubmit = async () => {
       }
     }
 
-    // Fish：原生号只更新 token（留空保持）；中转号走 base_url + api_key。
+    // Fish：原生号只更新 api_key（留空保持）；中转号走 base_url + api_key。
     // 不落通用 apikey 路径——其 base_url 默认值逻辑会把原生号误变成中转号。
     if (props.account.platform === 'fish' && props.account.type === 'apikey') {
       const currentCredentials = (props.account.credentials as Record<string, unknown>) || {}
@@ -5885,7 +5885,7 @@ const handleSubmit = async () => {
       } else {
         const newToken = fishTokenEdit.value.trim()
         if (newToken) {
-          newCredentials.token = newToken
+          newCredentials.api_key = newToken
         }
       }
       const fishMapping = buildModelRestrictionMapping()

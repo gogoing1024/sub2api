@@ -16,10 +16,10 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/fish"
 )
 
-// fish 账号的凭据键。token 必填；team_id / device_id 由账号连通性测试
+// fish 账号的凭据键。api_key 必填；team_id / device_id 由账号连通性测试
 // 自动派生回填（派生前请求照发——上游已验证这些头可省）。
 const (
-	fishCredentialToken    = "token"
+	fishCredentialToken    = "api_key"
 	fishCredentialTeamID   = "team_id"
 	fishCredentialDeviceID = "device_id"
 	// fishCredentialMaxPerGen 是账号单次生图上限（entitlements

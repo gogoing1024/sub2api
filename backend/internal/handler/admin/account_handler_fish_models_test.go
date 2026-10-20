@@ -39,7 +39,7 @@ func TestAccountHandlerGetAvailableModels_FishUsesFishModels(t *testing.T) {
 		Platform:    service.PlatformFish,
 		Type:        service.AccountTypeAPIKey,
 		Status:      service.StatusActive,
-		Credentials: map[string]any{"token": "tok"},
+		Credentials: map[string]any{"api_key": "tok"},
 	})
 	require.Equal(t, []struct {
 		ID          string `json:"id"`

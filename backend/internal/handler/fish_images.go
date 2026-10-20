@@ -300,10 +300,10 @@ func (h *GatewayHandler) runFishImagesFailover(
 			continue
 		}
 
-		token := account.GetCredential("token")
+		token := account.GetCredential("api_key")
 		if strings.TrimSpace(token) == "" {
 			releaseAccount()
-			reqLog.Warn("fish_images.token_unavailable", zap.Int64("account_id", account.ID))
+			reqLog.Warn("fish_images.api_key_unavailable", zap.Int64("account_id", account.ID))
 			failedAccountIDs[account.ID] = struct{}{}
 			continue
 		}

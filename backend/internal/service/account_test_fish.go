@@ -59,13 +59,13 @@ func (s *AccountTestService) testFishTokenConnection(c *gin.Context, account *Ac
 
 	token := strings.TrimSpace(account.GetCredential(fishCredentialToken))
 	if token == "" {
-		return s.sendErrorAndEnd(c, "fish account has no token — paste the Bearer token from a logged-in fish.audio session (localStorage `token`)")
+		return s.sendErrorAndEnd(c, "fish account has no api_key — paste the fish.audio session value into credentials.api_key")
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), fishTestTimeout)
 	defer cancel()
 
-	// device_id 缺失时生成一个并随 team_id 一起回填（CAS：token 未变才写）
+	// device_id 缺失时生成一个并随 team_id 一起回填（CAS：api_key 未变才写）
 	deviceID := strings.TrimSpace(account.GetCredential(fishCredentialDeviceID))
 	if deviceID == "" {
 		deviceID = fish.NewDeviceID()
@@ -208,7 +208,7 @@ func (s *AccountTestService) testFishTokenImage(c *gin.Context, client *fish.Cli
 func formatFishTestError(err error) string {
 	var authErr *fish.AuthError
 	if errors.As(err, &authErr) {
-		return "fish token was rejected (invalid token) — re-export a fresh token from a logged-in fish.audio session"
+		return "fish api_key was rejected — re-export a fresh session value into credentials.api_key"
 	}
 	var rateLimited *fish.RateLimitedError
 	if errors.As(err, &rateLimited) {

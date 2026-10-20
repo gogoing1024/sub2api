@@ -11,7 +11,7 @@ import (
 )
 
 // TestFishAccountTestConnectionBackfillsIdentity 断言连通性测试把
-// team_id / device_id 回填进凭据（token 原样往返）。
+// team_id / device_id 回填进凭据（api_key 原样往返）。
 func TestFishAccountTestConnectionBackfillsIdentity(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var persisted map[string]any
@@ -57,7 +57,7 @@ func TestFishAccountTestConnectionBackfillsIdentity(t *testing.T) {
 		t.Fatal("device_id not backfilled")
 	}
 	if account.GetCredential(fishCredentialToken) != "tok" {
-		t.Fatalf("token must round-trip unchanged")
+		t.Fatalf("api_key must round-trip unchanged")
 	}
 	if account.GetCredential("plan_type") != "free" {
 		t.Fatalf("plan_type = %q, want free", account.GetCredential("plan_type"))

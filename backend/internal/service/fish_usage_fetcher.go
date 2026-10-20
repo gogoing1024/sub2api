@@ -138,7 +138,7 @@ func (s *AccountUsageService) getFishUsage(ctx context.Context, account *Account
 func (s *AccountUsageService) fetchAndCacheFishUsage(ctx context.Context, account *Account, source string) (*UsageInfo, error) {
 	token := strings.TrimSpace(account.GetCredential(fishCredentialToken))
 	if token == "" {
-		return nil, fmt.Errorf("fish account has no token")
+		return nil, fmt.Errorf("fish account has no api_key")
 	}
 	deviceID := strings.TrimSpace(account.GetCredential(fishCredentialDeviceID))
 	if deviceID == "" {
