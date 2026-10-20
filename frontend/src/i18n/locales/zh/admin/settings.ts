@@ -560,10 +560,6 @@ export default {
         claudeCodeVersionAutoSyncHint: '每小时从官方发布渠道获取最新版本的 Claude Code 客户端版本号，无需为了跟版本而升级本服务。关闭后停止获取新版本，已同步的版本仍可使用；上方手填版本始终优先。',
         claudeCodeVersionSyncedValue: '当前同步到：{version}',
         codexHardeningTitle: 'Codex 设置',
-        excelBPSEnabled: 'Excel / BPS 协议',
-
-        excelBPSEnabledDesc: '启用后，账号上开启 Excel / BPS 的模型经 Excel 插件接口转发；关闭后所有 BPS 路由停用（仅 BPS 凭据的账号将不可用）。',
-
         codexTicketEnabled: 'Codex 门票打票',
         codexTicketEnabledDesc:
           '关闭后不打票、不注入 x-codex-turn-state，按原链路转发。开启后后台打票，并仅对门控模型覆盖该头。',

@@ -398,7 +398,6 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
 		SubscriptionEnabled:      settings.SubscriptionEnabled,
-		ExcelBPSEnabled:          settings.ExcelBPSEnabled,
 
 		ModelPlazaEnabled:       settings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   settings.ModelPlazaRequireAuth,

@@ -754,9 +754,6 @@ export interface SystemSettings {
   // Available Channels feature switch
   available_channels_enabled: boolean;
 
-  // Excel / BPS protocol switch (gateway-wide, default true)
-  excel_bps_enabled: boolean;
-
   // Subscription feature switch (user sidebar "My Subscriptions" entry)
   subscription_enabled: boolean;
 
@@ -1074,9 +1071,6 @@ export interface UpdateSettingsRequest {
 
   // Available Channels feature switch
   available_channels_enabled?: boolean;
-
-  // Excel / BPS protocol switch (gateway-wide, default true)
-  excel_bps_enabled?: boolean;
 
   // Subscription feature switch
   subscription_enabled?: boolean;

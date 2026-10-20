@@ -1565,7 +1565,6 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		if platform == PlatformGrok {
 			accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 		}
-		accounts = s.filterBPSOAuthAccountsWhenDisabled(ctx, accounts)
 		return accounts, nil
 	}
 	var accounts []Account
@@ -1585,7 +1584,6 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	if platform == PlatformGrok {
 		accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
 	}
-	accounts = s.filterBPSOAuthAccountsWhenDisabled(ctx, accounts)
 	return accounts, nil
 }
 

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
@@ -16,31 +15,12 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-type excelBPSSwitchSettingRepo struct {
-	SettingRepository
-	values map[string]string
-}
-
-func (r *excelBPSSwitchSettingRepo) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
-	out := make(map[string]string, len(keys))
-	for _, key := range keys {
-		if value, ok := r.values[key]; ok {
-			out[key] = value
-		}
-	}
-	return out, nil
-}
-
 func newBPSAccountTestContext() (*gin.Context, *httptest.ResponseRecorder) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/300/test", nil).WithContext(context.Background())
 	return c, rec
-}
-
-func excelBPSDisabledSettingService() *SettingService {
-	return NewSettingService(&excelBPSSwitchSettingRepo{values: map[string]string{SettingKeyExcelBPSEnabled: "false"}}, &config.Config{})
 }
 
 // The default account test for a BPS-enabled account must take the gateway
@@ -61,15 +41,16 @@ func TestAccountTestServiceRoutesBPSAccountThroughBPS(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), `"type":"error"`)
 }
 
-// Excel OAuth tokens only work on BPS; with BPS globally off the test must
-// fail closed instead of sending the Excel token to ChatGPT Codex.
+// Excel OAuth tokens only work on BPS; for a model outside the account's BPS
+// whitelist the test must fail closed instead of sending the Excel token to
+// ChatGPT Codex.
 func TestAccountTestServiceExcelOAuthRequiresBPSRoute(t *testing.T) {
 	upstream := &httpUpstreamRecorder{}
 	gateway := openAIClientToolsTestService(upstream)
-	gateway.settingService = excelBPSDisabledSettingService()
 	svc := &AccountTestService{openaiGatewayService: gateway, httpUpstream: upstream}
 	account := excelAccount()
 	account.Credentials["client_id"] = openai.ExcelClientID
+	account.Extra = map[string]any{ExcelBPSModelsExtraKey: []any{"gpt-6-astra"}}
 	c, rec := newBPSAccountTestContext()
 
 	_ = svc.testOpenAIAccountConnection(c, account, "gpt-5.6-sol", "", "")

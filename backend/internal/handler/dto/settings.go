@@ -332,7 +332,6 @@ type SystemSettings struct {
 
 	// Available Channels feature switch (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
-	ExcelBPSEnabled          bool `json:"excel_bps_enabled"`
 
 	// Subscription feature switch: gates the whole user-facing subscription surface
 	// (sidebar entries, purchase-page subscription tab, header badge, /subscriptions route).
@@ -447,7 +446,6 @@ type PublicSettings struct {
 	ChannelMonitorHideUserRanking        bool   `json:"channel_monitor_hide_user_ranking"`
 
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
-	ExcelBPSEnabled          bool `json:"excel_bps_enabled"`
 
 	SubscriptionEnabled bool `json:"subscription_enabled"`
 

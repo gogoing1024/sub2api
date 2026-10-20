@@ -530,11 +530,6 @@ const (
 	// Grok accounts without an explicit credentials.base_url.
 	SettingKeyGrokDefaultBaseURLMode = "grok_default_base_url_mode"
 
-	// SettingKeyExcelBPSEnabled is a DB-backed soft switch for the Excel/BPS
-	// protocol routing. Defaults to true; when false all BPS routes fall back
-	// to the account's native protocol (Excel-only accounts then reject).
-	SettingKeyExcelBPSEnabled = "excel_bps_enabled"
-
 	// SettingKeyAvailableChannelsEnabled is a DB-backed soft switch for the "Available Channels"
 	// user-facing aggregate view. When false: user endpoint returns an empty list and the
 	// sidebar entry is hidden. Defaults to false (opt-in feature).

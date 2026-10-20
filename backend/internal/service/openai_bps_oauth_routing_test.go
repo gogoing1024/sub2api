@@ -15,23 +15,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// bpsSchedulingSettingRepo also answers the single-key reads the scheduling
-// path makes (quota auto-pause settings) besides the BPS switch.
-type bpsSchedulingSettingRepo struct {
-	excelBPSSwitchSettingRepo
-}
-
-func (r *bpsSchedulingSettingRepo) GetValue(_ context.Context, key string) (string, error) {
-	if value, ok := r.values[key]; ok {
-		return value, nil
-	}
-	return "", ErrSettingNotFound
-}
-
-func bpsDisabledSchedulingSettingService() *SettingService {
-	return NewSettingService(&bpsSchedulingSettingRepo{excelBPSSwitchSettingRepo{values: map[string]string{SettingKeyExcelBPSEnabled: "false"}}}, &config.Config{})
-}
-
 func bpsRoutingNativeAccount(id int64, priority int) Account {
 	return Account{ID: id, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 1, Priority: priority,
 		Credentials: map[string]any{"access_token": "native-token"}}
@@ -128,14 +111,6 @@ func TestLegacySelectionAppliesBPSOAuthRules(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(1), account.ID)
 	})
-
-	t.Run("global switch off", func(t *testing.T) {
-		svc := newSvc(bpsRoutingNativeAccount(2, 5), bpsRoutingBPSAccount(1))
-		svc.settingService = bpsDisabledSchedulingSettingService()
-		account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.6-sol", nil)
-		require.NoError(t, err)
-		require.Equal(t, int64(2), account.ID)
-	})
 }
 
 // bpsCooldownCases cool the BPS candidate down in the two ways the candidate
@@ -218,11 +193,11 @@ func TestForwardBPSOAuthRouteUnavailableFailsOver(t *testing.T) {
 		account *Account
 		svc     func(*httpUpstreamRecorder) *OpenAIGatewayService
 	}{
-		{name: "global switch off", account: excelAccount(), svc: func(upstream *httpUpstreamRecorder) *OpenAIGatewayService {
-			svc := openAIClientToolsTestService(upstream)
-			svc.settingService = excelBPSDisabledSettingService()
-			return svc
-		}},
+		{name: "free plan", account: func() *Account {
+			account := excelAccount()
+			account.Credentials["plan_type"] = "free"
+			return account
+		}(), svc: openAIClientToolsTestService},
 		{name: "model outside the whitelist", account: func() *Account {
 			account := bpsRoutingBPSAccount(300, "gpt-7-new")
 			return &account
@@ -354,69 +329,13 @@ func TestAdvancedStickyBindingToCoolingBPSAccountMoves(t *testing.T) {
 	}
 }
 
-// countingExcelBPSSwitchRepo counts the switch reads the scheduler makes.
-type countingExcelBPSSwitchRepo struct {
-	bpsSchedulingSettingRepo
-	reads int
-}
-
-func (r *countingExcelBPSSwitchRepo) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
-	for _, key := range keys {
-		if key == SettingKeyExcelBPSEnabled {
-			r.reads++
-		}
-	}
-	return r.bpsSchedulingSettingRepo.GetMultiple(ctx, keys)
-}
-
-// Every BPS candidate consults the global switch; the database is read once.
-func TestSchedulerReadsExcelBPSSwitchOncePerPool(t *testing.T) {
-	repo := &countingExcelBPSSwitchRepo{bpsSchedulingSettingRepo: bpsSchedulingSettingRepo{excelBPSSwitchSettingRepo{values: map[string]string{}}}}
-	svc := &OpenAIGatewayService{
-		accountRepo:    stubOpenAIAccountRepo{accounts: []Account{bpsRoutingBPSAccount(1), bpsRoutingBPSAccount(2), bpsRoutingBPSAccount(3), bpsRoutingNativeAccount(4, 5)}},
-		cache:          &stubGatewayCache{},
-		cfg:            &config.Config{},
-		settingService: NewSettingService(repo, &config.Config{}),
-	}
-	for i := 0; i < 3; i++ {
-		account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gpt-5.6-sol", nil)
-		require.NoError(t, err)
-		require.True(t, account.IsBPSOAuth())
-	}
-	require.Equal(t, 1, repo.reads)
-}
-
-// The route check and the BPS dispatch share one read of the switch, and a
-// BPS-only account that may not use BPS never reaches the native path.
-func TestForwardBPSOAuthReadsSwitchOnce(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	repo := &countingExcelBPSSwitchRepo{bpsSchedulingSettingRepo: bpsSchedulingSettingRepo{excelBPSSwitchSettingRepo{values: map[string]string{SettingKeyExcelBPSEnabled: "false"}}}}
-	upstream := &httpUpstreamRecorder{}
-	svc := openAIClientToolsTestService(upstream)
-	svc.settingService = NewSettingService(repo, &config.Config{})
-	request, err := buildExcelBPSAccountTestBody("gpt-5.6-sol", "hi")
-	require.NoError(t, err)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(request))
-
-	_, err = svc.Forward(context.Background(), c, excelAccount(), request)
-
-	var failover *UpstreamFailoverError
-	require.ErrorAs(t, err, &failover)
-	require.Equal(t, ExcelOAuthRouteUnavailableReason, failover.Reason)
-	require.Equal(t, 1, repo.reads)
-	require.Empty(t, upstream.requests)
-}
-
 // WebSocket ingress has no BPS route: a BPS-only account that reaches it is
-// handed back to the handler for another account, whatever the model, plan
-// or global switch, and never continues to native Codex.
+// handed back to the handler for another account, whatever the model or plan,
+// and never continues to native Codex.
 func TestWSIngressRejectsBPSOAuthAccounts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for name, tc := range map[string]struct {
-		account  func() *Account
-		settings *SettingService
+		account func() *Account
 	}{
 		"whitelisted model": {account: excelAccount},
 		"model outside the whitelist": {account: func() *Account {
@@ -428,14 +347,10 @@ func TestWSIngressRejectsBPSOAuthAccounts(t *testing.T) {
 			account.Credentials["plan_type"] = "free"
 			return account
 		}},
-		"global switch off": {account: excelAccount, settings: excelBPSDisabledSettingService()},
 	} {
 		t.Run(name, func(t *testing.T) {
 			upstream := &httpUpstreamRecorder{}
 			svc := openAIClientToolsTestService(upstream)
-			if tc.settings != nil {
-				svc.settingService = tc.settings
-			}
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)

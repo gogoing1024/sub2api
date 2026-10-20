@@ -148,20 +148,19 @@ var errExcelOAuthRouteUnavailable = errors.New("an enabled Excel BPS route is re
 
 const ExcelOAuthRouteUnavailableReason = GatewayFailureReason("excel_oauth_route_unavailable")
 
-// validateExcelOAuthRoute takes the global switch as read by the caller, which
-// must route with that same value: a second read could flip to off and send a
-// BPS-only account down the native path.
-func validateExcelOAuthRoute(account *Account, model string, bpsEnabled bool) error {
-	if account.IsBPSOAuth() && (!account.IsExcelBPSEnabledForModel(model) || !bpsEnabled) {
+// validateExcelOAuthRoute rejects a BPS-only account for a model it cannot
+// serve through BPS (outside its whitelist, a free plan or a shadow account).
+func validateExcelOAuthRoute(account *Account, model string) error {
+	if account.IsBPSOAuth() && !account.IsExcelBPSEnabledForModel(model) {
 		return errExcelOAuthRouteUnavailable
 	}
 	return nil
 }
 
 // newExcelOAuthRouteFailoverError is the forward-time backstop for a BPS-only
-// account that cannot serve this request (the global switch went off under a
-// sticky session, or channel mapping changed the model after selection): the
-// handler moves on to another account instead of answering 400.
+// account that cannot serve this request (for example channel mapping or the
+// account whitelist changed the model's route after selection): the handler
+// moves on to another account instead of answering 400.
 func newExcelOAuthRouteFailoverError() *UpstreamFailoverError {
 	return &UpstreamFailoverError{
 		StatusCode:        http.StatusBadGateway,

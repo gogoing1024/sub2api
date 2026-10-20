@@ -31,7 +31,7 @@ func (s *AccountTestService) testBPSOAuthAccountConnection(c *gin.Context, accou
 	if model == "" {
 		return s.sendErrorAndEnd(c, errExcelBPSNoTestModel.Error())
 	}
-	if s.openaiGatewayService == nil || validateExcelOAuthRoute(account, model, s.openaiGatewayService.excelBPSGloballyEnabled(ctx)) != nil {
+	if s.openaiGatewayService == nil || validateExcelOAuthRoute(account, model) != nil {
 		return s.sendErrorAndEnd(c, errExcelOAuthRouteUnavailable.Error())
 	}
 	if isOpenAIImageModel(account.GetMappedModel(model)) {

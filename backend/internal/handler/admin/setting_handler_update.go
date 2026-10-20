@@ -358,7 +358,6 @@ type UpdateSettingsRequest struct {
 	AvailableChannelsEnabled *bool `json:"available_channels_enabled"`
 
 	// Excel / BPS protocol switch (gateway-wide; defaults to true)
-	ExcelBPSEnabled *bool `json:"excel_bps_enabled"`
 
 	// Subscription feature switch (user-facing subscription surface; see SettingKeySubscriptionEnabled)
 	SubscriptionEnabled *bool `json:"subscription_enabled"`
@@ -2046,12 +2045,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AvailableChannelsEnabled
 		}(),
-		ExcelBPSEnabled: func() bool {
-			if req.ExcelBPSEnabled != nil {
-				return *req.ExcelBPSEnabled
-			}
-			return previousSettings.ExcelBPSEnabled
-		}(),
 		SubscriptionEnabled: func() bool {
 			if req.SubscriptionEnabled != nil {
 				return *req.SubscriptionEnabled
@@ -2523,7 +2516,6 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
 		SubscriptionEnabled:      updatedSettings.SubscriptionEnabled,
-		ExcelBPSEnabled:          updatedSettings.ExcelBPSEnabled,
 
 		ModelPlazaEnabled:       updatedSettings.ModelPlazaEnabled,
 		ModelPlazaRequireAuth:   updatedSettings.ModelPlazaRequireAuth,

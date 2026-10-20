@@ -156,35 +156,24 @@ func TestSettingHandler_GetPublicSettings_ExposesWeChatOAuthModeCapabilities(t *
 	require.True(t, resp.Data.WeChatOAuthMPEnabled)
 }
 
-func TestSettingHandler_GetPublicSettings_ExposesExcelBPSEnabled(t *testing.T) {
+// The removed Excel BPS switch is no longer exposed to unauthenticated
+// clients, even when a stale database row still holds it.
+func TestSettingHandler_GetPublicSettings_OmitsRemovedExcelBPSSwitch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	repo := &settingHandlerPublicRepoStub{values: map[string]string{"excel_bps_enabled": "false"}}
+	h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version")
 
-	for _, tc := range []struct {
-		name   string
-		values map[string]string
-		want   bool
-	}{
-		{name: "unset defaults on", values: map[string]string{}, want: true},
-		{name: "disabled", values: map[string]string{service.SettingKeyExcelBPSEnabled: "false"}, want: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := &settingHandlerPublicRepoStub{values: tc.values}
-			h := NewSettingHandler(service.NewSettingService(repo, &config.Config{}), "test-version")
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
 
-			recorder := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(recorder)
-			c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/settings/public", nil)
+	h.GetPublicSettings(c)
 
-			h.GetPublicSettings(c)
-
-			require.Equal(t, http.StatusOK, recorder.Code)
-			var resp struct {
-				Data struct {
-					ExcelBPSEnabled bool `json:"excel_bps_enabled"`
-				} `json:"data"`
-			}
-			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
-			require.Equal(t, tc.want, resp.Data.ExcelBPSEnabled)
-		})
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resp struct {
+		Data map[string]json.RawMessage `json:"data"`
 	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Data)
+	require.NotContains(t, resp.Data, "excel_bps_enabled")
 }
