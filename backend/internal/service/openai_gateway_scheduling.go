@@ -991,7 +991,10 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 	// A stale sticky binding must not bypass BPS once a BPS account can serve
 	// this request. Clear it and let normal selection choose an eligible BPS
 	// account instead of silently forwarding this turn to /v1/responses.
-	if platform == PlatformOpenAI && strings.TrimSpace(requestedModel) != "" && !isBPSUnsupportedInbound(ctx) && !account.IsExcelBPSEnabledForModel(requestedModel) {
+	// Skipped while the pool is known to hold no BPS-only account: there is
+	// nothing to yield to, so listing it would not change the outcome.
+	if platform == PlatformOpenAI && strings.TrimSpace(requestedModel) != "" && !isBPSUnsupportedInbound(ctx) && !account.IsExcelBPSEnabledForModel(requestedModel) &&
+		s.groupMayHaveBPSOAuth(groupID, platform) {
 		schedulable := func(candidate *Account) bool {
 			if _, excluded := excludedIDs[candidate.ID]; excluded {
 				return false
@@ -1557,6 +1560,7 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		if err != nil {
 			return accounts, err
 		}
+		s.recordExcelBPSGroupPresence(groupID, platform, accounts)
 		accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
 		if platform == PlatformGrok {
 			accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
@@ -1576,6 +1580,7 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
+	s.recordExcelBPSGroupPresence(groupID, platform, accounts)
 	accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
 	if platform == PlatformGrok {
 		accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)

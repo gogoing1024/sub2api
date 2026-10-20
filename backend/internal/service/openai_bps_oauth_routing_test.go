@@ -489,3 +489,69 @@ func TestLegacySelectionReportsBPSCooldowns(t *testing.T) {
 		})
 	}
 }
+
+// listCountingOpenAIAccountRepo counts how often the scheduler lists the pool.
+type listCountingOpenAIAccountRepo struct {
+	stubOpenAIAccountRepo
+	lists *int
+}
+
+func (r listCountingOpenAIAccountRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]Account, error) {
+	*r.lists++
+	return r.stubOpenAIAccountRepo.ListSchedulableUngroupedByPlatform(ctx, platform)
+}
+
+type listCountingSchedulerRepo struct {
+	schedulerTestOpenAIAccountRepo
+	lists *int
+}
+
+func (r listCountingSchedulerRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]Account, error) {
+	*r.lists++
+	return r.schedulerTestOpenAIAccountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, platform)
+}
+
+// A sticky hit in a pool known to hold no BPS-only account does not list the
+// pool to decide whether to yield to BPS; the selection is unchanged.
+func TestLegacyStickyHitSkipsListingWithoutBPSAccounts(t *testing.T) {
+	const sessionHash = "native-sticky"
+	lists := 0
+	svc := &OpenAIGatewayService{
+		accountRepo: listCountingOpenAIAccountRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{bpsRoutingNativeAccount(2, 5), bpsRoutingNativeAccount(3, 5)}}, lists: &lists},
+		cache:       &stubGatewayCache{sessionBindings: map[string]int64{"openai:" + sessionHash: 2}},
+		cfg:         &config.Config{},
+	}
+	for i := 0; i < 5; i++ {
+		account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, sessionHash, "gpt-5.6-sol", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), account.ID)
+	}
+	require.Equal(t, 1, lists, "only the first sticky hit lists the pool")
+}
+
+func TestAdvancedStickyHitSkipsListingWithoutBPSAccounts(t *testing.T) {
+	groupID := int64(12)
+	native := bpsRoutingNativeAccount(2201, 5)
+	native.GroupIDs = []int64{groupID}
+	other := bpsRoutingNativeAccount(2202, 5)
+	other.GroupIDs = []int64{groupID}
+	lists := 0
+	resetOpenAIAdvancedSchedulerSettingCacheForTest()
+	svc := &OpenAIGatewayService{
+		accountRepo:        listCountingSchedulerRepo{schedulerTestOpenAIAccountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{native, other}}, lists: &lists},
+		cache:              &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:native_sticky": native.ID}},
+		cfg:                &config.Config{},
+		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
+	}
+	for i := 0; i < 5; i++ {
+		selection, decision, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "native_sticky", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
+		require.NoError(t, err)
+		require.Equal(t, native.ID, selection.Account.ID)
+		require.True(t, decision.StickySessionHit)
+		if selection.ReleaseFunc != nil {
+			selection.ReleaseFunc()
+		}
+	}
+	require.Equal(t, 1, lists, "only the first sticky hit lists the pool")
+}

@@ -547,7 +547,10 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 	// A sticky binding created before a BPS account joined the group may still
 	// point at a native account. Do not let that old binding bypass the explicit
 	// BPS route while a BPS account can serve this request.
-	if req.Platform == PlatformOpenAI && strings.TrimSpace(req.RequestedModel) != "" && !isBPSUnsupportedInbound(ctx) && !account.IsExcelBPSEnabledForModel(req.RequestedModel) {
+	// Skipped while the pool is known to hold no BPS-only account: there is
+	// nothing to yield to, so listing it would not change the outcome.
+	if req.Platform == PlatformOpenAI && strings.TrimSpace(req.RequestedModel) != "" && !isBPSUnsupportedInbound(ctx) && !account.IsExcelBPSEnabledForModel(req.RequestedModel) &&
+		s.service.groupMayHaveBPSOAuth(req.GroupID, req.Platform) {
 		schedulable := func(candidate *Account) bool {
 			if _, excluded := req.ExcludedIDs[candidate.ID]; excluded {
 				return false
