@@ -178,7 +178,7 @@ func TestUploadRefImageThreeSteps(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"object_key": "media_gen_ref/2026/x/image.png",
-				"upload_url": "/r2-presigned-put",
+				"upload_url": "http://" + r.Host + "/r2-presigned-put",
 			})
 		case r.Method == "PUT" && r.URL.Path == "/r2-presigned-put":
 			raw, _ := io.ReadAll(r.Body)
