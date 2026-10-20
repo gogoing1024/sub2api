@@ -1,6 +1,7 @@
 package service
 
 import (
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -9,6 +10,24 @@ import (
 const excelBPSModelPermissionCooldown = 30 * time.Minute
 const excelBPSModelPermissionFilterReason = "excel_bps_model_not_allowed"
 const excelBPSModelPermissionMaxEntries = 4096
+
+// ExcelBPSModelNotAllowedReason marks a BPS model-permission 403. Only this
+// (account, model) is cooled down; another account may still serve the model.
+const ExcelBPSModelNotAllowedReason = GatewayFailureReason("basispoints_model_not_allowed")
+
+const excelBPSModelNotAllowedClientMessage = "This model is not available on the account's Excel BPS endpoint"
+
+func newExcelBPSModelNotAllowedFailoverError() *UpstreamFailoverError {
+	return &UpstreamFailoverError{
+		StatusCode:        http.StatusForbidden,
+		Stage:             GatewayFailureStageInference,
+		Scope:             GatewayFailureScopeAccount,
+		Reason:            ExcelBPSModelNotAllowedReason,
+		NextAccountAction: NextAccountRetry,
+		ClientStatusCode:  http.StatusForbidden,
+		ClientMessage:     excelBPSModelNotAllowedClientMessage,
+	}
+}
 
 type excelBPSModelKey struct {
 	accountID int64

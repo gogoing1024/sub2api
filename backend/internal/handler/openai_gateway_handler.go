@@ -3571,6 +3571,11 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, "rate_limit_error", string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
 		return
 	}
+	if failoverErr.Reason == service.ExcelBPSModelNotAllowedReason {
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.ClientMessage, "")
+		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, "invalid_request_error", string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
+		return
+	}
 	if failoverErr.Reason == service.OpenAIImagesInsufficientBalanceReason {
 		status := failoverErr.ClientStatusCode
 		if status <= 0 {

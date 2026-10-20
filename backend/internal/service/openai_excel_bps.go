@@ -174,6 +174,14 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return nil, newExcelBPSAccountRejectedFailoverError(status)
 	}
+	// A model-permission 403 only cools this (account, model); nothing was
+	// written yet, so another account may still serve the model.
+	failoverModelNotAllowed := func() (*OpenAIForwardResult, error) {
+		if isExcelBPSClientCancellation(c, ctx.Err()) {
+			return clientCanceled()
+		}
+		return nil, newExcelBPSModelNotAllowedFailoverError()
+	}
 	body, err := sjson.SetBytes(body, "model", model)
 	if err != nil {
 		return fail(400, "basispoints_request_invalid", "Invalid model request")
@@ -370,7 +378,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		code := gjson.GetBytes(raw, "error.code").String()
 		if isExcelBPSModelPermissionError(resp.StatusCode, code) {
 			s.coolDownExcelBPSModel(account, model)
-			return fail(resp.StatusCode, code, "This model is not available on the account's Excel BPS endpoint")
+			return failoverModelNotAllowed()
 		}
 		if resp.StatusCode == http.StatusForbidden {
 			s.handleExcelBPSForbidden(ctx, account, resp.Header, raw, token)

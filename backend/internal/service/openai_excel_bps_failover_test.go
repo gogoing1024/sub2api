@@ -48,11 +48,33 @@ func TestExcelBPSAccountRejectionFailsOverToAnotherAccount(t *testing.T) {
 	}
 }
 
-// A model-permission 403 only cools that model; it is not an account rejection.
-func TestExcelBPSModelPermission403DoesNotFailOver(t *testing.T) {
-	_, err := forwardExcelBPSWithStatus(t, http.StatusForbidden, `{"error":{"code":"model_not_allowed","message":"model unavailable"}}`)
+// A model-permission 403 only cools that (account, model): it is not an
+// account rejection, but another account may still serve the model, so the
+// request moves on without any BPS text reaching the client.
+func TestExcelBPSModelPermission403FailsOverWithoutRejectingAccount(t *testing.T) {
+	for _, code := range []string{"model_not_allowed", "basispoints_model_access_changed"} {
+		gin.SetMode(gin.TestMode)
+		upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"error":{"code":"` + code + `","message":"private upstream diagnostic"}}`))}}
+		svc := openAIClientToolsTestService(upstream)
+		request, err := buildExcelBPSAccountTestBody("gpt-5.6-sol", "hi")
+		require.NoError(t, err)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(request))
 
-	var failover *UpstreamFailoverError
-	require.False(t, errors.As(err, &failover))
-	require.Error(t, err)
+		_, err = svc.Forward(context.Background(), c, excelAccount(), request)
+
+		var failover *UpstreamFailoverError
+		require.True(t, errors.As(err, &failover), code)
+		require.Equal(t, ExcelBPSModelNotAllowedReason, failover.Reason)
+		require.True(t, failover.ShouldRetryNextAccount())
+		require.False(t, failover.IsCredentialFailure())
+		require.False(t, failover.ShouldReportAccountScheduleFailure(), "keep the shared scheduler score")
+		require.Empty(t, failover.ResponseBody)
+		require.NotContains(t, failover.ClientMessage, "private")
+		require.Zero(t, rec.Body.Len(), "leave the response to the handler")
+		require.True(t, svc.isExcelBPSModelCoolingDown(excelAccount(), "gpt-5.6-sol"))
+		require.False(t, svc.isExcelBPSCoolingDown(excelAccount(), "gpt-5.6-sol"), "the account's other BPS models stay eligible")
+	}
 }
