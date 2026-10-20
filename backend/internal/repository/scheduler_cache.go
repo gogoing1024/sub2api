@@ -1025,9 +1025,6 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// 走网关报 no available accounts"。
 		"openai_passthrough",
 		"openai_oauth_passthrough",
-		// Excel BPS：BPS-only（bps-oauth）账号的模型白名单。候选过滤与排序（BPS 优先、
-		// 429/模型权限冷却、WS 兼容性）都按它判断，缺失时账号退化为全部模型走 BPS。
-		"openai_excel_bps_models",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
 		"codex_telemetry_enabled",
@@ -1056,9 +1053,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 	}
 	filtered := make(map[string]any)
 	for _, key := range keys {
-		// openai_excel_bps_models 只看键是否存在来区分「指定模型」与「全部模型」，
-		// 显式 null 也必须保留，否则账号会退化成全部模型走 BPS。
-		if value, ok := extra[key]; ok && (value != nil || key == "openai_excel_bps_models") {
+		if value, ok := extra[key]; ok && value != nil {
 			if key == service.UpstreamBillingProbeExtraKey {
 				filteredProbe := filterSchedulerUpstreamBillingProbe(value)
 				if filteredProbe == nil {

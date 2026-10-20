@@ -281,20 +281,6 @@ func (s *AccountTestService) FetchOpenAIAccountModels(ctx context.Context, accou
 	return payload.Data, nil
 }
 
-// ListExcelBPSAccountModels lists a BPS-only account's test models: live BPS
-// discovery within its whitelist, else its configured whitelist (see
-// OpenAIGatewayService.ListExcelBPSAccountModels).
-func (s *AccountTestService) ListExcelBPSAccountModels(ctx context.Context, account *Account) []openai.Model {
-	if s == nil || s.openaiGatewayService == nil {
-		return ExcelBPSConfiguredModels(account)
-	}
-	models := s.openaiGatewayService.ListExcelBPSAccountModels(ctx, account)
-	if models == nil {
-		models = []openai.Model{}
-	}
-	return models
-}
-
 // NewAccountTestService creates a new AccountTestService
 func NewAccountTestService(
 	accountRepo AccountRepository,

@@ -504,7 +504,6 @@ type OpenAIGatewayService struct {
 	responseHeaderFilter                *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle               *accountWriteThrottle
 	openAIModelsCache                   openAIModelsCache
-	excelBPSModelsCache                 openAIModelsCache
 	excelBPSModelCooldowns              excelBPSModelCooldowns
 	excelBPSCooldownUntil               sync.Map // key: int64(accountID), value: time.Time
 	excelBPSAttachments                 basispoints.AttachmentCache

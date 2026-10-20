@@ -17,14 +17,14 @@ import (
 // API keys use the standard endpoint; OAuth reuses the authenticated, cached
 // Codex source. Account mappings and group policy are applied after this cache.
 func (s *OpenAIGatewayService) FetchOpenAIModelsList(ctx context.Context, account *Account) (*OpenAIModelsResponse, error) {
+	// BPS-only accounts list their configured models; nothing is fetched.
 	if account != nil && account.IsExcelBPSEnabled() {
-		return s.fetchExcelBPSAccountModels(ctx, account)
+		return excelBPSAccountModelsResponse(account), nil
 	}
 	return s.fetchNativeOpenAIModelsList(ctx, account)
 }
 
-// fetchNativeOpenAIModelsList is the non-BPS catalog source. BPS discovery
-// merges this result, so it must never dispatch back into the BPS path.
+// fetchNativeOpenAIModelsList is the non-BPS catalog source.
 func (s *OpenAIGatewayService) fetchNativeOpenAIModelsList(ctx context.Context, account *Account) (*OpenAIModelsResponse, error) {
 	if s == nil || account == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_MODELS_ACCOUNT_REQUIRED", "OpenAI account is required")

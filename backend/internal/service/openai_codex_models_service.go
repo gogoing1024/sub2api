@@ -1706,14 +1706,14 @@ func (c *openAIModelsCache) set(key string, manifest *OpenAIModelsResponse, now 
 // passed through verbatim. Custom API key manifests receive only the narrowly
 // scoped compatibility adjustments required by custom-provider Codex clients.
 func (s *OpenAIGatewayService) FetchCodexModelsManifest(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*OpenAIModelsResponse, error) {
+	// BPS-only accounts get a manifest of their configured models; nothing is fetched.
 	if account != nil && account.IsExcelBPSEnabled() {
-		return s.fetchExcelBPSCodexManifest(ctx, account, ifNoneMatch)
+		return excelBPSCodexManifest(account, ifNoneMatch)
 	}
 	return s.fetchNativeCodexModelsManifest(ctx, account, clientVersion, ifNoneMatch)
 }
 
-// fetchNativeCodexModelsManifest is the non-BPS manifest source. BPS discovery
-// merges this result, so it must never dispatch back into the BPS path.
+// fetchNativeCodexModelsManifest is the non-BPS manifest source.
 func (s *OpenAIGatewayService) fetchNativeCodexModelsManifest(ctx context.Context, account *Account, clientVersion, ifNoneMatch string) (*OpenAIModelsResponse, error) {
 	if account == nil {
 		return nil, infraerrors.New(http.StatusInternalServerError, "OPENAI_CODEX_MODELS_ACCOUNT_REQUIRED", "account is required")

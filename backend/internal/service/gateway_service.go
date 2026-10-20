@@ -811,7 +811,6 @@ type GatewayService struct {
 	userGroupRateSF          singleflight.Group
 	modelsListCache          *gocache.Cache
 	modelsListCacheTTL       time.Duration
-	excelBPSModelSource      ExcelBPSModelSource
 	settingService           *SettingService
 	responseHeaderFilter     *responseheaders.CompiledHeaderFilter
 	debugModelRouting        atomic.Bool
@@ -1598,12 +1597,12 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 		accounts = filtered
 	}
 
-	// BPS-only accounts serve only their BPS models, so they contribute those
-	// instead of mapping keys or the native defaults. Without one, the listing
-	// below is unchanged.
+	// BPS-only accounts serve only their configured models (mapping keys, or the
+	// BPS defaults), so they contribute those instead of the native defaults.
+	// Without one, the listing below is unchanged.
 	if platform == PlatformOpenAI {
 		if bpsAccounts := excelBPSOAuthListingAccounts(accounts); len(bpsAccounts) > 0 {
-			models := s.openAIListingModelsWithExcelBPS(ctx, accounts, bpsAccounts)
+			models := openAIListingModelsWithExcelBPS(accounts, bpsAccounts)
 			if s.modelsListCache != nil {
 				s.modelsListCache.Set(cacheKey, cloneStringSlice(models), s.modelsListCacheTTL)
 				modelsListCacheStoreTotal.Add(1)
@@ -1678,14 +1677,6 @@ func (s *GatewayService) GetAvailableModels(ctx context.Context, groupID *int64,
 	return cloneStringSlice(models)
 }
 
-// SetExcelBPSModelSource lets OpenAI model listings use BPS discovery for
-// BPS-only accounts.
-func (s *GatewayService) SetExcelBPSModelSource(source ExcelBPSModelSource) {
-	if s != nil {
-		s.excelBPSModelSource = source
-	}
-}
-
 func excelBPSOAuthListingAccounts(accounts []Account) []*Account {
 	var bps []*Account
 	for i := range accounts {
@@ -1699,8 +1690,9 @@ func excelBPSOAuthListingAccounts(accounts []Account) []*Account {
 // openAIListingModelsWithExcelBPS lists an OpenAI pool holding BPS-only
 // accounts: the native accounts contribute exactly what they would as a pool
 // of their own (the default catalog when none has a mapping), and each BPS-only
-// account its BPS models. The result is always explicit, never "use defaults".
-func (s *GatewayService) openAIListingModelsWithExcelBPS(ctx context.Context, accounts []Account, bpsAccounts []*Account) []string {
+// account its configured models. The result is always explicit, never "use
+// defaults".
+func openAIListingModelsWithExcelBPS(accounts []Account, bpsAccounts []*Account) []string {
 	natives := make([]Account, 0, len(accounts)-len(bpsAccounts))
 	for i := range accounts {
 		if !accounts[i].IsBPSOAuth() {
@@ -1708,7 +1700,9 @@ func (s *GatewayService) openAIListingModelsWithExcelBPS(ctx context.Context, ac
 		}
 	}
 	models := nativeOpenAIListingModels(natives)
-	models = append(models, excelBPSListingModels(ctx, s.excelBPSModelSource, bpsAccounts)...)
+	for _, account := range bpsAccounts {
+		models = append(models, excelBPSConfiguredModelIDs(account)...)
+	}
 	return dedupeAndSortModelIDs(models)
 }
 

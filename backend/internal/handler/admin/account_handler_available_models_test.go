@@ -764,25 +764,25 @@ func TestAccountHandlerGetAvailableModels_TypeSafeOnlyReturnsJev(t *testing.T) {
 	}
 }
 
-// A BPS-only account's test picker lists only models on its BPS whitelist, in a
-// stable order with a whitelisted default first, and never the native defaults.
-func TestAccountHandlerGetAvailableModels_BPSOAuthFiltersByWhitelist(t *testing.T) {
+// A BPS-only account's test picker lists its configured models in a stable
+// order: the model restriction keys, or the default BPS models while it is
+// empty. It never lists the native defaults and never calls BPS.
+func TestAccountHandlerGetAvailableModels_BPSOAuthListsConfiguredModels(t *testing.T) {
 	for name, tc := range map[string]struct {
 		credentials map[string]any
 		extra       map[string]any
 		want        []string
 	}{
-		"mapping synced from upstream": {
+		"model restriction": {
 			credentials: map[string]any{"client_id": "excel", "model_mapping": map[string]any{
-				"gpt-7-new": "gpt-7-new", "z-sol": "gpt-5.6-sol", "a-terra": "gpt-5.6-terra", "gpt-image-2": "gpt-image-2",
+				"gpt-7-new": "gpt-7-new", "z-sol": "gpt-5.6-sol", "a-terra": "gpt-5.6-terra",
 			}},
-			extra: map[string]any{service.ExcelBPSModelsExtraKey: []any{"gpt-5.6-terra", "gpt-5.6-sol"}},
-			want:  []string{"a-terra", "z-sol"},
+			want: []string{"a-terra", "gpt-7-new", "z-sol"},
 		},
-		"whitelist only": {
+		"empty restriction uses the defaults": {
 			credentials: map[string]any{"client_id": "excel"},
-			extra:       map[string]any{service.ExcelBPSModelsExtraKey: []any{"gpt-6-astra", "gpt-5.6-sol"}},
-			want:        []string{"gpt-6-astra", "gpt-5.6-sol"},
+			extra:       map[string]any{"openai_excel_bps_models": []any{"gpt-5.6-sol"}},
+			want:        service.ExcelBPSDefaultModels,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

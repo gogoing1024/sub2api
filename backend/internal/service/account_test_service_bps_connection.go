@@ -19,23 +19,22 @@ var errExcelBPSNoTestModel = errors.New("no Excel BPS model is available for thi
 // through BPS: the tool round trip for bps_tools, otherwise a text probe. The
 // model is the public (request-side) name; BPS forwarding maps it once.
 func (s *AccountTestService) testBPSOAuthAccountConnection(c *gin.Context, account *Account, modelID, prompt, mode string) error {
-	ctx := c.Request.Context()
 	model := strings.TrimSpace(modelID)
 	if model == "" {
 		// The native test default is not a BPS model; use the account's first
-		// BPS model, as its test picker would.
-		if models := s.ListExcelBPSAccountModels(ctx, account); len(models) > 0 {
+		// configured model, as its test picker would.
+		if models := ExcelBPSConfiguredModels(account); len(models) > 0 {
 			model = models[0].ID
 		}
 	}
 	if model == "" {
 		return s.sendErrorAndEnd(c, errExcelBPSNoTestModel.Error())
 	}
-	if s.openaiGatewayService == nil || validateExcelOAuthRoute(account, model) != nil {
-		return s.sendErrorAndEnd(c, errExcelOAuthRouteUnavailable.Error())
-	}
 	if isOpenAIImageModel(account.GetMappedModel(model)) {
 		return s.sendErrorAndEnd(c, "BPS OAuth accounts do not serve image models")
+	}
+	if s.openaiGatewayService == nil || validateExcelOAuthRoute(account, model) != nil {
+		return s.sendErrorAndEnd(c, errExcelOAuthRouteUnavailable.Error())
 	}
 	if mode == AccountTestModeBPSTools {
 		return s.testExcelBPSToolRoundtrip(c, account, model)

@@ -4074,7 +4074,6 @@ func TestIsOpenAIAccountTransportCompatibleRejectsWebSocketForBPSModels(t *testi
 		Credentials: map[string]any{"client_id": openai.ExcelClientID},
 		Extra: map[string]any{
 			"openai_oauth_responses_websockets_v2_enabled": true,
-			"openai_excel_bps_models":                      []string{"gpt-7-new"},
 		},
 	}
 	scheduler := &defaultOpenAIAccountScheduler{service: svc}
@@ -4086,15 +4085,17 @@ func TestIsOpenAIAccountTransportCompatibleRejectsWebSocketForBPSModels(t *testi
 }
 
 // BPS-only accounts answer text Responses only: entry points without a BPS
-// route and image requests never select them.
+// route and image requests never select them. Which models they accept is
+// their model restriction (IsModelSupported), checked separately.
 func TestAccountSupportsOpenAICapabilitiesForRequestScopesBPSOAuth(t *testing.T) {
-	account := &Account{ID: 8803, Platform: PlatformOpenAI, Type: AccountTypeBPSOAuth, Credentials: map[string]any{"client_id": openai.ExcelClientID},
-		Extra: map[string]any{"openai_excel_bps_models": []string{"gpt-7-new"}}}
+	account := &Account{ID: 8803, Platform: PlatformOpenAI, Type: AccountTypeBPSOAuth,
+		Credentials: map[string]any{"client_id": openai.ExcelClientID, "model_mapping": map[string]any{"gpt-7-new": "gpt-7-new"}}}
 	ctx := context.Background()
 
 	require.True(t, accountSupportsOpenAICapabilitiesForRequest(ctx, account, "gpt-7-new", OpenAIEndpointCapabilityChatCompletions, ""))
 	require.True(t, accountSupportsOpenAICapabilitiesForRequest(ctx, account, "gpt-7-new", OpenAIEndpointCapabilityResponses, ""))
-	require.False(t, accountSupportsOpenAICapabilitiesForRequest(ctx, account, "gpt-native", OpenAIEndpointCapabilityChatCompletions, ""), "outside the BPS whitelist")
+	require.True(t, account.IsModelSupported("gpt-7-new"))
+	require.False(t, account.IsModelSupported("gpt-native"), "outside the model restriction")
 	require.False(t, accountSupportsOpenAICapabilitiesForRequest(ctx, account, "gpt-7-new", OpenAIEndpointCapabilityEmbeddings, ""))
 	require.False(t, accountSupportsOpenAICapabilitiesForRequest(ctx, account, "gpt-7-new", OpenAIEndpointCapabilityResponses, OpenAIImagesCapabilityBasic))
 	require.False(t, accountSupportsOpenAICapabilitiesForRequest(WithBPSUnsupportedInbound(ctx), account, "gpt-7-new", OpenAIEndpointCapabilityChatCompletions, ""),

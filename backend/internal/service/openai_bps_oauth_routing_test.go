@@ -26,7 +26,11 @@ func bpsRoutingBPSAccount(id int64, models ...string) Account {
 	account.ID = id
 	account.Priority = 0
 	if len(models) > 0 {
-		account.Extra = map[string]any{"openai_excel_bps_models": models}
+		mapping := make(map[string]any, len(models))
+		for _, model := range models {
+			mapping[model] = model
+		}
+		account.Credentials["model_mapping"] = mapping
 	}
 	return account
 }

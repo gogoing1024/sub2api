@@ -2945,13 +2945,9 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
-	// BPS-only accounts test only what BPS serves for them: live BPS discovery
-	// within their whitelist, never mapping keys outside it or native defaults.
+	// BPS-only accounts test only their configured models (mapping keys, or the
+	// BPS defaults), never the native defaults.
 	if account.IsBPSOAuth() {
-		if h.accountTestService != nil {
-			response.Success(c, h.accountTestService.ListExcelBPSAccountModels(c.Request.Context(), account))
-			return
-		}
 		response.Success(c, service.ExcelBPSConfiguredModels(account))
 		return
 	}

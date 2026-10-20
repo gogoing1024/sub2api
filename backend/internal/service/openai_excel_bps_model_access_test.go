@@ -2,13 +2,11 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -33,37 +31,10 @@ func TestExcelBPSAccessCatalogFiltersPermissionsAndKeepsNewModels(t *testing.T) 
 	}
 }
 
-func TestExcelBPSAccessSharedRefreshSurvivesWaiterCancellation(t *testing.T) {
-	var calls atomic.Int32
-	started, release := make(chan struct{}), make(chan struct{})
-	svc := openAIClientToolsTestService(nil)
-	svc.httpUpstream = &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
-		if calls.Add(1) == 1 {
-			close(started)
-		}
-		select {
-		case <-release:
-			return ordinaryModelsUpstreamResponse(bpsAccessFixture), nil
-		case <-req.Context().Done():
-			return nil, req.Context().Err()
-		}
-	}}
-	ctx, cancel := context.WithCancel(context.Background())
-	first := make(chan error, 1)
-	go func() { _, err := svc.FetchExcelBPSModelsList(ctx, excelAccount()); first <- err }()
-	<-started
-	second := make(chan error, 1)
-	go func() { _, err := svc.FetchExcelBPSModelsList(context.Background(), excelAccount()); second <- err }()
-	cancel()
-	require.ErrorIs(t, <-first, context.Canceled)
-	close(release)
-	require.NoError(t, <-second)
-	require.EqualValues(t, 1, calls.Load())
-	_, err := svc.FetchExcelBPSModelsList(ctx, excelAccount())
-	require.ErrorIs(t, err, context.Canceled)
-}
-
-func TestExcelBPSAccessCacheCredentialIsolationExpiryAndErrors(t *testing.T) {
+// Discovery only backs "sync upstream models", an explicit admin action, so
+// every call reaches BPS: nothing is cached, rejections never leak the body,
+// and a cancelled caller gets its own context error.
+func TestExcelBPSAccessFetchIsNotCached(t *testing.T) {
 	var calls atomic.Int32
 	reject := false
 	upstream := &codexModelsHTTPUpstreamStub{do: func(req *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
@@ -84,59 +55,68 @@ func TestExcelBPSAccessCacheCredentialIsolationExpiryAndErrors(t *testing.T) {
 	svc := openAIClientToolsTestService(nil)
 	svc.httpUpstream = upstream
 	account := excelAccount()
-	first, err := svc.FetchExcelBPSModelsList(context.Background(), account)
-	require.NoError(t, err)
-	first.Body[0] = '!'
-	second, err := svc.FetchExcelBPSModelsList(context.Background(), account)
-	require.NoError(t, err)
-	require.True(t, json.Valid(second.Body))
-	require.EqualValues(t, 1, calls.Load())
-	account.Credentials["access_token"] = "rotated-synthetic-token"
-	_, err = svc.FetchExcelBPSModelsList(context.Background(), account)
-	require.NoError(t, err)
-	require.EqualValues(t, 2, calls.Load())
-	svc.excelBPSModelsCache.mu.Lock()
-	for k, v := range svc.excelBPSModelsCache.entries {
-		v.expiresAt = time.Now().Add(-time.Second)
-		svc.excelBPSModelsCache.entries[k] = v
-	}
-	svc.excelBPSModelsCache.mu.Unlock()
-	reject = true
 	for range 2 {
-		_, err = svc.FetchExcelBPSModelsList(context.Background(), account)
-		require.Error(t, err)
-		require.NotContains(t, err.Error(), "SYNTHETIC_SECRET")
+		response, err := svc.FetchExcelBPSModelsList(context.Background(), account)
+		require.NoError(t, err)
+		require.Contains(t, string(response.Body), `"gpt-7-new"`)
 	}
-	require.EqualValues(t, 4, calls.Load(), "rejections must not serve stale grants or be cached as permission")
+	require.EqualValues(t, 2, calls.Load(), "discovery is never cached")
+
+	reject = true
+	_, err := svc.FetchExcelBPSModelsList(context.Background(), account)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "SYNTHETIC_SECRET")
 	require.True(t, account.IsExcelBPSEnabled(), "catalog rejection must not disable business routes")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = svc.FetchExcelBPSModelsList(ctx, account)
+	require.ErrorIs(t, err, context.Canceled)
+	require.EqualValues(t, 3, calls.Load())
 }
 
-func TestExcelBPSDiscoveryProducesCodexEffortsAndMappedPicker(t *testing.T) {
+// Model lists, Codex manifests and the test picker of a BPS-only account come
+// from its configuration: mapping targets (projected back to public names), or
+// the default BPS models. Neither BPS nor native Codex is called.
+func TestExcelBPSModelListsComeFromConfiguration(t *testing.T) {
+	var bpsCalls, nativeCalls atomic.Int32
 	svc := openAIClientToolsTestService(nil)
-	svc.httpUpstream = &codexModelsHTTPUpstreamStub{do: func(*http.Request, string, int64, int) (*http.Response, error) {
-		return ordinaryModelsUpstreamResponse(bpsAccessFixture), nil
-	}}
+	svc.httpUpstream = excelBPSAccessOnlyUpstream(t, &bpsCalls)
+	useNativeCodexManifestServer(t, &nativeCalls)
+
 	account := excelAccount()
-	account.Extra["openai_passthrough"] = false
+	list, err := svc.FetchOpenAIModelsList(context.Background(), account)
+	require.NoError(t, err)
+	for _, model := range ExcelBPSDefaultModels {
+		require.Contains(t, string(list.Body), `"`+model+`"`)
+	}
+	require.NotContains(t, string(list.Body), "gpt-5.5")
+
 	account.Credentials["model_mapping"] = map[string]any{"public-new": "gpt-7-new"}
+	list, err = svc.FetchOpenAIModelsList(context.Background(), account)
+	require.NoError(t, err)
+	require.Contains(t, string(list.Body), `"gpt-7-new"`)
+	require.NotContains(t, string(list.Body), "gpt-6-astra", "a configured restriction replaces the defaults")
+
 	manifest, err := svc.FetchCodexModelsManifest(context.Background(), account, "", "")
 	require.NoError(t, err)
-	require.Contains(t, string(manifest.Body), `"effort":"medium"`)
+	require.Contains(t, string(manifest.Body), `"gpt-7-new"`)
 	require.Contains(t, string(manifest.Body), `"multi_agent_version":null`)
 	notModified, err := svc.FetchCodexModelsManifest(context.Background(), account, "", manifest.ETag)
 	require.NoError(t, err)
 	require.True(t, notModified.NotModified)
+
 	picker := &AccountTestService{openaiGatewayService: svc}
 	models, err := picker.FetchOpenAIAccountModels(context.Background(), account)
 	require.NoError(t, err)
-	var found bool
+	ids := make([]string, 0, len(models))
 	for _, m := range models {
-		if m.ID == "public-new" {
-			found = true
-		}
-		require.NotEqual(t, "gpt-6-astra", m.ID)
+		ids = append(ids, m.ID)
 	}
-	require.True(t, found)
+	require.Equal(t, []string{"public-new"}, ids)
+
+	require.Zero(t, bpsCalls.Load(), "listings never call BPS discovery")
+	require.Zero(t, nativeCalls.Load(), "Excel OAuth credentials must never reach native Codex discovery")
 }
 
 type excelBPSShadowParentRepo struct {
@@ -148,32 +128,6 @@ func (r excelBPSShadowParentRepo) GetByID(context.Context, int64) (*Account, err
 	return r.parent, nil
 }
 
-// A scoped Excel OAuth account has no native Codex channel: discovery must
-// return only its BPS models and never dispatch back into itself. The old
-// native merge went through the public dispatchers and recursed until the
-// stack overflowed and killed the process.
-func TestExcelBPSScopedDiscoveryReturnsBPSCatalogWithoutRecursion(t *testing.T) {
-	var bpsCalls, nativeCalls atomic.Int32
-	svc := openAIClientToolsTestService(nil)
-	svc.httpUpstream = excelBPSAccessOnlyUpstream(t, &bpsCalls)
-	useNativeCodexManifestServer(t, &nativeCalls)
-	account := excelAccount()
-	account.Extra["openai_passthrough"] = false
-	account.Extra["openai_excel_bps_models"] = []string{"gpt-7-new"}
-
-	list, err := svc.FetchOpenAIModelsList(context.Background(), account)
-	require.NoError(t, err)
-	require.Contains(t, string(list.Body), `"gpt-7-new"`)
-	require.NotContains(t, string(list.Body), `"gpt-native"`)
-
-	manifest, err := svc.FetchCodexModelsManifest(context.Background(), account, "", "")
-	require.NoError(t, err)
-	require.Contains(t, string(manifest.Body), `"gpt-7-new"`)
-	require.NotContains(t, string(manifest.Body), `"gpt-native"`)
-	require.Positive(t, bpsCalls.Load())
-	require.Zero(t, nativeCalls.Load(), "Excel OAuth credentials must never reach native Codex discovery")
-}
-
 // Spark shadows never route through BPS, and BPS OAuth accounts cannot parent
 // one: a malformed shadow pointing at a BPS-only parent must fail without
 // sending the Excel token to ChatGPT or BPS.
@@ -183,7 +137,6 @@ func TestExcelBPSShadowOfExcelParentRefusesNativeCatalog(t *testing.T) {
 	svc.httpUpstream = excelBPSAccessOnlyUpstream(t, &bpsCalls)
 	useNativeCodexManifestServer(t, &nativeCalls)
 	parent := excelAccount()
-	parent.Extra["openai_excel_bps_models"] = []string{"gpt-7-new"}
 	svc.accountRepo = excelBPSShadowParentRepo{parent: parent}
 	parentID := parent.ID
 	shadow := &Account{ID: 301, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Concurrency: 10,
@@ -193,23 +146,6 @@ func TestExcelBPSShadowOfExcelParentRefusesNativeCatalog(t *testing.T) {
 	require.Error(t, err)
 	require.Zero(t, bpsCalls.Load())
 	require.Zero(t, nativeCalls.Load())
-}
-
-func TestExcelBPSMixedRoutesAndAliasesUseTheirOwnCatalog(t *testing.T) {
-	account := excelAccount()
-	account.Extra["openai_passthrough"] = false
-	account.Extra["openai_excel_bps_models"] = []string{"gpt-7-new"}
-	body, err := mergeExcelBPSAccountModels([]byte(`{"data":[{"id":"gpt-native"},{"id":"gpt-7-new"}]}`), []byte(`{"data":[{"id":"gpt-7-new","reasoning_efforts":["medium"]},{"id":"gpt-other"}]}`), account)
-	require.NoError(t, err)
-	require.Equal(t, 1, strings.Count(string(body), `"id":"gpt-7-new"`))
-	require.Contains(t, string(body), "gpt-native")
-	require.NotContains(t, string(body), "gpt-other")
-	account.Credentials["model_mapping"] = map[string]any{"public-new": "gpt-7-new", "native-alias": "gpt-native"}
-	projected, err := projectAccountModelsBody(body, account, &Group{ID: 1, ModelAllowlist: GroupModelAllowlist{Enabled: true, Models: []string{"public-new"}}}, false)
-	require.NoError(t, err)
-	require.Contains(t, string(projected), "public-new")
-	// Group listing policy is enforced at the existing group merge boundary.
-	require.Contains(t, string(projected), "reasoning_efforts")
 }
 
 // excelBPSAccessOnlyUpstream serves the BPS access catalog. Native OAuth

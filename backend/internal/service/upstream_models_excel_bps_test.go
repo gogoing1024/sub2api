@@ -27,17 +27,22 @@ func excelBPSSyncTestService(status int, body string) (*AccountTestService, *int
 }
 
 // A BPS-only account syncs from BPS model discovery, not native Codex, and
-// sees the full catalog regardless of its BPS model whitelist.
+// sees the full catalog regardless of its configured model restriction. Each
+// sync asks BPS again: discovery is not cached.
 func TestFetchUpstreamSupportedModelsUsesExcelBPSDiscoveryForBPSOAuth(t *testing.T) {
 	svc, calls := excelBPSSyncTestService(http.StatusOK, bpsAccessFixture)
 	account := excelAccount()
-	account.Extra = map[string]any{"openai_excel_bps_models": []string{"gpt-5.6-sol"}}
+	account.Credentials["model_mapping"] = map[string]any{"gpt-5.6-sol": "gpt-5.6-sol"}
 
 	models, err := svc.FetchUpstreamSupportedModels(context.Background(), account)
 
 	require.NoError(t, err)
 	require.Equal(t, []string{"gpt-7-new"}, models)
 	require.Equal(t, 1, *calls)
+
+	_, err = svc.FetchUpstreamSupportedModels(context.Background(), account)
+	require.NoError(t, err)
+	require.Equal(t, 2, *calls)
 }
 
 func TestSyncUpstreamModelCatalogReportsExcelBPSFailures(t *testing.T) {

@@ -101,6 +101,14 @@ func TestExcelBPSInvalidEncryptedRetryNeverDropsRequiredContext(t *testing.T) {
 	}
 }
 
+// excelBPSEncryptedHistoryAccount serves the encrypted-history request model
+// (gpt-5.4, mapped onto a BPS model) besides gpt-5.6-sol.
+func excelBPSEncryptedHistoryAccount() *Account {
+	account := excelAccount()
+	account.Credentials["model_mapping"] = map[string]any{"gpt-5.4": "gpt-5.6-sol", "gpt-5.6-sol": "gpt-5.6-sol"}
+	return account
+}
+
 func excelBPSEncryptedHistoryRequest(stream bool) []byte {
 	return []byte(fmt.Sprintf(`{"model":"gpt-5.4","stream":%t,"reasoning":{"effort":"max"},"prompt_cache_key":"encrypted-recovery-session","input":[{"role":"user","content":"continue original task"},{"type":"reasoning","encrypted_content":"private-ciphertext"},{"type":"function_call","call_id":"call_old","name":"inspect","arguments":"{}"},{"type":"function_call_output","call_id":"call_old","output":"original tool result"}]}`, stream))
 }
@@ -175,7 +183,7 @@ func TestExcelBPSInvalidEncryptedContentRetryIsBounded(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-			account := excelAccount()
+			account := excelBPSEncryptedHistoryAccount()
 			_, err := svc.Forward(context.Background(), c, account, excelBPSEncryptedHistoryRequest(false))
 			require.Error(t, err)
 			require.Len(t, upstream.requests, 2)
@@ -219,7 +227,7 @@ func TestExcelBPSInvalidEncryptedContentDoesNotRetryOtherFailures(t *testing.T) 
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-			_, err := svc.Forward(context.Background(), c, excelAccount(), []byte(tc.body))
+			_, err := svc.Forward(context.Background(), c, excelBPSEncryptedHistoryAccount(), []byte(tc.body))
 			require.Error(t, err)
 			require.Len(t, upstream.requests, 1)
 			if tc.status >= 500 {
@@ -257,7 +265,7 @@ func TestExcelBPSInvalidEncryptedContentStopsOnDisconnect(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(ctx)
-			_, err := svc.Forward(ctx, c, excelAccount(), excelBPSEncryptedHistoryRequest(false))
+			_, err := svc.Forward(ctx, c, excelBPSEncryptedHistoryAccount(), excelBPSEncryptedHistoryRequest(false))
 			require.Error(t, err)
 			require.True(t, first.closed.Load())
 			if cancelBeforeRetry {

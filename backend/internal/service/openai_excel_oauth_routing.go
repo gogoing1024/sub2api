@@ -52,38 +52,19 @@ func validateBPSOAuthCredentials(platform, accountType string, credentials map[s
 	return nil
 }
 
-// ExcelBPSModelsExtraKey holds a BPS-only account's model whitelist.
-const ExcelBPSModelsExtraKey = "openai_excel_bps_models"
+// ExcelBPSDefaultModels are the models a BPS-only account serves while its
+// model restriction (credentials.model_mapping) is empty. Anything else must be
+// configured on the account, e.g. through "sync upstream models".
+var ExcelBPSDefaultModels = []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra"}
 
-// validateExcelBPSModelsExtra rejects a stored whitelist that selects no
-// model: a BPS-only account with it would stay active but never serve. A
-// missing key (or nil, which removes it) keeps every BPS model.
-func validateExcelBPSModelsExtra(extra map[string]any) error {
-	raw, exists := extra[ExcelBPSModelsExtraKey]
-	if !exists || raw == nil {
-		return nil
-	}
-	var models []string
-	switch value := raw.(type) {
-	case []string:
-		models = value
-	case []any:
-		for _, item := range value {
-			model, ok := item.(string)
-			if !ok {
-				return infraerrors.BadRequest("BPS_OAUTH_INVALID", "BPS OAuth model whitelist must be a list of model names")
-			}
-			models = append(models, model)
-		}
-	default:
-		return infraerrors.BadRequest("BPS_OAUTH_INVALID", "BPS OAuth model whitelist must be a list of model names")
-	}
-	for _, model := range models {
-		if strings.TrimSpace(model) != "" {
-			return nil
+func isExcelBPSDefaultModel(model string) bool {
+	model = strings.TrimSpace(model)
+	for _, candidate := range ExcelBPSDefaultModels {
+		if candidate == model {
+			return true
 		}
 	}
-	return infraerrors.BadRequest("BPS_OAUTH_INVALID", "BPS OAuth accounts need at least one model in the whitelist")
+	return false
 }
 
 // validateBPSOAuthTypeChange keeps BPS-only accounts out of type changes. An
@@ -149,9 +130,10 @@ var errExcelOAuthRouteUnavailable = errors.New("an enabled Excel BPS route is re
 const ExcelOAuthRouteUnavailableReason = GatewayFailureReason("excel_oauth_route_unavailable")
 
 // validateExcelOAuthRoute rejects a BPS-only account for a model it cannot
-// serve through BPS (outside its whitelist, a free plan or a shadow account).
+// serve through BPS (outside its model restriction, a free plan or a shadow
+// account).
 func validateExcelOAuthRoute(account *Account, model string) error {
-	if account.IsBPSOAuth() && !account.IsExcelBPSEnabledForModel(model) {
+	if account.IsBPSOAuth() && (!account.IsExcelBPSEnabledForModel(model) || !account.IsModelSupported(model)) {
 		return errExcelOAuthRouteUnavailable
 	}
 	return nil
@@ -159,8 +141,8 @@ func validateExcelOAuthRoute(account *Account, model string) error {
 
 // newExcelOAuthRouteFailoverError is the forward-time backstop for a BPS-only
 // account that cannot serve this request (for example channel mapping or the
-// account whitelist changed the model's route after selection): the handler
-// moves on to another account instead of answering 400.
+// account's model restriction changed after selection): the handler moves on
+// to another account instead of answering 400.
 func newExcelOAuthRouteFailoverError() *UpstreamFailoverError {
 	return &UpstreamFailoverError{
 		StatusCode:        http.StatusBadGateway,

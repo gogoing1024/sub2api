@@ -84,8 +84,9 @@ func excelBPSAccessModelsBody(raw []byte) ([]byte, error) {
 	return json.Marshal(map[string]any{"object": "list", "data": models})
 }
 
-// FetchExcelBPSModelsList uses a separate fresh-only cache scoped by bearer,
-// account and proxy identity. Expired permissions are never served stale.
+// FetchExcelBPSModelsList reads the models BPS currently offers this account
+// (GET /basispoints/api/responses/access?include_models=true). Only "sync
+// upstream models" uses it, on an explicit admin action, so it is not cached.
 func (s *OpenAIGatewayService) FetchExcelBPSModelsList(ctx context.Context, account *Account) (*OpenAIModelsResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -101,7 +102,9 @@ func (s *OpenAIGatewayService) FetchExcelBPSModelsList(ctx context.Context, acco
 	if accountID == "" {
 		return nil, fmt.Errorf("excel BPS model discovery requires an account ID")
 	}
-	request, err := newExcelBPSRequest(ctx, nil, token, accountID)
+	fetchCtx, cancel := context.WithTimeout(ctx, excelBPSModelsFetchTimeout)
+	defer cancel()
+	request, err := newExcelBPSRequest(WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(fetchCtx, HTTPUpstreamProfileExcelBPS)), nil, token, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -111,236 +114,51 @@ func (s *OpenAIGatewayService) FetchExcelBPSModelsList(ctx context.Context, acco
 	request.Header.Set("Accept", "application/json")
 	request.URL.Path = "/basispoints/api/responses/access"
 	request.URL.RawQuery = "include_models=true"
-	proxy := upstreamModelsProxyURL(account)
-	identity := openAIModelsRequest{url: request.URL.String(), headers: request.Header, proxyURL: fmt.Sprintf("%s|bps", proxy), accountID: account.ID, credentialAccountID: account.ID, standardModelsList: true}
-	key := buildOpenAIModelsCacheKey(identity)
-	if cached, state := s.excelBPSModelsCache.get(key, time.Now()); state == openAIModelsCacheFresh {
-		return openAIModelsResponseForClient(cached, ""), nil
+	response, err := s.httpUpstream.Do(request, upstreamModelsProxyURL(account), account.ID, account.Concurrency)
+	if err != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, infraerrors.New(502, "EXCEL_BPS_MODELS_UPSTREAM_FAILED", "Excel BPS model discovery request failed")
 	}
-	fetch := func(fetchCtx context.Context) (*OpenAIModelsResponse, error) {
-		if cached, state := s.excelBPSModelsCache.get(key, time.Now()); state == openAIModelsCacheFresh {
-			return cached, nil
-		}
-		fetchCtx, cancel := context.WithTimeout(fetchCtx, 5*time.Second)
-		defer cancel()
-		req := request.Clone(WithHTTPUpstreamRedirectsDisabled(WithHTTPUpstreamProfile(fetchCtx, HTTPUpstreamProfileExcelBPS)))
-		response, err := s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
-		if err != nil {
-			if response != nil && response.Body != nil {
-				_ = response.Body.Close()
-			}
-			return nil, infraerrors.New(502, "EXCEL_BPS_MODELS_UPSTREAM_FAILED", "Excel BPS model discovery request failed")
-		}
-		if response == nil || response.Body == nil {
-			return nil, fmt.Errorf("excel BPS model discovery returned no response")
-		}
-		defer func() { _ = response.Body.Close() }()
-		stop := context.AfterFunc(fetchCtx, func() { _ = response.Body.Close() })
-		defer stop()
-		if response.StatusCode != http.StatusOK {
-			return nil, infraerrors.New(502, "EXCEL_BPS_MODELS_UPSTREAM_REJECTED", fmt.Sprintf("Excel BPS model discovery returned HTTP %d", response.StatusCode))
-		}
-		raw, err := io.ReadAll(io.LimitReader(response.Body, openAIModelsCacheBodyLimit+1))
-		if err != nil || len(raw) > openAIModelsCacheBodyLimit {
-			return nil, fmt.Errorf("excel BPS model catalog could not be read")
-		}
-		body, err := excelBPSAccessModelsBody(raw)
-		if err != nil {
-			return nil, err
-		}
-		if err := fetchCtx.Err(); err != nil {
-			return nil, err
-		}
-		manifest := &OpenAIModelsResponse{Body: body, ETag: codexModelsManifestBodyETag(body)}
-		s.excelBPSModelsCache.set(key, manifest, time.Now())
-		return manifest, nil
+	if response == nil || response.Body == nil {
+		return nil, fmt.Errorf("excel BPS model discovery returned no response")
 	}
-	ch := s.excelBPSModelsCache.refresh.DoChan(key, func() (any, error) { return fetch(context.Background()) })
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case result := <-ch:
-		if result.Err != nil {
-			return nil, result.Err
-		}
-		manifest, ok := result.Val.(*OpenAIModelsResponse)
-		if !ok || manifest == nil {
-			return nil, fmt.Errorf("excel BPS model discovery returned no catalog")
-		}
-		return openAIModelsResponseForClient(manifest, ""), nil
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return nil, infraerrors.New(502, "EXCEL_BPS_MODELS_UPSTREAM_REJECTED", fmt.Sprintf("Excel BPS model discovery returned HTTP %d", response.StatusCode))
 	}
-}
-
-func mergeExcelBPSAccountModels(native, bps []byte, account *Account) ([]byte, error) {
-	_, bpsEntries, err := modelCatalogEntries(bps, "data")
+	raw, err := io.ReadAll(io.LimitReader(response.Body, openAIModelsCacheBodyLimit+1))
+	if err != nil || len(raw) > openAIModelsCacheBodyLimit {
+		return nil, fmt.Errorf("excel BPS model catalog could not be read")
+	}
+	body, err := excelBPSAccessModelsBody(raw)
 	if err != nil {
 		return nil, err
-	}
-	var nativeEntries []json.RawMessage
-	if len(native) > 0 {
-		_, nativeEntries, err = modelCatalogEntries(native, "data")
-		if err != nil {
-			return nil, err
-		}
-	}
-	merged := make([]json.RawMessage, 0, len(nativeEntries)+len(bpsEntries))
-	for _, batch := range []struct {
-		entries []json.RawMessage
-		bps     bool
-	}{{nativeEntries, false}, {bpsEntries, true}} {
-		for _, raw := range batch.entries {
-			var entry struct {
-				ID string `json:"id"`
-			}
-			if json.Unmarshal(raw, &entry) != nil {
-				continue
-			}
-			if account.isExcelBPSUpstreamModelEnabled(entry.ID) == batch.bps {
-				merged = append(merged, raw)
-			}
-		}
-	}
-	return json.Marshal(map[string]any{"object": "list", "data": merged})
-}
-
-// Apply permissions/efforts to raw upstream IDs before public-name projection.
-func applyExcelBPSEffortsToManifest(body, access []byte, account *Account) ([]byte, error) {
-	envelope, entries, err := modelCatalogEntries(body, "models")
-	if err != nil {
-		return nil, err
-	}
-	_, models, err := modelCatalogEntries(access, "data")
-	if err != nil {
-		return nil, err
-	}
-	byID := make(map[string]map[string]json.RawMessage, len(models))
-	for _, raw := range models {
-		var model map[string]json.RawMessage
-		_ = json.Unmarshal(raw, &model)
-		var id string
-		_ = json.Unmarshal(model["id"], &id)
-		byID[id] = model
-	}
-	kept := make([]json.RawMessage, 0, len(entries))
-	for _, raw := range entries {
-		var model map[string]json.RawMessage
-		_ = json.Unmarshal(raw, &model)
-		var slug string
-		_ = json.Unmarshal(model["slug"], &slug)
-		if account.isExcelBPSUpstreamModelEnabled(slug) {
-			capability, allowed := byID[slug]
-			if !allowed {
-				continue
-			}
-			if label := capability["display_name"]; label != nil {
-				model["display_name"] = label
-			}
-			if levels := capability["reasoning_efforts"]; levels != nil {
-				var efforts []string
-				_ = json.Unmarshal(levels, &efforts)
-				levels := make([]map[string]string, 0, len(efforts))
-				for _, effort := range efforts {
-					levels = append(levels, map[string]string{"effort": effort, "description": effort})
-				}
-				model["supported_reasoning_levels"], _ = json.Marshal(levels)
-				if len(efforts) > 0 {
-					model["default_reasoning_level"], _ = json.Marshal(efforts[0])
-				}
-			}
-			model["multi_agent_version"] = json.RawMessage("null")
-			model["multi_agent_reasoning_effort"] = json.RawMessage("null")
-			raw, _ = json.Marshal(model)
-		}
-		kept = append(kept, raw)
-	}
-	envelope["models"], _ = json.Marshal(kept)
-	return json.Marshal(envelope)
-}
-
-// Independent BPS discovery applies to the actual selected model route. Native
-// models keep their own source; a native source failure cannot invent BPS access.
-func (s *OpenAIGatewayService) fetchExcelBPSAccountModels(ctx context.Context, account *Account) (*OpenAIModelsResponse, error) {
-	access, accessErr := s.FetchExcelBPSModelsList(ctx, account)
-	if accessErr != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		if account.IsBPSOAuth() || account.isExcelBPSAllModelsEnabled() {
-			return nil, accessErr
-		}
-		access = &OpenAIModelsResponse{Body: []byte(`{"object":"list","data":[]}`)}
-	}
-	var native []byte
-	if !account.IsBPSOAuth() && !account.isExcelBPSAllModelsEnabled() {
-		response, err := s.fetchNativeOpenAIModelsList(ctx, account)
-		if err == nil {
-			native = response.Body
-		} else if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-	}
-	body, err := mergeExcelBPSAccountModels(native, access.Body, account)
-	if err != nil {
-		return nil, err
-	}
-	if accessErr != nil {
-		_, entries, parseErr := modelCatalogEntries(body, "data")
-		if parseErr != nil || len(entries) == 0 {
-			return nil, accessErr
-		}
 	}
 	return &OpenAIModelsResponse{Body: body, ETag: codexModelsManifestBodyETag(body)}, nil
 }
 
-func (s *OpenAIGatewayService) fetchExcelBPSCodexManifest(ctx context.Context, account *Account, ifNoneMatch string) (*OpenAIModelsResponse, error) {
-	access, err := s.FetchExcelBPSModelsList(ctx, account)
+const excelBPSModelsFetchTimeout = 5 * time.Second
+
+// excelBPSAccountModelsResponse is a BPS-only account's raw model catalog,
+// built from its configuration (see excelBPSUpstreamModelIDs).
+func excelBPSAccountModelsResponse(account *Account) *OpenAIModelsResponse {
+	body := excelBPSConfiguredModelsBody(account)
+	return &OpenAIModelsResponse{Body: body, ETag: codexModelsManifestBodyETag(body)}
+}
+
+// excelBPSCodexManifest is a BPS-only account's Codex manifest, built locally
+// from its configured models. BPS cannot carry multi-agent v2 state, so those
+// fields are cleared on every model.
+func excelBPSCodexManifest(account *Account, ifNoneMatch string) (*OpenAIModelsResponse, error) {
+	body := convertOpenAIModelListToCodexManifestForAccount(excelBPSConfiguredModelsBody(account), account)
+	body, _, err := clearCodexManifestMultiAgent(body, func(string) bool { return true })
 	if err != nil {
 		return nil, err
-	}
-	bpsBody, err := mergeExcelBPSAccountModels(nil, access.Body, account)
-	if err != nil {
-		return nil, err
-	}
-	_, entries, err := modelCatalogEntries(bpsBody, "data")
-	if err != nil {
-		return nil, err
-	}
-	var body []byte
-	if len(entries) == 0 {
-		body = []byte(`{"models":[]}`)
-	} else {
-		body = convertOpenAIModelListToCodexManifestForAccount(bpsBody, account)
-	}
-	body, err = applyExcelBPSEffortsToManifest(body, access.Body, account)
-	if err != nil {
-		return nil, err
-	}
-	if !account.IsBPSOAuth() && !account.isExcelBPSAllModelsEnabled() {
-		native, nativeErr := s.fetchNativeCodexModelsManifest(ctx, account, CodexCanonicalClientVersion(), "")
-		if nativeErr == nil {
-			envelope, models, err := modelCatalogEntries(native.Body, "models")
-			if err != nil {
-				return nil, err
-			}
-			kept := make([]json.RawMessage, 0, len(models))
-			for _, raw := range models {
-				var entry struct {
-					Slug string `json:"slug"`
-				}
-				_ = json.Unmarshal(raw, &entry)
-				if !account.isExcelBPSUpstreamModelEnabled(entry.Slug) {
-					kept = append(kept, raw)
-				}
-			}
-			envelope["models"], _ = json.Marshal(kept)
-			nativeBody, _ := json.Marshal(envelope)
-			body, err = mergeCodexModelsManifestBodies([][]byte{nativeBody, body})
-			if err != nil {
-				return nil, err
-			}
-		} else if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
 	}
 	manifest := &OpenAIModelsResponse{Body: body, ETag: codexModelsManifestBodyETag(body)}
 	return openAIModelsResponseForClient(manifest, ifNoneMatch), nil

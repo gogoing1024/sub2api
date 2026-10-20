@@ -41,16 +41,16 @@ func TestAccountTestServiceRoutesBPSAccountThroughBPS(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), `"type":"error"`)
 }
 
-// Excel OAuth tokens only work on BPS; for a model outside the account's BPS
-// whitelist the test must fail closed instead of sending the Excel token to
-// ChatGPT Codex.
+// Excel OAuth tokens only work on BPS; for a model outside the account's
+// model restriction the test must fail closed instead of sending the Excel
+// token to ChatGPT Codex.
 func TestAccountTestServiceExcelOAuthRequiresBPSRoute(t *testing.T) {
 	upstream := &httpUpstreamRecorder{}
 	gateway := openAIClientToolsTestService(upstream)
 	svc := &AccountTestService{openaiGatewayService: gateway, httpUpstream: upstream}
 	account := excelAccount()
 	account.Credentials["client_id"] = openai.ExcelClientID
-	account.Extra = map[string]any{ExcelBPSModelsExtraKey: []any{"gpt-6-astra"}}
+	account.Credentials["model_mapping"] = map[string]any{"gpt-6-astra": "gpt-6-astra"}
 	c, rec := newBPSAccountTestContext()
 
 	_ = svc.testOpenAIAccountConnection(c, account, "gpt-5.6-sol", "", "")
@@ -146,23 +146,20 @@ func TestAccountTestServiceBPSMapsTestModelOnce(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"type":"test_start","model":"my-sol"`)
 }
 
-// Without a model the test uses the account's first BPS model instead of the
-// native default, which BPS does not serve.
+// Without a model the test uses the account's first configured model (here a
+// default BPS model) instead of the native default, which BPS does not serve.
+// Picking it never calls BPS discovery.
 func TestAccountTestServiceBPSDefaultsToBPSModel(t *testing.T) {
-	upstream := &httpUpstreamRecorder{responses: []*http.Response{
-		{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}, // discovery
-		bpsTestSuccessResponse(),
-	}}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{bpsTestSuccessResponse()}}
 	svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream)}
 	account := excelAccount()
-	account.Extra = map[string]any{ExcelBPSModelsExtraKey: []any{"gpt-5.6-terra", "gpt-5.6-sol"}}
 	c, rec := newBPSAccountTestContext()
 
 	require.NoError(t, svc.testOpenAIAccountConnection(c, account, "", "", ""))
 
 	bodies := bpsResponsesBodies(upstream)
 	require.Len(t, bodies, 1)
-	require.Equal(t, "gpt-5.6-terra", gjson.GetBytes(bodies[0], "model").String())
+	require.Equal(t, ExcelBPSDefaultModels[0], gjson.GetBytes(bodies[0], "model").String())
 	require.Contains(t, rec.Body.String(), "test_complete")
 }
 
@@ -171,7 +168,8 @@ func TestAccountTestServiceBPSWithoutAnyModelFails(t *testing.T) {
 		upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`))}}
 		svc := &AccountTestService{openaiGatewayService: openAIClientToolsTestService(upstream)}
 		account := excelAccount()
-		account.Extra = nil
+		// Only a wildcard: nothing listable to pick as the test model.
+		account.Credentials["model_mapping"] = map[string]any{"gpt-*": "gpt-5.6-sol"}
 		c, rec := newBPSAccountTestContext()
 
 		_ = svc.testOpenAIAccountConnection(c, account, "", "", mode)

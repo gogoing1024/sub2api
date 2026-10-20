@@ -27,11 +27,39 @@ func TestIsExcelBPSEnabledFollowsBPSOAuthType(t *testing.T) {
 	shadow := excelAccount()
 	shadow.ParentAccountID = &parentID
 	require.False(t, shadow.IsExcelBPSEnabled())
+}
 
-	scoped := excelAccount()
-	scoped.Extra["openai_excel_bps_models"] = []string{"gpt-7-new"}
-	require.True(t, scoped.IsExcelBPSEnabledForModel("gpt-7-new"))
-	require.False(t, scoped.IsExcelBPSEnabledForModel("gpt-native"))
+// A BPS-only account serves what its model restriction names, or the three
+// default BPS models while it is empty. Passthrough never widens it, and a
+// legacy openai_excel_bps_models whitelist no longer has any effect.
+func TestBPSOAuthModelSupportFollowsModelRestriction(t *testing.T) {
+	empty := excelAccount()
+	for _, model := range ExcelBPSDefaultModels {
+		require.True(t, empty.IsModelSupported(model), model)
+	}
+	for _, model := range []string{"gpt-5.5", "gpt-6.1-sol", "gpt-image-2", "codex-auto-review", "my-alias"} {
+		require.False(t, empty.IsModelSupported(model), model)
+	}
+	require.True(t, empty.IsExcelBPSEnabledForModel("gpt-5.5"), "every model of an eligible account routes through BPS")
+
+	whitelist := excelAccount()
+	whitelist.Credentials["model_mapping"] = map[string]any{"gpt-7-new": "gpt-7-new"}
+	whitelist.Extra["openai_excel_bps_models"] = []any{"gpt-5.6-sol"}
+	require.True(t, whitelist.IsModelSupported("gpt-7-new"))
+	require.False(t, whitelist.IsModelSupported("gpt-5.6-sol"), "a configured restriction replaces the defaults")
+
+	alias := excelAccount()
+	alias.Credentials["model_mapping"] = map[string]any{"my-sol": "gpt-5.6-sol"}
+	require.True(t, alias.IsModelSupported("my-sol"))
+	require.False(t, alias.IsModelSupported("gpt-6-astra"))
+
+	free := excelAccount()
+	free.Credentials["plan_type"] = "free"
+	require.False(t, free.IsModelSupported("gpt-5.6-sol"))
+	require.False(t, free.IsExcelBPSEnabledForModel("gpt-5.6-sol"))
+
+	native := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk"}}
+	require.True(t, native.IsModelSupported("gpt-5.5"), "other account types keep their own rules")
 }
 
 func TestIsOpenAIOAuthCredentialAccountCoversBPSOAuth(t *testing.T) {
@@ -99,16 +127,4 @@ func TestValidateBPSOAuthTypeChange(t *testing.T) {
 	require.Error(t, validateBPSOAuthTypeChange(AccountTypeBPSOAuth, AccountTypeOAuth))
 	require.Error(t, validateBPSOAuthTypeChange(AccountTypeBPSOAuth, AccountTypeSetupToken))
 	require.Error(t, validateBPSOAuthTypeChange(AccountTypeOAuth, AccountTypeBPSOAuth))
-}
-
-func TestValidateExcelBPSModelsExtra(t *testing.T) {
-	require.NoError(t, validateExcelBPSModelsExtra(nil))
-	require.NoError(t, validateExcelBPSModelsExtra(map[string]any{}))
-	require.NoError(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: nil}))
-	require.NoError(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []string{"gpt-6-astra"}}))
-	require.NoError(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []any{"", "gpt-6-astra"}}))
-	require.Error(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []string{}}))
-	require.Error(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []any{" "}}))
-	require.Error(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: []any{1}}))
-	require.Error(t, validateExcelBPSModelsExtra(map[string]any{ExcelBPSModelsExtraKey: "gpt-6-astra"}))
 }

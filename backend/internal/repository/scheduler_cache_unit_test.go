@@ -1226,28 +1226,13 @@ func TestBuildSchedulerMetadataAccount_KeepsRPMFieldsForRPMGate(t *testing.T) {
 	})
 }
 
-// BPS candidate filtering and ordering run on the snapshot projection; without
-// the model whitelist a scoped BPS-only account would route every model to BPS.
-func TestFilterSchedulerExtraKeepsExcelBPSRouting(t *testing.T) {
+// The retired BPS model whitelist is no longer projected into the scheduler
+// snapshot; a BPS-only account's models come from its model mapping.
+func TestFilterSchedulerExtraDropsRetiredExcelBPSWhitelist(t *testing.T) {
 	filtered := filterSchedulerExtra(map[string]any{
 		"openai_excel_bps_models": []string{"gpt-7-new"},
-	})
-	require.Equal(t, []string{"gpt-7-new"}, filtered["openai_excel_bps_models"])
-
-	account := &service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeBPSOAuth, Extra: filtered}
-	require.True(t, account.IsExcelBPSEnabledForModel("gpt-7-new"))
-	require.False(t, account.IsExcelBPSEnabledForModel("gpt-native"))
-}
-
-// An explicit null model scope means "selected models, none chosen"; dropping
-// the key would silently widen the account to every model.
-func TestFilterSchedulerExtraKeepsNullExcelBPSModelScope(t *testing.T) {
-	filtered := filterSchedulerExtra(map[string]any{
-		"openai_excel_bps":        true,
-		"openai_excel_bps_models": nil,
 		"openai_passthrough":      nil,
 	})
-	require.Contains(t, filtered, "openai_excel_bps_models")
-	require.Nil(t, filtered["openai_excel_bps_models"])
+	require.NotContains(t, filtered, "openai_excel_bps_models")
 	require.NotContains(t, filtered, "openai_passthrough")
 }

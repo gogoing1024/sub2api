@@ -947,8 +947,9 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 }
 
 func (a *Account) isModelMappingSupported(requestedModel string) bool {
-	// BPS-only（bps-oauth）账号没有原生 Codex 通道：BPS 白名单外的模型一律不参与映射放行。
-	if a.IsBPSOAuth() && !a.IsExcelBPSEnabledForModel(requestedModel) {
+	// BPS-only（bps-oauth）账号没有原生 Codex 通道：不具备 BPS 资格（free / 影子）时
+	// 不服务任何模型；其余按下方 model_mapping 判定，空映射只放行默认 BPS 模型。
+	if a.IsBPSOAuth() && !a.IsExcelBPSEnabled() {
 		return false
 	}
 	// 透传模式仅替换认证、模型语义完全交由上游决定，因此放行所有模型。
@@ -968,6 +969,9 @@ func (a *Account) isModelMappingSupported(requestedModel string) bool {
 	}
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
+		if a.IsBPSOAuth() {
+			return isExcelBPSDefaultModel(requestedModel)
+		}
 		if a.IsOpenAIOAuth() {
 			return isOpenAIOAuthServableModel(requestedModel)
 		}
@@ -2204,7 +2208,8 @@ func (a *Account) IsCodexTelemetryEnabled() bool {
 // 兼容字段：accounts.extra.openai_oauth_passthrough（历史 OAuth 开关）。
 // 字段缺失或类型不正确时，按 false（关闭）处理。
 func (a *Account) IsOpenAIPassthroughEnabled() bool {
-	if a == nil || !a.IsOpenAI() || a.Extra == nil {
+	// BPS 转发始终应用账号映射，透传对 bps-oauth 不生效。
+	if a == nil || !a.IsOpenAI() || a.Extra == nil || a.IsBPSOAuth() {
 		return false
 	}
 	if enabled, ok := a.Extra["openai_passthrough"].(bool); ok {
@@ -2231,8 +2236,8 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 // 2. 分类型字段缺失时，回退兼容字段
 // IsExcelBPSEnabled reports whether the account routes through the Excel
 // gateway (bps.openai.com). BPS is the only channel of a BPS-only (bps-oauth)
-// account, so it is always on for eligible accounts; the model whitelist and
-// the global switch decide what it serves. Free-plan accounts are never eligible.
+// account, so it is always on for eligible accounts; the account's model
+// restriction decides what it serves. Free-plan accounts are never eligible.
 func (a *Account) IsExcelBPSEnabled() bool {
 	return excelBPSRouteEligible(a)
 }
@@ -2260,56 +2265,15 @@ func (a *Account) IsExcelBPSCacheCreationAsInputEnabled() bool {
 	return enabled
 }
 
-// isExcelBPSAllModelsEnabled preserves legacy account-wide routing. An explicit
-// list, including an empty or malformed list, never enables BPS for all models.
-func (a *Account) isExcelBPSAllModelsEnabled() bool {
-	if !a.IsExcelBPSEnabled() {
-		return false
-	}
-	_, scoped := a.Extra["openai_excel_bps_models"]
-	return !scoped
-}
-
-// IsExcelBPSEnabledForModel selects the protocol after account model mapping.
-// The list selects a protocol; it does not restrict access to other models.
+// IsExcelBPSEnabledForModel reports whether a request for this model routes
+// through BPS. Every model of an eligible BPS-only account does; which models
+// the account accepts at all is its model restriction (IsModelSupported).
 func (a *Account) IsExcelBPSEnabledForModel(requestedModel string) bool {
-	if !a.IsExcelBPSEnabled() {
-		return false
-	}
-	return a.isExcelBPSUpstreamModelEnabled(a.GetMappedModel(requestedModel))
-}
-
-func (a *Account) isExcelBPSUpstreamModelEnabled(model string) bool {
-	if !a.IsExcelBPSEnabled() {
-		return false
-	}
-	raw, scoped := a.Extra["openai_excel_bps_models"]
-	if !scoped {
-		return true
-	}
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return false
-	}
-	switch models := raw.(type) {
-	case []string:
-		for _, selected := range models {
-			if strings.TrimSpace(selected) == model {
-				return true
-			}
-		}
-	case []any:
-		for _, selected := range models {
-			if name, ok := selected.(string); ok && strings.TrimSpace(name) == model {
-				return true
-			}
-		}
-	}
-	return false
+	return a.IsExcelBPSEnabled()
 }
 
 func (a *Account) IsOpenAIResponsesWebSocketV2Enabled() bool {
-	if a.isExcelBPSAllModelsEnabled() {
+	if a.IsBPSOAuth() {
 		return false
 	}
 	if a == nil || !a.IsOpenAI() || a.Extra == nil {
