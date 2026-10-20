@@ -7,6 +7,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// excelBPSLineageSessionPrefix keeps BPS's invalid-ciphertext lineage apart
+// from the native one under the same conversation key.
+const excelBPSLineageSessionPrefix = "bps:"
+
 // Only an explicit invalid-ciphertext rejection permits this recovery. Ordinary
 // 400s, authentication, quota and transport errors must not replay a BPS request.
 func isExcelBPSInvalidEncryptedContent(raw []byte) bool {
@@ -25,10 +29,13 @@ func isExcelBPSInvalidEncryptedContent(raw []byte) bool {
 }
 
 // Prepare a single same-route retry from the already translated wire request.
-// Drop only opaque reasoning, preserving messages, tools/results, attachments and
-// routing metadata without decoding numbers or string contents. Compaction and
-// encrypted message bodies may be the only copy of user context: never discard
-// them to make a request pass.
+// Like the native path (sanitizeEncryptedReasoningInputItem), drop opaque
+// reasoning and whole compaction items carrying ciphertext BPS cannot read (for
+// example produced by a native Codex account), preserving messages,
+// tools/results, attachments and routing metadata without decoding numbers or
+// string contents. The conversation continues without the compacted details.
+// Encrypted message bodies and function arguments may be the only copy of user
+// context and are never discarded to make a request pass.
 func prepareExcelBPSInvalidEncryptedRetry(body, rejection []byte) ([]byte, bool) {
 	if !isExcelBPSInvalidEncryptedContent(rejection) {
 		return body, false
@@ -48,6 +55,10 @@ func prepareExcelBPSInvalidEncryptedRetry(body, rejection []byte) ([]byte, bool)
 		typeName := gjson.GetBytes(item, "type").String()
 		encrypted := gjson.GetBytes(item, "encrypted_content")
 		if typeName == "reasoning" && encrypted.Type == gjson.String && encrypted.String() != "" {
+			removed = true
+			continue
+		}
+		if (typeName == "compaction" || typeName == "compaction_summary") && encrypted.Exists() {
 			removed = true
 			continue
 		}

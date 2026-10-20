@@ -211,7 +211,6 @@ func TestExcelBPSInvalidEncryptedContentDoesNotRetryOtherFailures(t *testing.T) 
 	}{
 		{"ordinary 400", `{"error":{"code":"invalid_value"}}`, string(excelBPSEncryptedHistoryRequest(false)), 400},
 		{"no removable reasoning", excelBPSInvalidCiphertext, `{"model":"gpt-5.6-sol","input":"continue"}`, 400},
-		{"encrypted compaction", excelBPSInvalidCiphertext, `{"model":"gpt-5.6-sol","input":[{"role":"user","content":"continue"},{"type":"reasoning","encrypted_content":"opaque"},{"type":"compaction","encrypted_content":"context"}]}`, 400},
 		{"non-400", excelBPSInvalidCiphertext, string(excelBPSEncryptedHistoryRequest(false)), 500},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -271,4 +270,69 @@ func TestExcelBPSInvalidEncryptedContentStopsOnDisconnect(t *testing.T) {
 			require.NotContains(t, rec.Body.String(), "private")
 		})
 	}
+}
+
+// Unreadable compaction is degraded like on the native path: the whole item
+// goes with the opaque reasoning, and other ciphertext still blocks the retry.
+func TestPrepareExcelBPSInvalidEncryptedRetryDropsCompaction(t *testing.T) {
+	retry, ok := prepareExcelBPSInvalidEncryptedRetry([]byte(`{"model":"gpt-5.6-sol","input":[{"role":"user","content":"continue"},{"type":"compaction","encrypted_content":"native-compact","summary":[]},{"type":"compaction_summary","encrypted_content":"native-summary"},{"type":"reasoning","encrypted_content":"native-reasoning"},{"role":"user","content":"next"}]}`), []byte(excelBPSInvalidCiphertext))
+	require.True(t, ok)
+	for _, ciphertext := range []string{"native-compact", "native-summary", "native-reasoning"} {
+		require.NotContains(t, string(retry), ciphertext)
+	}
+	require.Contains(t, string(retry), "continue")
+	require.Contains(t, string(retry), "next")
+
+	for name, input := range map[string]string{
+		"encrypted agent message":      `{"type":"agent_message","encrypted_content":"opaque"}`,
+		"encrypted function arguments": `{"type":"function_call","call_id":"c","name":"x","arguments":"{}","encrypted_function_args":["opaque"]}`,
+		"encrypted content part":       `{"role":"user","content":[{"type":"input_text","text":"x","encrypted_content":"opaque"}]}`,
+	} {
+		body := `{"model":"gpt-5.6-sol","input":[{"role":"user","content":"continue"},{"type":"compaction","encrypted_content":"native-compact"},` + input + `]}`
+		_, ok := prepareExcelBPSInvalidEncryptedRetry([]byte(body), []byte(excelBPSInvalidCiphertext))
+		require.False(t, ok, name)
+	}
+}
+
+// After one rejection the conversation remembers the unreadable ciphertext: the
+// next turn strips it up front and BPS is asked only once. The memory lives in
+// a BPS namespace, so native accounts keep reading native ciphertext.
+func TestExcelBPSRemembersUnreadableCiphertextPerConversation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"gpt-5.6-sol","stream":false,"prompt_cache_key":"cross-protocol-session","input":[{"role":"user","content":"original task"},{"type":"compaction","encrypted_content":"native-compact"},{"type":"reasoning","encrypted_content":"native-reasoning","summary":[]},{"role":"user","content":"continue"}]}`)
+	completed := func() *http.Response {
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"output\":[]}}\n\n"))}
+	}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: 400, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(excelBPSInvalidCiphertext))},
+		completed(),
+		completed(),
+	}}
+	svc := openAIClientToolsTestService(upstream)
+	forward := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		_, err := svc.Forward(context.Background(), c, excelAccount(), body)
+		require.NoError(t, err)
+		require.Equal(t, 200, rec.Code)
+		return c
+	}
+
+	c := forward()
+	require.Len(t, upstream.bodies, 2, "rejected once, then retried without the unreadable items")
+	require.Contains(t, string(upstream.bodies[0]), "native-compact")
+	require.NotContains(t, string(upstream.bodies[1]), "native-compact")
+	require.NotContains(t, string(upstream.bodies[1]), "native-reasoning")
+
+	forward()
+	require.Len(t, upstream.bodies, 3, "the next turn is stripped up front")
+	require.NotContains(t, string(upstream.bodies[2]), "native-compact")
+	require.NotContains(t, string(upstream.bodies[2]), "native-reasoning")
+	require.Contains(t, string(upstream.bodies[2]), "original task")
+
+	nativeKey := svc.GenerateSessionHash(c, body)
+	require.NotEmpty(t, nativeKey)
+	require.Empty(t, svc.sessionInvalidEncryptedContentDigests(getOpenAIGroupIDFromContext(c), nativeKey), "the native lineage is untouched")
+	require.NotEmpty(t, svc.sessionInvalidEncryptedContentDigests(getOpenAIGroupIDFromContext(c), excelBPSLineageSessionPrefix+nativeKey))
 }

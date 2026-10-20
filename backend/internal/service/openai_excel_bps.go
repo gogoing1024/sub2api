@@ -186,6 +186,26 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return nil, newExcelBPSImageUnsupportedFailoverError(err.Error())
 	}
+	// Ciphertext BPS already rejected in this conversation (a native account's
+	// reasoning or compaction, say) is stripped up front, as on the native path,
+	// so later turns are not rejected first. BPS keeps its own lineage namespace:
+	// native accounts can still read native ciphertext.
+	lineageEntryBody := body
+	lineageGroupID := getOpenAIGroupIDFromContext(c)
+	lineageSessionHash := ""
+	excelBPSLineageSessionHash := func() string {
+		if lineageSessionHash == "" {
+			if hash := s.GenerateSessionHash(c, lineageEntryBody); hash != "" {
+				lineageSessionHash = excelBPSLineageSessionPrefix + hash
+			}
+		}
+		return lineageSessionHash
+	}
+	if store := s.getOpenAIWSStateStore(); store != nil && store.HasAnySessionInvalidEncryptedContent() {
+		if invalid := s.sessionInvalidEncryptedContentDigests(lineageGroupID, excelBPSLineageSessionHash()); len(invalid) > 0 {
+			body, _ = s.stripSessionInvalidEncryptedContentLogged(body, invalid, "excel_bps_invalid_encrypted_lineage_strip", account.ID, 0)
+		}
+	}
 	body, err := sjson.SetBytes(body, "model", model)
 	if err != nil {
 		return fail(400, "basispoints_request_invalid", "Invalid model request")
@@ -370,6 +390,11 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			retryReq, retryErr := newExcelBPSRequest(requestCtx, retryBody, token, accountID)
 			if retryErr != nil {
 				return fail(502, "basispoints_transport_error", "Excel BPS recovery request could not be prepared")
+			}
+			// Remember the rejected ciphertext for this conversation (see the
+			// lineage strip above), as the native path does.
+			if digests := collectOpenAIEncryptedContentDigestsRaw(lineageEntryBody); len(digests) > 0 {
+				s.markOpenAIWSInvalidEncryptedContentLineage(lineageGroupID, excelBPSLineageSessionHash(), digests)
 			}
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
