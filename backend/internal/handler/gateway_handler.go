@@ -83,6 +83,7 @@ type GatewayHandler struct {
 	concurrencyHelper          *ConcurrencyHelper
 	userMsgQueueHelper         *UserMsgQueueHelper
 	leonardoImageService       *service.LeonardoImageService
+	fishImageService           *service.FishImageService
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
 	maxAccountSwitchesGemini   int
@@ -107,6 +108,7 @@ func NewGatewayHandler(
 	contentModerationService *service.ContentModerationService,
 	userMsgQueueService *service.UserMessageQueueService,
 	leonardoImageService *service.LeonardoImageService,
+	fishImageService *service.FishImageService,
 	cfg *config.Config,
 	settingService *service.SettingService,
 ) *GatewayHandler {
@@ -145,6 +147,7 @@ func NewGatewayHandler(
 		concurrencyHelper:         NewConcurrencyHelper(concurrencyService, SSEPingFormatClaude, pingInterval),
 		userMsgQueueHelper:        umqHelper,
 		leonardoImageService:      leonardoImageService,
+		fishImageService:          fishImageService,
 		imageLimiter:              sharedImageConcurrencyLimiter,
 		maxAccountSwitches:        maxAccountSwitches,
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,

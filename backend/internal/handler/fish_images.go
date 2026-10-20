@@ -1,0 +1,460 @@
+package handler
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+
+	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+)
+
+// FishImages 处理 fish.audio 分组下的 /v1/images/generations 与 /v1/images/edits。
+//
+// 结构照 LeonardoImages，但去掉中转分支——fish 上游不是 OpenAI 线协议，
+// 全部账号都是 token 原生号。选号走平台无关的
+// SelectAccountForModelWithExclusions 自建 failover。
+func (h *GatewayHandler) FishImages(c *gin.Context) {
+	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
+	if !ok {
+		fishImagesError(c, http.StatusUnauthorized, "authentication_error", "Invalid API key")
+		return
+	}
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		fishImagesError(c, http.StatusInternalServerError, "api_error", "User context not found")
+		return
+	}
+	if h.fishImageService == nil {
+		fishImagesError(c, http.StatusNotFound, "not_found_error", "Fish image generation is not available")
+		return
+	}
+
+	reqLog := requestLogger(
+		c,
+		"handler.gateway.fish_images",
+		zap.Int64("user_id", subject.UserID),
+		zap.Int64("api_key_id", apiKey.ID),
+		zap.Any("group_id", apiKey.GroupID),
+	)
+
+	body, err := pkghttputil.ReadRequestBodyWithPrealloc(c.Request)
+	if err != nil {
+		if maxErr, ok := extractMaxBytesError(err); ok {
+			fishImagesError(c, http.StatusRequestEntityTooLarge, "invalid_request_error",
+				buildBodyTooLargeMessage(maxErr.Limit))
+			return
+		}
+		fishImagesError(c, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
+		return
+	}
+
+	parsed, err := h.openAIGatewayService.ParseOpenAIImagesRequest(c, body)
+	if err != nil {
+		fishImagesError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return
+	}
+
+	if !service.GroupAllowsImageGeneration(apiKey.Group) {
+		fishImagesError(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
+		return
+	}
+
+	routingModel := parsed.Model
+	if resolvedModel, ok := service.ResolvedUpstreamModelFromContext(c.Request.Context()); ok {
+		routingModel = resolvedModel
+	}
+
+	reqLog = reqLog.With(
+		zap.String("model", parsed.Model),
+		zap.String("routing_model", routingModel),
+		zap.String("size", parsed.Size),
+		zap.Bool("stream", parsed.Stream),
+	)
+	setOpsRequestContext(c, parsed.Model, false)
+	setOpsEndpointContext(c, "", int16(service.RequestTypeSync))
+
+	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject,
+		service.ContentModerationProtocolOpenAIImages, parsed.Model, parsed.ModerationBody()); decision != nil &&
+		!decision.AllowNextStage {
+		h.openAISecurityAuditError(c, decision)
+		return
+	}
+
+	releaseAdmission, admitted := h.admitFishImagesRequest(c, reqLog, apiKey, subject)
+	if !admitted {
+		return
+	}
+	defer releaseAdmission()
+
+	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, routingModel)
+	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	call := service.NewFishImageCall(parsed, channelMapping.MappedModel)
+	h.runFishImagesFailover(c, reqLog, apiKey, subject, subscription, &fishImagesRequest{
+		parsed:         parsed,
+		body:           body,
+		routingModel:   routingModel,
+		channelMapping: channelMapping,
+		call:           call,
+	})
+}
+
+// fishImagesRequest 汇总一次 fish 出图请求在换号尝试之间共享的输入。
+type fishImagesRequest struct {
+	parsed *service.OpenAIImagesRequest
+	body   []byte
+	// routingModel 用于选号；channelMapping.MappedModel 用于上游请求。
+	routingModel   string
+	channelMapping service.ChannelMappingResult
+	// call 在换号之间复用已抓取的参考图。
+	call *service.FishImageCall
+}
+
+// admitFishImagesRequest 与 Leonardo 出图一致的准入：全局出图并发槽 →
+// 用户并发槽 → 计费资格。
+func (h *GatewayHandler) admitFishImagesRequest(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	apiKey *service.APIKey,
+	subject middleware2.AuthSubject,
+) (release func(), admitted bool) {
+	var releases []func()
+	release = func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}
+
+	imageRelease, acquired := h.acquireFishImageSlot(c)
+	if !acquired {
+		return nil, false
+	}
+	if imageRelease != nil {
+		releases = append(releases, imageRelease)
+	}
+
+	if h.errorPassthroughService != nil {
+		service.BindErrorPassthroughService(c, h.errorPassthroughService)
+	}
+
+	streamStarted := false
+	userRelease, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, false, &streamStarted)
+	if err != nil {
+		reqLog.Warn("fish_images.user_slot_acquire_failed", zap.Error(err))
+		release()
+		status, errType, _, message := concurrencyErrorResponse(err, "user")
+		fishImagesError(c, status, errType, message)
+		return nil, false
+	}
+	// 槽位持有到 handler 返回（提交后上游与客户端脱钩），由 Redis TTL 兜底。
+	if userRelease = leonardoReleaseOnce(userRelease); userRelease != nil {
+		releases = append(releases, userRelease)
+	}
+
+	subscription, _ := middleware2.GetSubscriptionFromContext(c)
+	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
+		reqLog.Info("fish_images.billing_eligibility_check_failed", zap.Error(err))
+		release()
+		status, code, message, retryAfter := billingErrorDetails(err)
+		if retryAfter > 0 {
+			c.Header("Retry-After", http.StatusText(retryAfter))
+		}
+		fishImagesError(c, status, code, message)
+		return nil, false
+	}
+	return release, true
+}
+
+func (h *GatewayHandler) acquireFishImageSlot(c *gin.Context) (func(), bool) {
+	release, acquired := acquireImageConcurrencySlot(c.Request.Context(), h.cfg, h.imageLimiter)
+	if acquired {
+		return release, true
+	}
+	fishImagesError(c, http.StatusTooManyRequests, "rate_limit_error", "Image generation concurrency limit exceeded, please retry later")
+	return nil, false
+}
+
+// fishImagesMaxSelectionRounds 是单个请求内选号轮数的硬上限。
+const fishImagesMaxSelectionRounds = 64
+
+// runFishImagesFailover 逐个账号尝试出图，直到成功或没有可换的账号。
+// stream=true 走假流式（与 Leonardo 同一套 leonardoFakeStream）。
+func (h *GatewayHandler) runFishImagesFailover(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	apiKey *service.APIKey,
+	subject middleware2.AuthSubject,
+	subscription *service.UserSubscription,
+	req *fishImagesRequest,
+) {
+	parsed := req.parsed
+	requestCtx := c.Request.Context()
+	failedAccountIDs := make(map[int64]struct{})
+	var lastFailover *service.UpstreamFailoverError
+	busyAccountIDs := make(map[int64]struct{})
+	forwardModel := req.routingModel
+	if mapped := strings.TrimSpace(req.channelMapping.MappedModel); mapped != "" {
+		forwardModel = mapped
+	}
+
+	// 保活：stream=true 假流式；非流式 JSON 空白保活（配置 0 关闭）。
+	var fakeStream *leonardoFakeStream
+	if parsed.Stream {
+		fakeStream = startLeonardoFakeStream(c, h.leonardoImageStreamKeepaliveInterval())
+		defer fakeStream.stop()
+	} else {
+		stopJSONKeepalive := service.StartOpenAIImagesJSONKeepalive(c, h.leonardoImageNonstreamKeepaliveInterval())
+		defer stopJSONKeepalive()
+	}
+
+	attempts := 0
+	for round := 0; attempts <= h.maxAccountSwitches && round < fishImagesMaxSelectionRounds; round++ {
+		if failoverClientGone(c) {
+			return
+		}
+
+		excluded := mergeLeonardoAccountIDSets(failedAccountIDs, busyAccountIDs)
+		account, err := h.gatewayService.SelectAccountForModelWithExclusions(
+			requestCtx, apiKey.GroupID, "", req.routingModel, excluded)
+		if err != nil || account == nil {
+			if lastFailover == nil && len(busyAccountIDs) > 0 {
+				fishImagesAccountsBusyError(c, reqLog, busyAccountIDs)
+				return
+			}
+			h.finishFishImagesWithoutAccount(c, reqLog, apiKey, parsed, failedAccountIDs, lastFailover, err)
+			return
+		}
+		setOpsSelectedAccount(c, account.ID, account.Platform)
+
+		if forwardModel != req.routingModel && !account.IsModelSupported(forwardModel) {
+			reqLog.Warn("fish_images.channel_mapped_model_unsupported",
+				zap.Int64("account_id", account.ID),
+				zap.String("forward_model", forwardModel))
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
+
+		releaseAccount, acquired, err := h.concurrencyHelper.TryAcquireAccountSlot(requestCtx, account.ID, account.Concurrency)
+		if err != nil {
+			reqLog.Warn("fish_images.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))
+			status, errType, _, message := concurrencyErrorResponse(err, "account")
+			fishImagesError(c, status, errType, message)
+			return
+		}
+		if !acquired {
+			busyAccountIDs[account.ID] = struct{}{}
+			continue
+		}
+		releaseAccount = leonardoReleaseOnce(releaseAccount)
+		if releaseAccount == nil {
+			releaseAccount = func() {}
+		}
+
+		attempts++
+		token := account.GetCredential("token")
+		if strings.TrimSpace(token) == "" {
+			releaseAccount()
+			reqLog.Warn("fish_images.token_unavailable", zap.Int64("account_id", account.ID))
+			failedAccountIDs[account.ID] = struct{}{}
+			continue
+		}
+
+		// 提交之后的阶段在 service 内脱离客户端连接：拿到产物就一定记账。
+		result, err := h.fishImageService.GenerateCall(requestCtx, account, token, req.call)
+		releaseAccount()
+		if err == nil {
+			h.finishFishImagesSuccess(c, reqLog, apiKey, subject, subscription, account, result, req)
+			return
+		}
+
+		if errors.Is(err, context.Canceled) || failoverClientGone(c) {
+			reqLog.Info("fish_images.aborted_client_disconnected", zap.Int64("account_id", account.ID))
+			return
+		}
+
+		failover := h.gatewayService.FishFailover(requestCtx, account.ID, token, err)
+		if failover == nil {
+			reqLog.Error("fish_images.generate_failed",
+				zap.Int64("account_id", account.ID), zap.Error(err))
+			fishImagesError(c, http.StatusBadGateway, "api_error", "Upstream request failed")
+			return
+		}
+		if !failover.ShouldRetryNextAccount() {
+			// 请求本身的问题（含提交结果不明），换号救不了。原始错误完整进日志。
+			reqLog.Warn("fish_images.request_failed",
+				zap.Int64("account_id", account.ID),
+				zap.String("reason", string(failover.Reason)),
+				zap.Int("upstream_status", failover.StatusCode),
+				zap.Int("attempts", attempts),
+				zap.Error(err),
+			)
+			fishImagesFailoverError(c, failover)
+			return
+		}
+
+		reqLog.Warn("fish_images.account_failover",
+			zap.Int64("account_id", account.ID),
+			zap.String("reason", string(failover.Reason)),
+			zap.Int("upstream_status", failover.StatusCode),
+			zap.Int("attempts", attempts),
+			zap.Error(err),
+		)
+		failedAccountIDs[account.ID] = struct{}{}
+		lastFailover = failover
+	}
+
+	if lastFailover != nil {
+		fishImagesFailoverError(c, lastFailover)
+		return
+	}
+	if len(busyAccountIDs) > 0 {
+		fishImagesAccountsBusyError(c, reqLog, busyAccountIDs)
+		return
+	}
+	fishImagesError(c, http.StatusServiceUnavailable, "api_error", "No available fish accounts")
+}
+
+// finishFishImagesWithoutAccount 处理「选不出账号」。
+func (h *GatewayHandler) finishFishImagesWithoutAccount(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	apiKey *service.APIKey,
+	parsed *service.OpenAIImagesRequest,
+	failedAccountIDs map[int64]struct{},
+	lastFailover *service.UpstreamFailoverError,
+	selectErr error,
+) {
+	if failoverClientGone(c) {
+		return
+	}
+	reqLog.Warn("fish_images.account_select_failed",
+		zap.Int("excluded_account_count", len(failedAccountIDs)),
+		zap.Error(selectErr))
+
+	if lastFailover != nil {
+		fishImagesFailoverError(c, lastFailover)
+		return
+	}
+	markOpsRoutingCapacityLimitedIfNoAvailable(c, selectErr)
+	cls := classifyNoAccountErrorFromGin(c, h.openAIGatewayService, apiKey, parsed.Model, parsed.Model, service.PlatformFish)
+	fishImagesError(c, cls.Status, cls.ErrType, cls.Message)
+}
+
+// finishFishImagesSuccess 写响应并记账。
+func (h *GatewayHandler) finishFishImagesSuccess(
+	c *gin.Context,
+	reqLog *zap.Logger,
+	apiKey *service.APIKey,
+	subject middleware2.AuthSubject,
+	subscription *service.UserSubscription,
+	account *service.Account,
+	result *service.FishImageResult,
+	req *fishImagesRequest,
+) {
+	if result == nil {
+		reqLog.Error("fish_images.empty_result", zap.Int64("account_id", account.ID))
+		fishImagesError(c, http.StatusBadGateway, "api_error", "Upstream request failed")
+		return
+	}
+	if fakeStream := leonardoFakeStreamFromContext(c); fakeStream != nil {
+		fakeStream.writeEvents(service.FishImagesStreamEvents(req.parsed, result))
+	} else {
+		c.Data(http.StatusOK, "application/json", result.Body)
+	}
+	h.recordFishImagesUsage(c, apiKey, subject, subscription, account, result.Forward, req)
+	reqLog.Debug("fish_images.request_completed",
+		zap.Int64("account_id", account.ID),
+		zap.String("group_id", result.GroupID),
+	)
+}
+
+func (h *GatewayHandler) recordFishImagesUsage(
+	c *gin.Context,
+	apiKey *service.APIKey,
+	subject middleware2.AuthSubject,
+	subscription *service.UserSubscription,
+	account *service.Account,
+	result *service.OpenAIForwardResult,
+	req *fishImagesRequest,
+) {
+	if result == nil {
+		return
+	}
+	parsed := req.parsed
+	userAgent := c.GetHeader("User-Agent")
+	clientIP := ip.GetClientIP(c)
+	sessionID := service.ExtractClientSessionID(c)
+	inboundEndpoint := GetInboundEndpoint(c)
+	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+	channelUsageFields := clientRequestedUsageFields(c, req.channelMapping, parsed.Model, result.UpstreamModel)
+	requestPayloadHash := service.HashUsageRequestPayload(req.body)
+	if parsed.Multipart {
+		requestPayloadHash = service.HashUsageRequestPayload([]byte(parsed.StickySessionSeed()))
+	}
+
+	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
+		if err := h.openAIGatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+			Result:             result,
+			APIKey:             apiKey,
+			User:               apiKey.User,
+			Account:            account,
+			Subscription:       subscription,
+			InboundEndpoint:    inboundEndpoint,
+			UpstreamEndpoint:   upstreamEndpoint,
+			UserAgent:          userAgent,
+			IPAddress:          clientIP,
+			RequestPayloadHash: requestPayloadHash,
+			APIKeyService:      h.apiKeyService,
+			QuotaPlatform:      quotaPlatform,
+			SessionID:          sessionID,
+			ChannelUsageFields: channelUsageFields,
+		}); err != nil {
+			logger.L().With(
+				zap.String("component", "handler.gateway.fish_images"),
+				zap.Int64("user_id", subject.UserID),
+				zap.Int64("api_key_id", apiKey.ID),
+				zap.Int64("account_id", account.ID),
+			).Error("fish_images.record_usage_failed", zap.Error(err))
+		}
+	})
+}
+
+func fishImagesAccountsBusyError(c *gin.Context, reqLog *zap.Logger, busyAccountIDs map[int64]struct{}) {
+	reqLog.Info("fish_images.accounts_busy", zap.Int("busy_account_count", len(busyAccountIDs)))
+	markOpsRoutingCapacityLimited(c)
+	fishImagesError(c, http.StatusTooManyRequests, "rate_limit_error",
+		"Too many concurrent requests for available accounts, please retry later")
+}
+
+// fishImagesFailoverError 把 failover 错误渲染给客户端。
+func fishImagesFailoverError(c *gin.Context, failover *service.UpstreamFailoverError) {
+	status := failover.ClientStatusCode
+	if status <= 0 {
+		status = failover.StatusCode
+	}
+	if status <= 0 {
+		status = http.StatusBadGateway
+	}
+	message := failover.ClientMessage
+	if message == "" {
+		message = "Upstream request failed"
+	}
+	fishImagesError(c, status, openAIErrorTypeForStatus(status), message)
+}
+
+func fishImagesError(c *gin.Context, status int, errType, message string) {
+	if fakeStream := leonardoFakeStreamFromContext(c); fakeStream != nil && fakeStream.failIfCommitted(errType, "", message) {
+		return
+	}
+	if service.IsResponseCommitted(c) {
+		return
+	}
+	c.JSON(status, gin.H{"error": gin.H{"type": errType, "message": message, "param": nil, "code": nil}})
+}

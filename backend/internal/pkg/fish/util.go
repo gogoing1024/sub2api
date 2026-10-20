@@ -33,3 +33,6 @@ func newRequestID() string {
 func pathEscape(segment string) string {
 	return url.PathEscape(segment)
 }
+
+// NewDeviceID 生成每账号持久化的 amp device id（UUID4 形态）。
+func NewDeviceID() string { return newRequestID() }
