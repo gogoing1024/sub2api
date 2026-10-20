@@ -26,7 +26,7 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
 ## 能力与限制
 
 - **只服务 BPS**：没有原生 Codex 通道。调度器（高级调度与旧调度规则一致）不会把该账号派给白名单外的模型；万一已经选中（例如渠道映射或账号白名单在选号后改变了模型的路由），转发阶段换号重试（`excel_oauth_route_unavailable`），不直接返回 400。
-- **只支持 Responses 接口**：`/v1/chat/completions`、`/v1/messages`、`/v1/messages/count_tokens`、图片接口都不会选中 BPS OAuth 账号。想同时提供 BPS 与非 BPS 模型或接口，把 BPS OAuth 账号和普通 Codex OAuth 账号放在同一个分组里，调度会按模型和入口分流；这些入口在原生账号上的粘性会话不会因为分组里有 BPS 账号而被打断。
+- **只支持 Responses 接口**：`/v1/chat/completions`、`/v1/messages`、`/v1/messages/count_tokens`、图片接口都不会选中 BPS OAuth 账号。想同时提供 BPS 与非 BPS 模型或接口，把 BPS OAuth 账号和普通 Codex OAuth 账号放在同一个分组里，调度会按模型和入口筛选可用账号。
 - **token 计数本地估算**：BPS 没有计数端点，`/v1/responses/input_tokens` 选中 BPS OAuth 账号时直接本地估算，Excel token 不会发往原生 `input_tokens` 端点。
 - **只走 HTTP/SSE**：不接受 WebSocket 会话。调度器不会给 WS 会话选 BPS OAuth 账号；万一选中（任何模型或套餐下），转发前直接换号（`basispoints_inbound_unsupported`），不会继续走原生 Codex WS。
 - **托管工具**：联网搜索、图片生成等托管工具会被适配层省略，并告知模型能力不可用；客户端函数工具不受影响。
@@ -54,8 +54,13 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
 
 ## 行为要点
 
-- **调度**：白名单模型优先派给 BPS 账号；BPS 429 只冷却该账号的 BPS 路由（`excel_bps_rate_limited` 排除原因）并换号重试；模型权限 403（`model_not_allowed` / `basispoints_model_access_changed`）冷却该（账号,模型）30 分钟（`excel_bps_model_not_allowed`）并换号重试，所有账号都不可用时返回 403 `basispoints_model_not_allowed`。这几类换号都不计入账号健康分。
-- **粘性会话**：原生账号上的会话只在当前入口能走 BPS、且有真正可调度的 BPS 账号（未冷却、未限流、满足分组要求）时才让给 BPS；BPS 账号冷却期间原生会话保持不动。
+- **调度**：BPS OAuth 账号和原生账号平权。对白名单内的模型，两类账号一起按现有规则排序：账号优先级、得分、负载、订阅优先、上游费率等，不会默认偏向 BPS。想让 BPS 优先，就把 bps-oauth 账号的优先级数值设小（数值越小越优先）。开启订阅优先时，订阅池只包含 Codex OAuth 订阅账号，bps-oauth 账号归入普通池。BPS 429 只冷却该账号的 BPS 路由（`excel_bps_rate_limited` 排除原因）并换号重试；模型权限 403（`model_not_allowed` / `basispoints_model_access_changed`）冷却该（账号,模型）30 分钟（`excel_bps_model_not_allowed`）并换号重试，所有账号都不可用时返回 403 `basispoints_model_not_allowed`。这几类换号都不计入账号健康分。
+- **粘性会话**：会话留在首轮选中的账号上，不会因为分组里有 BPS 账号（或原生账号）而改派；只有在该账号不可用（冷却、限流、出错换号等）时才换到别的账号。
+- **跨协议续接**：混合分组里，会话在换号时可能从原生账号换到 BPS 账号，或者反过来。会话历史里的加密推理和 compaction 密文是生成它的上游私有的，另一侧解不开。两侧的处理方式相同：
+  - 上游返回 `invalid_encrypted_content` 时，剥掉加密推理和带密文的 compaction 项，在同一账号上重试一次；
+  - 记住这次被拒的密文，之后同一会话的每一轮都先剥掉再发，不用每轮先被拒一次。BPS 和原生各自记录，互不影响。
+
+  代价是丢失隐藏的推理过程，以及压缩前那段历史的细节，对话本身能继续。BPS 侧不会剥离加密的消息正文和函数参数，这类历史仍然返回 400（旧会话可以用账号的"忽略密文"选项）。需要长会话稳定的分组，可以用优先级把 BPS 和原生分层，或者不混用。
 - **普通 401/403**：BPS-only 账号没有别的通道，按整号处理并换号重试：
   - 401：清 token 缓存并临时停调度，给 token 刷新留窗口；token 已吊销等情况标记错误。
   - 403：交给 OpenAI 通用 403 处理——HTML / Cloudflare 拦截页不处罚，其余先临时冷却，累计多次才永久停用。
@@ -79,7 +84,7 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
 - **工具输出截图**：`function_call_output` / `custom_tool_call_output` 里校验过的内联截图保持内联发送，不上传。工具输出里的 HTTPS 图片和 `file_id` 图片会挪到紧随其后的一条用户消息里，原位置留文字标签。
 - **透传**：HTTPS `image_url` 和合法的 `file_id` 原样透传（`file_id` 只保留 `type` 和 `file_id` 两个字段）。
 - **限制**：PNG / JPEG / GIF / WebP；单张 ≤ 20 MiB、≤ 64 MP；单请求内联图片 ≤ 20 张、合计 ≤ 32 MiB；`detail` 只能是 auto / low / high / original。`/v1/responses` 的请求体上限是 `gateway.max_body_size`（默认 256 MiB），32 MiB 图片 base64 后约 43 MiB，不会先被网关拦下。
-- **BPS 带不动的图片降级换号**：超限、格式不对、非 HTTPS 地址、引用不合法等本地校验失败不算账号问题——本请求不再选任何 BPS 账号、原生会话也不再让位给 BPS，转给分组里的原生账号处理；没有原生账号时返回 400 `basispoints_request_invalid` 和协议层的提示（只含限额和路径，不含图片内容）。
+- **BPS 带不动的图片降级换号**：超限、格式不对、非 HTTPS 地址、引用不合法等本地校验失败不算账号问题——本请求不再选任何 BPS 账号，转给分组里的原生账号处理；没有原生账号时返回 400 `basispoints_request_invalid` 和协议层的提示（只含限额和路径，不含图片内容）。
 - **上传失败**（发生在任何生成之前）：
   - 429：只冷却该账号的 BPS 路由，换号。
   - 401 / 402：按整号处理（规则同上），换号。
