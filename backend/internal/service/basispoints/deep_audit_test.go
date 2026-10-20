@@ -109,7 +109,7 @@ func TestDeepAuditImageInToolResultValidated(t *testing.T) {
 	}}
 	raw, _ := json.Marshal(source)
 	_, _, err = Prepare(raw, bridge.scope, cache)
-	if err == nil || !strings.Contains(err.Error(), "not supported in this build") {
-		t.Fatalf("tool result image must be rejected like user content images: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "accepts data:image input only") {
+		t.Fatalf("tool result image must have the same HTTPS requirement as user content: %v", err)
 	}
 }

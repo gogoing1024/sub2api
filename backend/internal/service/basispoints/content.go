@@ -22,9 +22,20 @@ func (b *Bridge) validateHistoryContent(value any, inputIndex int, field string)
 		switch text(part["type"]) {
 		case "input_text", "output_text", "text", "refusal":
 		case "input_image":
-			// Image relay/attachment support is not compiled into this build;
-			// reject image parts with an explicit protocol error.
-			return &ContentValidationError{Path: path, ContentType: "input_image", message: "basispoints image input is not supported in this build; resend the request without images"}
+			var err error
+			if field == "output" && b.nativeToolImages[text(part["image_url"])] {
+				// Only this request's fully validated tool screenshots may remain inline.
+				if _, exists := part["file_id"]; exists {
+					err = fmt.Errorf("basispoints input_image requires exactly one image reference")
+				} else {
+					err = validateImageDetail(part)
+				}
+			} else {
+				err = validateImage(part)
+			}
+			if err != nil {
+				return &ContentValidationError{Path: path, ContentType: "input_image", message: err.Error()}
+			}
 		case "encrypted_content":
 			return &ContentValidationError{Path: path, ContentType: "encrypted_content", message: "basispoints cannot forward encrypted_content message parts; refresh the model catalog and start a new conversation without a multi-agent v2 override, or resend the original plaintext"}
 		default:

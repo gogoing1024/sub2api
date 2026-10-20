@@ -159,12 +159,14 @@ func TestNestedNamespaceAndConflictingCatalogDefinitions(t *testing.T) {
 	}
 }
 
-func TestToolOutputHTTPSImagesRejected(t *testing.T) {
+func TestToolOutputHTTPSImagesRemainIntact(t *testing.T) {
 	source := testSource()
 	image := object{"type": "input_image", "image_url": "https://example.com/screenshot.png?signature=unchanged%2F"}
 	source["input"] = []any{message("user", "inspect"), object{"type": "function_call", "name": "view_image", "call_id": "call_image", "arguments": `{}`}, object{"type": "function_call_output", "call_id": "call_image", "output": []any{image}}}
-	raw, _ := json.Marshal(source)
-	if _, _, err := Prepare(raw, "scope", nil); err == nil || !strings.Contains(err.Error(), "not supported in this build") {
-		t.Fatalf("tool output image must be rejected without this build's image support: %v", err)
+	body, _ := mustPrepare(t, source, "scope", nil)
+	items := mustTestValue[[]any](t, body["input"])
+	content := mustTestValue[[]any](t, mustTestValue[object](t, items[len(items)-1])["content"])
+	if !reflect.DeepEqual(content[len(content)-1], image) {
+		t.Fatal("HTTPS tool image changed")
 	}
 }

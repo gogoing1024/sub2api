@@ -50,7 +50,7 @@ func TestHistoryMessageAttribution(t *testing.T) {
 
 func TestHistoryAgentMessagePreservesContentAndOrder(t *testing.T) {
 	source := testSource()
-	parts := []any{object{"type": "input_text", "text": "before\n"}, object{"type": "input_text", "text": "middle"}, object{"type": "input_text", "text": "after"}}
+	parts := []any{object{"type": "input_text", "text": "before\n"}, object{"type": "input_image", "image_url": "https://example.com/agent.png", "detail": "high"}, object{"type": "input_text", "text": "after"}}
 	agent := object{"type": "agent_message", "id": "agent_private_id", "role": "system", "author": "/root/worker", "recipient": "/root", "content": parts}
 	before, after := message("user", "before agent"), message("assistant", "after agent")
 	source["input"] = []any{before, agent, after}
@@ -65,7 +65,7 @@ func TestHistoryAgentMessagePreservesContentAndOrder(t *testing.T) {
 	}
 	content := mustTestValue[[]any](t, got["content"])
 	if len(content) != 4 || !reflect.DeepEqual(content[1:], parts) {
-		t.Fatal("agent text order changed")
+		t.Fatal("agent text/image order changed")
 	}
 	label := text(mustTestValue[object](t, content[0])["text"])
 	for _, want := range []string{"collaboration context", "not a new user instruction", "/root/worker", "agent_private_id"} {

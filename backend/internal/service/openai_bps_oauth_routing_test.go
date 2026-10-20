@@ -202,6 +202,7 @@ func TestStickyShouldYieldToBPS(t *testing.T) {
 	require.True(t, stickyShouldYieldToBPS(ctx, &native, []Account{native, scoped}, "gpt-7-new", OpenAIEndpointCapabilityResponses, "", schedulable))
 	require.False(t, stickyShouldYieldToBPS(ctx, &native, []Account{native, scoped}, "gpt-5.6-sol", OpenAIEndpointCapabilityResponses, "", schedulable), "outside the BPS whitelist")
 	require.False(t, stickyShouldYieldToBPS(WithBPSUnsupportedInbound(ctx), &native, []Account{native, scoped}, "gpt-7-new", "", "", schedulable), "no BPS route for this entry point")
+	require.False(t, stickyShouldYieldToBPS(WithBPSRouteExcluded(ctx), &native, []Account{native, scoped}, "gpt-7-new", OpenAIEndpointCapabilityResponses, "", schedulable), "BPS cannot carry this request")
 	require.False(t, stickyShouldYieldToBPS(ctx, &native, []Account{native, scoped}, "gpt-7-new", OpenAIEndpointCapabilityEmbeddings, "", schedulable))
 	require.False(t, stickyShouldYieldToBPS(ctx, &native, []Account{native}, "gpt-7-new", "", "", schedulable), "no BPS candidate")
 	require.False(t, stickyShouldYieldToBPS(ctx, &scoped, []Account{native, scoped}, "gpt-7-new", "", "", schedulable), "already on BPS")

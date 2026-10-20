@@ -71,7 +71,7 @@ func TestImageValidationErrorIncludesPathWithoutURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err = Prepare(raw, "scope", nil)
-	if err == nil || !strings.Contains(err.Error(), "path=input[1].content[0]") || !strings.Contains(err.Error(), "not supported in this build") || strings.Contains(err.Error(), "private-") {
+	if err == nil || !strings.Contains(err.Error(), "path=input[1].content[0]") || !strings.Contains(err.Error(), "HTTPS") || strings.Contains(err.Error(), "private-") {
 		t.Fatalf("image error lacks a safe path: %v", err)
 	}
 }

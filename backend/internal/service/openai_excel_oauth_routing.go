@@ -52,20 +52,29 @@ func validateBPSOAuthCredentials(platform, accountType string, credentials map[s
 	return nil
 }
 
-type bpsUnsupportedInboundKey struct{}
+type bpsRouteExcludedKey struct{}
 
 // WithBPSUnsupportedInbound marks a request whose entry point has no Excel BPS
 // route (Chat Completions, Anthropic Messages). Those handlers forward through
 // the native Codex protocol, so the scheduler never selects a BPS-only account.
 func WithBPSUnsupportedInbound(ctx context.Context) context.Context {
-	return context.WithValue(ctx, bpsUnsupportedInboundKey{}, true)
+	return WithBPSRouteExcluded(ctx)
 }
 
+// WithBPSRouteExcluded keeps the rest of a request off BPS once BPS turned out
+// unable to carry it (ExcelBPSImageUnsupportedReason): later account switches
+// skip BPS-only accounts and sticky native bindings no longer yield to BPS.
+func WithBPSRouteExcluded(ctx context.Context) context.Context {
+	return context.WithValue(ctx, bpsRouteExcludedKey{}, true)
+}
+
+// isBPSUnsupportedInbound reports a request that BPS must not serve, whether
+// for its entry point or for its content.
 func isBPSUnsupportedInbound(ctx context.Context) bool {
 	if ctx == nil {
 		return false
 	}
-	marked, _ := ctx.Value(bpsUnsupportedInboundKey{}).(bool)
+	marked, _ := ctx.Value(bpsRouteExcludedKey{}).(bool)
 	return marked
 }
 

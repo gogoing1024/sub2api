@@ -941,6 +941,10 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
+					if failoverErr.Reason == service.ExcelBPSImageUnsupportedReason {
+						// No BPS account can carry these images; only native accounts remain.
+						c.Request = c.Request.WithContext(service.WithBPSRouteExcluded(c.Request.Context()))
+					}
 					if switchCount >= maxAccountSwitches {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return

@@ -3,9 +3,13 @@ package basispoints
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -162,6 +166,105 @@ func TestCatalogConcurrentIncrementAndStaleCommit(t *testing.T) {
 	if !c.commit("scope", version, []byte("[]")) || c.commit("scope", version, []byte(`[{"type":"function","name":"stale"}]`)) {
 		t.Fatal("stale version accepted")
 	}
+}
+
+func pngAttachment(t *testing.T) ([]byte, string) {
+	t.Helper()
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, 2, 3))); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes(), "data:image/png;base64," + base64.StdEncoding.EncodeToString(b.Bytes())
+}
+func TestNativeAttachmentsMultipartDedupAndFileIDs(t *testing.T) {
+	original, url := pngAttachment(t)
+	source := testSource()
+	source["input"] = []any{object{"role": "user", "content": []any{object{"type": "input_image", "image_url": url, "detail": "high"}}}, object{"type": "custom_tool_call_output", "call_id": "x", "output": []any{object{"type": "input_image", "image_url": url}}}}
+	raw, _ := json.Marshal(source)
+	calls := 0
+	plan, err := PrepareNativeImages(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := plan.Upload(context.Background(), new(AttachmentCache), "", func(ctx context.Context, img InlineAttachment) (string, error) {
+		calls++
+		readerBody, contentType, length, err := img.Multipart()
+		if err != nil {
+			return "", err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, AttachmentsURL, readerBody)
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer test")
+			req.Header.Set("Content-Type", contentType)
+			req.ContentLength = length
+		}
+		if err != nil {
+			return "", err
+		}
+		if req.URL.String() != AttachmentsURL || req.Header.Get("Authorization") != "Bearer test" {
+			t.Fatal("wrong attachment route/auth")
+		}
+		wire, _ := io.ReadAll(req.Body)
+		if int64(len(wire)) != req.ContentLength {
+			t.Fatal("wrong multipart length")
+		}
+		req.Body = io.NopCloser(bytes.NewReader(wire))
+		reader, err := req.MultipartReader()
+		if err != nil {
+			t.Fatal(err)
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := io.ReadAll(part)
+		if part.FormName() != "file" || part.Header.Get("Content-Type") != "image/png" || !bytes.Equal(got, original) {
+			t.Fatal("image bytes or multipart fields changed")
+		}
+		if _, err := reader.NextPart(); err != io.EOF {
+			t.Fatal("unexpected extra multipart part")
+		}
+		return "file-native", nil
+	})
+	if err != nil || calls != 1 {
+		t.Fatalf("upload: %d %v", calls, err)
+	}
+	var got object
+	_ = decode(out, &got)
+	items := mustTestValue[[]any](t, got["input"])
+	first := mustTestValue[object](t, items[0])
+	content := mustTestValue[[]any](t, first["content"])
+	part := mustTestValue[object](t, content[0])
+	if part["file_id"] != "file-native" || part["detail"] != "high" || part["image_url"] != nil {
+		t.Fatal("image reference/detail changed")
+	}
+	if !bytes.Contains(raw, []byte("data:image")) {
+		t.Fatal("input mutated")
+	}
+	fileSource := testSource()
+	fileSource["input"] = []any{object{"role": "user", "content": []any{part}}}
+	mustPrepare(t, fileSource, "", nil)
+}
+func TestNativeAttachmentsValidateWholeBatchBeforeUpload(t *testing.T) {
+	_, url := pngAttachment(t)
+	for _, bad := range []object{
+		{"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+		{"type": "input_image", "image_url": url, "detail": "invalid"},
+		{"type": "input_image", "file_id": "file-invalid", "image_url": url},
+	} {
+		source := testSource()
+		source["input"] = []any{object{"role": "user", "content": []any{object{"type": "input_image", "image_url": url}, bad}}}
+		raw, _ := json.Marshal(source)
+		calls := 0
+		plan, err := PrepareNativeImages(raw)
+		if err == nil {
+			_, err = plan.Upload(context.Background(), new(AttachmentCache), "", func(context.Context, InlineAttachment) (string, error) { calls++; return "file-id", nil })
+		}
+		if err == nil || calls != 0 {
+			t.Fatalf("invalid batch uploaded %d: %v", calls, err)
+		}
+	}
+
 }
 
 func TestToolRepairPreservesStreamAndAggregatesUsage(t *testing.T) {
@@ -358,7 +461,7 @@ func TestReprepareKeepsValidatedCatalogDuringAttachmentUpload(t *testing.T) {
 	newer := testSource()
 	newer["tools"] = []any{object{"type": "function", "name": "newer"}}
 	prepareCatalogTest(t, cache, newer, "scope")
-	source["input"] = []any{object{"role": "user", "content": []any{object{"type": "input_text", "text": "file-uploaded"}}}}
+	source["input"] = []any{object{"role": "user", "content": []any{object{"type": "input_image", "file_id": "file-uploaded"}}}}
 	raw, _ := json.Marshal(source)
 	body, final, err := b.Reprepare(raw)
 	if err != nil {

@@ -423,6 +423,7 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 	seenCalls := make(map[string]bool)
 	var trigger any
 	for index, raw := range input {
+		var toolImages object
 		item, ok := raw.(object)
 		if !ok {
 			return nil, fmt.Errorf("invalid Basispoints input item")
@@ -488,6 +489,7 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 				itemID = "fc_" + fingerprint(itemID)
 			}
 			item["id"] = itemID
+			toolImages = separateToolImages(item)
 		case "configuration_update":
 			return nil, fmt.Errorf("basispoints does not support configuration_update; start a new request with the desired effort")
 		}
@@ -500,6 +502,9 @@ func (b *Bridge) translateHistory(input []any) ([]any, error) {
 			return nil, err
 		}
 		result = append(result, item)
+		if toolImages != nil {
+			result = append(result, toolImages)
+		}
 	}
 	if trigger != nil {
 		result = append(result, trigger)

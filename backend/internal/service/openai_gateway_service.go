@@ -20,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/platform/liveattestation"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/cespare/xxhash/v2"
 	"github.com/gin-gonic/gin"
@@ -506,6 +507,7 @@ type OpenAIGatewayService struct {
 	excelBPSModelsCache                 openAIModelsCache
 	excelBPSModelCooldowns              excelBPSModelCooldowns
 	excelBPSCooldownUntil               sync.Map // key: int64(accountID), value: time.Time
+	excelBPSAttachments                 basispoints.AttachmentCache
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
 	// openaiCodexTurnStateOrigins: 下游会话 seed → openAICodexTurnStateOrigin，

@@ -162,6 +162,7 @@ func prepareWithInheritedCatalog(raw []byte, scope string, replay *ReplayCache, 
 	if err != nil {
 		return nil, nil, err
 	}
+	normalizeMessageFileImages(translated)
 	prologue := make([]any, 0, 2)
 	if instructions := text(source["instructions"]); instructions != "" {
 		prologue = append(prologue, message("developer", instructions))
