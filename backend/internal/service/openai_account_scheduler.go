@@ -2611,9 +2611,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 	if s == nil || account == nil {
 		return false
 	}
-	// BPS only speaks HTTP/SSE; WS ingress closes a BPS-routed session with a
-	// policy violation and no failover, so never schedule one onto it. A
-	// BPS-only account has no other route, whatever the model.
+	// BPS only speaks HTTP/SSE and a BPS-only account has no other route,
+	// whatever the model: never schedule a WS session onto it. WS ingress only
+	// backstops this by handing such an account back for failover.
 	if account.IsBPSOAuth() {
 		return false
 	}

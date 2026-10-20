@@ -48,7 +48,7 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
 
 ## 全局开关与配置
 
-- 设置页（gateway 分区）`excel_bps_enabled`：DB 键，默认 true；关闭后所有 BPS 路由停用，高级调度与旧调度都不再选中 BPS OAuth 账号。开关读自进程内 5 秒缓存：保存的实例立即生效，其他实例最多晚 5 秒；读库失败时沿用上一次的值。同一请求的路由判定和 BPS 转发只读一次开关。
+- 设置页（gateway 分区）`excel_bps_enabled`：DB 键，默认 true；关闭后所有 BPS 路由停用，高级调度与旧调度都不再选中 BPS OAuth 账号。开关读自进程内 5 秒缓存：保存的实例立即生效，其他实例最多晚 5 秒；读库失败时沿用上一次的值，进程从未读到过值时按关闭处理（每秒重试一次）。同一请求的路由判定和 BPS 转发只读一次开关。
 - `config.yaml` `gateway.excel_bps_stream_data_interval_timeout`：流无数据帧超时（秒，0 禁用，30–300，默认 120）。
 - `config.yaml` `gateway.excel_bps_state_redis_enabled`：工具回放/目录状态共享 Redis（多实例）；默认 false（进程内）。
 
@@ -60,11 +60,11 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
   - 401：清 token 缓存并临时停调度，给 token 刷新留窗口；token 已吊销等情况标记错误。
   - 403：交给 OpenAI 通用 403 处理——HTML / Cloudflare 拦截页不处罚，其余先临时冷却，累计多次才永久停用。
   - 两者都返回固定文案，不透出 BPS 原文；流式修复请求已开始输出时只做整号处理，不换号。
-- **402 / 5xx / 529**（尚未输出）：按原生 OpenAI 账号同样的规则处理账号状态——402（如 `deactivated_workspace` 工作区停用）标记账号错误，529 置 overload，其余 5xx 只记日志——然后换号重试。同一 ChatGPT 工作区被停用时，团队联动停用也会覆盖同工作区的 BPS OAuth 账号。所有账号都失败时返回固定文案（402 → 502 "Excel BPS rejected the selected account"，5xx → 502、529 → 503 "Excel BPS upstream is temporarily unavailable"），不透出 BPS 原文。其余 4xx 照旧直接返回。
+- **402 / 5xx / 529**（尚未输出）：按原生 OpenAI 账号同样的规则处理账号状态——402（如 `deactivated_workspace` 工作区停用）标记账号错误，529 置 overload，其余 5xx 只记日志——然后换号重试。团队联动停用只由原生 OpenAI OAuth 账号触发（目前只在 count_tokens 路径上），触发后会连带同工作区的 BPS OAuth 账号；BPS 自己收到的 402 只停用该账号，不触发联动。所有账号都失败时返回固定文案（402 → 502 "Excel BPS rejected the selected account"，5xx → 502、529 → 503 "Excel BPS upstream is temporarily unavailable"），不透出 BPS 原文。其余 4xx 照旧直接返回。
 - **换号耗尽的文案**：BPS 账号拒绝、无 BPS 路由（`excel_oauth_route_unavailable`）、入口不支持（`basispoints_inbound_unsupported`）、上游错误和图片不支持都返回各自固定的 BPS 文案和错误码，不会落到通用的凭据失败文案。
 - **token 生命周期**：取 token、后台刷新、手动刷新、重新授权都按 OpenAI OAuth 处理，刷新使用凭据里的 Excel client_id。
 - **用量**：5h/7d 窗口来自 BPS 响应头快照与用量日志，不会向 chatgpt.com 发起 Codex 探测。渠道监控可以把 BPS OAuth 账号作为额度数据源。
-- **粘性会话冷却**：粘在 BPS 账号上的会话同样受 BPS 429 冷却和模型权限冷却约束，冷却期间改选其他账号。
+- **粘性会话冷却**：粘在 BPS 账号上的会话同样受 BPS 429 冷却和模型权限冷却约束，冷却期间改选其他账号。高级调度和旧调度都会在"无可用账号"诊断里标出 BPS 冷却；分组里可用账号全部处于 BPS 429 冷却时返回 429。
 - **传输**：BPS 走独立 HTTP 上游 profile（`excel_bps`），经 HTTP 代理出现 H2 流错误时该代理短时熔断降级 HTTP/1.1（1 分钟试探，独立连接池）。
 - **计费**：`/basispoints/api/responses` 端点按 Responses 计费；`cache_creation_as_input` 打开后缓存创建并入普通输入。
 - **模型发现**：`GET /basispoints/api/responses/access?include_models=true` 实时读取 allowed/restricted/efforts，60 秒缓存 + singleflight；模型列表与 Codex manifest 按白名单裁剪。账号的"同步上游模型"也走这个接口，返回 BPS 当前可用的全部模型（不按白名单裁剪），便于挑选白名单与映射。
@@ -77,7 +77,13 @@ Excel token 的兑换与刷新按官方 Excel 客户端的契约发送：token �
 - **透传**：HTTPS `image_url` 和合法的 `file_id` 原样透传（`file_id` 只保留 `type` 和 `file_id` 两个字段）。
 - **限制**：PNG / JPEG / GIF / WebP；单张 ≤ 20 MiB、≤ 64 MP；单请求内联图片 ≤ 20 张、合计 ≤ 32 MiB；`detail` 只能是 auto / low / high / original。`/v1/responses` 的请求体上限是 `gateway.max_body_size`（默认 256 MiB），32 MiB 图片 base64 后约 43 MiB，不会先被网关拦下。
 - **BPS 带不动的图片降级换号**：超限、格式不对、非 HTTPS 地址、引用不合法等本地校验失败不算账号问题——本请求不再选任何 BPS 账号、原生会话也不再让位给 BPS，转给分组里的原生账号处理；没有原生账号时返回 400 `basispoints_request_invalid` 和协议层的提示（只含限额和路径，不含图片内容）。
-- **上传失败**：429 只冷却该账号的 BPS 路由并换号；401/402/403 按整号处理并换号（规则同上）；其余失败（5xx、传输错误、返回内容不合法、上传并发已满）返回 502/503 `basispoints_attachment_error`，不重放、不改账号状态。对外信息不含 URL、body 或 `file_id`；BPS 错误里回显的 `file-…` 也会脱敏。
+- **上传失败**（发生在任何生成之前）：
+  - 429：只冷却该账号的 BPS 路由，换号。
+  - 401 / 402：按整号处理（规则同上），换号。
+  - 5xx / 529：按账号策略处理（529 置 overload，其余 5xx 只记日志），换号；连接失败、超时等传输错误同样换号，不改账号状态（重传上传只会多留一个未使用的附件）。
+  - 403：不改账号状态，也不换号，直接返回 403 `basispoints_attachment_error`（BPS 可能只是不允许该账号上传附件，文字请求仍可用）。
+  - 其余失败（BPS 拒收图片的 4xx、3xx、返回内容不合法）不重放、不改账号状态，返回 `basispoints_attachment_error`，状态码为 BPS 原状态码，3xx 和内容不合法时为 502；上传并发已满返回 503。
+  - 对外信息不含 URL、body 或 `file_id`；BPS 错误里回显的 `file-…` 也会脱敏。
 
 ## 升级与上游
 
