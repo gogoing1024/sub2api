@@ -46,8 +46,22 @@ func validateBPSOAuthCredentials(platform, accountType string, credentials map[s
 	switch {
 	case accountType == AccountTypeBPSOAuth && !isExcel:
 		return infraerrors.BadRequest("BPS_OAUTH_INVALID", "BPS OAuth accounts require credentials issued to the official Excel client")
-	case accountType == AccountTypeOAuth && isExcel:
+	case (accountType == AccountTypeOAuth || accountType == AccountTypeSetupToken) && isExcel:
 		return infraerrors.BadRequest("BPS_OAUTH_INVALID", "Excel OAuth credentials can only be used by a BPS OAuth account")
+	}
+	return nil
+}
+
+// validateBPSOAuthTypeChange keeps BPS-only accounts out of type changes. An
+// update may drop client_id (it is not a preserved sensitive key) while the
+// stored Excel access token stays, so the credential check alone cannot tell
+// a converted account apart.
+func validateBPSOAuthTypeChange(currentType, requestedType string) error {
+	if requestedType == "" || requestedType == currentType {
+		return nil
+	}
+	if currentType == AccountTypeBPSOAuth || requestedType == AccountTypeBPSOAuth {
+		return infraerrors.BadRequest("BPS_OAUTH_INVALID", "BPS OAuth accounts cannot change type; create a new account instead")
 	}
 	return nil
 }

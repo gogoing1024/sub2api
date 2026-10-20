@@ -627,6 +627,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	{
 		// Validate against the type and credentials this update will store, so
 		// a re-authorization that switches the OAuth client is judged correctly.
+		if err := validateBPSOAuthTypeChange(account.Type, input.Type); err != nil {
+			return nil, err
+		}
 		effectiveType := account.Type
 		if input.Type != "" {
 			effectiveType = input.Type

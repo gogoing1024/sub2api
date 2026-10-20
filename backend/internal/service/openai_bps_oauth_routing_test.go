@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	coderws "github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -406,4 +407,46 @@ func TestForwardBPSOAuthReadsSwitchOnce(t *testing.T) {
 	require.Equal(t, ExcelOAuthRouteUnavailableReason, failover.Reason)
 	require.Equal(t, 1, repo.reads)
 	require.Empty(t, upstream.requests)
+}
+
+// WebSocket ingress has no BPS route: a BPS-only account that reaches it is
+// handed back to the handler for another account, whatever the model, plan
+// or global switch, and never continues to native Codex.
+func TestWSIngressRejectsBPSOAuthAccounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for name, tc := range map[string]struct {
+		account  func() *Account
+		settings *SettingService
+	}{
+		"whitelisted model": {account: excelAccount},
+		"model outside the whitelist": {account: func() *Account {
+			account := bpsRoutingBPSAccount(300, "gpt-7-new")
+			return &account
+		}},
+		"free plan": {account: func() *Account {
+			account := excelAccount()
+			account.Credentials["plan_type"] = "free"
+			return account
+		}},
+		"global switch off": {account: excelAccount, settings: excelBPSDisabledSettingService()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{}
+			svc := openAIClientToolsTestService(upstream)
+			if tc.settings != nil {
+				svc.settingService = tc.settings
+			}
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+			err := svc.ProxyResponsesWebSocketFromClient(context.Background(), c, new(coderws.Conn), tc.account(), "test-token", []byte(`{"type":"response.create","model":"gpt-5.6-sol"}`), nil)
+
+			var failover *UpstreamFailoverError
+			require.ErrorAs(t, err, &failover)
+			require.Equal(t, BPSUnsupportedInboundReason, failover.Reason)
+			require.True(t, failover.ShouldRetryNextAccount())
+			require.Empty(t, upstream.requests)
+		})
+	}
 }

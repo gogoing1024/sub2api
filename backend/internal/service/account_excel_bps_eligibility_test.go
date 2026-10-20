@@ -60,6 +60,8 @@ func TestValidateBPSOAuthCredentials(t *testing.T) {
 		{"bps-oauth on another platform", PlatformAnthropic, AccountTypeBPSOAuth, excel, true},
 		{"oauth with Excel client", PlatformOpenAI, AccountTypeOAuth, excel, true},
 		{"oauth with Codex client", PlatformOpenAI, AccountTypeOAuth, codex, false},
+		{"setup-token with Excel client", PlatformOpenAI, AccountTypeSetupToken, excel, true},
+		{"setup-token without client_id", PlatformOpenAI, AccountTypeSetupToken, map[string]any{}, false},
 		{"apikey", PlatformOpenAI, AccountTypeAPIKey, map[string]any{"api_key": "sk"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,4 +88,15 @@ func TestGetAccessTokenReadsBPSOAuthCredentials(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "test-token", token)
 	require.Equal(t, "oauth", mode)
+}
+
+// A BPS-only account keeps its type: an update may drop client_id while the
+// stored Excel access token stays.
+func TestValidateBPSOAuthTypeChange(t *testing.T) {
+	require.NoError(t, validateBPSOAuthTypeChange(AccountTypeBPSOAuth, ""))
+	require.NoError(t, validateBPSOAuthTypeChange(AccountTypeBPSOAuth, AccountTypeBPSOAuth))
+	require.NoError(t, validateBPSOAuthTypeChange(AccountTypeOAuth, AccountTypeSetupToken))
+	require.Error(t, validateBPSOAuthTypeChange(AccountTypeBPSOAuth, AccountTypeOAuth))
+	require.Error(t, validateBPSOAuthTypeChange(AccountTypeBPSOAuth, AccountTypeSetupToken))
+	require.Error(t, validateBPSOAuthTypeChange(AccountTypeOAuth, AccountTypeBPSOAuth))
 }

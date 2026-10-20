@@ -1694,7 +1694,7 @@ func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, gro
 		}
 		platforms[platform] = struct{}{}
 		ownership.OpenAIGatewayOAuthClaimed = ownership.OpenAIGatewayOAuthClaimed ||
-			(account.IsOAuth() && domain.UsesOpenAIGateway(platform))
+			((account.IsOAuth() || account.IsBPSOAuth()) && domain.UsesOpenAIGateway(platform))
 	}
 
 	if len(platforms) == 1 {
