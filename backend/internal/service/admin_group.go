@@ -411,6 +411,8 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return []string{typesafe.JevLatestModel}
 	case PlatformLeonardo:
 		return LeonardoModelIDs()
+	case PlatformFish:
+		return domain.FishModelNames()
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:
@@ -426,7 +428,7 @@ func defaultAllowImageGenerationForPlatform(platform string) bool {
 	// Grok image and video generation routes share the legacy image-generation gate.
 	// Older clients send the false zero value, so Grok groups must default enabled.
 	// Leonardo is an images-only platform: the gate must default enabled there too.
-	return platform == PlatformGrok || platform == PlatformLeonardo
+	return platform == PlatformGrok || platform == PlatformLeonardo || platform == PlatformFish
 }
 
 func compositeDefaultModelsListCandidateIDs() []string {

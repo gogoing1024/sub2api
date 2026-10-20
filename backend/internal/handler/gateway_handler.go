@@ -1573,6 +1573,8 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return ids
 	case service.PlatformLeonardo:
 		return service.LeonardoModelIDs()
+	case service.PlatformFish:
+		return domain.FishModelNames()
 	case service.PlatformKiro:
 		ids := make([]string, 0, len(kiro.DefaultModels))
 		for _, model := range kiro.DefaultModels {

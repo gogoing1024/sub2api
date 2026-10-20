@@ -2982,6 +2982,12 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
+	// fish 只出图：列平台全部对外模型。
+	if account.Platform == service.PlatformFish {
+		response.Success(c, domain.FishModelNames())
+		return
+	}
+
 	// Explicit account mappings expose their request-side names to connectivity tests.
 	if account.Platform == service.PlatformAntigravity {
 		response.Success(c, antigravityAccountTestModels(account.Credentials["model_mapping"]))

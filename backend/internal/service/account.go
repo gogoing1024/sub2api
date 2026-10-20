@@ -732,6 +732,8 @@ func defaultModelMappingForPlatform(platform string) map[string]string {
 		return domain.DefaultKiroModelMapping
 	case domain.PlatformLeonardo:
 		return domain.DefaultLeonardoModelMapping
+	case domain.PlatformFish:
+		return domain.DefaultFishModelMapping
 	default:
 		return nil
 	}
