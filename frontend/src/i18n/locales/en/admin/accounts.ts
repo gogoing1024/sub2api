@@ -246,6 +246,9 @@ export default {
         kiroApikeyRelay: 'Relay via external API Key + Base URL',
         leonardoOauth: 'Leonardo web Cookie, direct GraphQL',
         leonardoApikeyRelay: 'OpenAI-compatible relay fallback',
+        fishOauthToken: 'Oauth Token',
+        fishOauth: 'Connect to Fish Audio directly with an Oauth Token',
+        fishApikeyRelay: 'OpenAI-compatible relay fallback',
         kiroOauth: 'Social OAuth / AWS Builder ID / Import',
         antigravityApikey: 'Connect via Base URL + API Key',
         upstream: 'Upstream',
@@ -1765,6 +1768,13 @@ export default {
         kiroCredits: 'Credits Used',
         leonardoCredits: 'Credits Used'
       },
+      fish: {
+        tokenLabel: 'fish.audio session token',
+        tokenHint: 'The token value from localStorage in a logged-in fish.audio browser session (36-character UUID, long-lived, no refresh). team_id and device_id are filled in by the connectivity test.',
+        tokenRequired: 'Paste the fish.audio session token',
+        relayApiKeyHint: 'API key for the relay upstream (sent as Authorization: Bearer)',
+        relayBaseUrlHint: 'Handles requests fish native accounts cannot (sizes outside the allowlist, mask, n>8, webp). Channel mapping rewrites the model name, for example gpt-image-2 to gpt-image-1.'
+      },
       leonardo: {
         cookieLabel: 'Leonardo Cookie',
         cookieHint: 'Log in to app.leonardo.ai, then copy the full cookie string from DevTools (Application → Cookies or a request Cookie header). Must include __Secure-better-auth.session_token; session_data.* shards are recommended. A bare session token value also works. The short-lived JWT is exchanged and kept alive automatically from this cookie.',
@@ -1813,6 +1823,9 @@ export default {
         activeQuery: 'Query',
         kiroBonus: 'Bonus',
         kiroCredits: 'Credits',
+        fishCredits: 'Credits',
+        fishDaily: 'Daily images',
+        fishReset: 'Reset',
         kiroDaysLeft: '{days}d left',
         kiroExpires: 'Expires',
         kiroReset: 'Reset',

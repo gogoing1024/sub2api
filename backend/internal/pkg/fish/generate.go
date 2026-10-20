@@ -52,12 +52,12 @@ func (p PriceParams) toBody() map[string]any {
 		params["quality"] = p.Quality
 	}
 	return map[string]any{
-		"modelId":        p.Model,
-		"variantKey":     p.Variant,
-		"mode":           "image",
-		"count":          p.Count,
-		"params":         params,
-		"refImageCount":  p.RefImageCount,
+		"modelId":       p.Model,
+		"variantKey":    p.Variant,
+		"mode":          "image",
+		"count":         p.Count,
+		"params":        params,
+		"refImageCount": p.RefImageCount,
 	}
 }
 
@@ -74,16 +74,16 @@ func (c *Client) Price(ctx context.Context, token string, identity Identity, par
 // GenerateRequest 是 SubmitGeneration 的入参。ExpectedCredits 与
 // PricingVersion 必须来自紧邻的 Price 调用（上游校验一致性）。
 type GenerateRequest struct {
-	Model          string
-	Variant        string
-	Prompt         string
-	Count          int
-	ImageSize      string
-	Quality        string // 可空：仅 gpt 家族发送
-	Locale         string // 可空默认 en
-	RefAssets      []RefAsset
+	Model           string
+	Variant         string
+	Prompt          string
+	Count           int
+	ImageSize       string
+	Quality         string // 可空：仅 gpt 家族发送
+	Locale          string // 可空默认 en
+	RefAssets       []RefAsset
 	ExpectedCredits int
-	PricingVersion string
+	PricingVersion  string
 }
 
 // TaskResult 是任务组里单个产物的状态。
@@ -233,10 +233,10 @@ func (c *Client) QueryWallet(ctx context.Context, token string, identity Identit
 
 // uploadURLRequest / uploadURLResponse 是参考图上传的第一步。
 type uploadURLRequest struct {
-	Purpose      string `json:"purpose"`
-	FileName     string `json:"file_name"`
-	FileSize     int64  `json:"file_size"`
-	ContentType  string `json:"content_type"`
+	Purpose     string `json:"purpose"`
+	FileName    string `json:"file_name"`
+	FileSize    int64  `json:"file_size"`
+	ContentType string `json:"content_type"`
 }
 
 type uploadURLResponse struct {
@@ -245,12 +245,12 @@ type uploadURLResponse struct {
 }
 
 type inspectResponse struct {
-	ObjectKey  string `json:"objectKey"`
-	URL        string `json:"url"`
-	Kind       string `json:"kind"`
-	SizeBytes  int64  `json:"sizeBytes"`
-	Width      int    `json:"width"`
-	Height     int    `json:"height"`
+	ObjectKey string `json:"objectKey"`
+	URL       string `json:"url"`
+	Kind      string `json:"kind"`
+	SizeBytes int64  `json:"sizeBytes"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
 }
 
 // UploadRefImage 完成参考图上传三步：取 R2 预签名 URL → PUT 二进制 →
@@ -309,11 +309,21 @@ func (c *Client) UploadRefImage(ctx context.Context, token string, identity Iden
 	return &RefAsset{ObjectKey: grant.ObjectKey, Type: "image"}, nil
 }
 
-// Entitlements 是配额信息（free 档每日限额等）。
+// DailyImageQuota 是每日出图窗口。limit/used 是窗口进度，resetAt 是下一次重置
+// （免费档为 UTC 零点）。钱包余额是另一套长期积分，不在这个窗口里。
+type DailyImageQuota struct {
+	Limit     int    `json:"limit"`
+	Used      int    `json:"used"`
+	Remaining int    `json:"remaining"`
+	ResetAt   string `json:"resetAt"`
+}
+
+// Entitlements 是配额信息（套餐、单次张数、每日出图窗口）。
 type Entitlements struct {
-	Plan                   string `json:"plan"`
-	MaxImagesPerGeneration int    `json:"maxImagesPerGeneration"`
-	VideoAllowed           bool   `json:"videoAllowed"`
+	Plan                   string           `json:"plan"`
+	MaxImagesPerGeneration int              `json:"maxImagesPerGeneration"`
+	VideoAllowed           bool             `json:"videoAllowed"`
+	DailyImage             *DailyImageQuota `json:"dailyImage"`
 }
 
 // QueryEntitlements 拉取账号生图配额。

@@ -1091,6 +1091,76 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).toContain('admin.accounts.usageWindow.kiroReset')
   })
 
+  it('Fish token 号用 passive source 展示积分与每日出图，并回写套餐', async () => {
+    const account = makeAccount({
+      id: 4001,
+      platform: 'fish',
+      type: 'apikey',
+      extra: {},
+      credentials: { token: 'tok' }
+    })
+
+    getUsage.mockResolvedValue({
+      source: 'passive',
+      fish_plan: 'free',
+      fish_credits: {
+        current_usage: 1500,
+        usage_limit: 8000,
+        percentage_used: 18.75
+      },
+      fish_daily: {
+        current_usage: 1,
+        usage_limit: 3,
+        percentage_used: 33.333
+      },
+      fish_reset_at: '2099-03-14T00:00:00Z'
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: { account },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getUsage).toHaveBeenCalledWith(4001, 'passive', false)
+    expect(wrapper.emitted('fishUsageMeta')?.[0]).toEqual([{ plan_type: 'free' }])
+    expect(wrapper.find('[data-testid="fish-usage"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.fishCredits')
+    expect(wrapper.text()).toContain('admin.accounts.usageWindow.fishDaily')
+    expect(wrapper.text()).toContain('Free')
+  })
+
+  it('Fish 中转号不拉 Fish 用量窗口', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 4002,
+          platform: 'fish',
+          type: 'apikey',
+          extra: {},
+          credentials: { base_url: 'https://relay.example.com', api_key: 'sk' }
+        })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: true,
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(getUsage).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="fish-usage"]').exists()).toBe(false)
+  })
+
   it('Kiro OAuth 会展示运行时冷却状态', async () => {
     getUsage.mockResolvedValue({
       source: 'passive',

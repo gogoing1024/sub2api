@@ -221,6 +221,15 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 	if strings.TrimSpace(parsed.Prompt) == "" {
 		return nil, fish.NewRequestError("fish: prompt is required")
 	}
+	// 空 output_format 保持官网 PNG。png / jpeg 在下载后本机转码。
+	// webp 由选号阶段交给中转；落到原生号时在扣费前拒绝。
+	_, formatOK := normalizeImageOutputFormat(parsed.OutputFormat)
+	switch {
+	case isImageOutputFormatWebP(parsed.OutputFormat):
+		return nil, fish.NewRequestError("output_format=webp is only supported through Fish relay accounts")
+	case !formatOK:
+		return nil, fish.NewRequestError(fmt.Sprintf("unsupported output_format %q (expected png or jpeg)", strings.TrimSpace(parsed.OutputFormat)))
+	}
 
 	client := s.clients.clientForAccount(account)
 	identity := fishIdentityFromAccount(account)
@@ -248,8 +257,8 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 
 	// ── 提交段（串行）──
 	var pending []fishPendingBatch
-	var submitErr error      // 可换号的提交错误（配额/429/5xx…）
-	var indeterminate error  // 提交结果不明（网络错）
+	var submitErr error     // 可换号的提交错误（配额/429/5xx…）
+	var indeterminate error // 提交结果不明（网络错）
 	remaining := call.remaining
 	for remaining > 0 {
 		batch := minInt(cap, remaining)
@@ -318,7 +327,8 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 	// remaining 重算：n - 已交付
 	call.remaining = callInitialN(call) - len(call.delivered)
 	if call.remaining <= 0 {
-		body, err := s.buildResponseBody(ctx, call.delivered, imageSize, quality)
+		delivered, echoedFormat := fishResponseImages(call)
+		body, err := s.buildResponseBody(ctx, delivered, imageSize, quality, echoedFormat)
 		if err != nil {
 			return nil, err
 		}
@@ -390,7 +400,8 @@ func (s *FishImageService) BuildFishPartialResult(ctx context.Context, call *Fis
 	}
 	parsed := call.Request
 	shape := domainFishResolveLoose(parsed)
-	body, err := s.buildResponseBody(ctx, call.delivered, shape.size, shape.quality)
+	images, echoedFormat := fishResponseImages(call)
+	body, err := s.buildResponseBody(ctx, images, shape.size, shape.quality, echoedFormat)
 	if err != nil {
 		return nil
 	}
@@ -477,9 +488,32 @@ func (s *FishImageService) downloadWithRetry(ctx context.Context, client *fish.C
 	return nil, lastErr
 }
 
+// fishResponseImages 在写响应前按 output_format 转码。空格式保持官网字节。
+func fishResponseImages(call *FishImageCall) ([][]byte, string) {
+	format := ""
+	var compression *int
+	if call != nil && call.Request != nil {
+		format, _ = normalizeImageOutputFormat(call.Request.OutputFormat)
+		compression = call.Request.OutputCompression
+	}
+	images := applyImageOutputFormat(call.delivered, format, compression)
+	return images, fishDeliveredOutputFormat(images)
+}
+
+// fishDeliveredOutputFormat 按首张图文件头回显 png / jpeg。认不出时按官网
+// 产物回显 png（未转码的默认路径）。
+func fishDeliveredOutputFormat(images [][]byte) string {
+	if len(images) > 0 {
+		if format := sniffImageOutputFormat(images[0]); format != "" {
+			return format
+		}
+	}
+	return imageOutputFormatPNG
+}
+
 // buildResponseBody 构造 OpenAI Images 形状响应；对象存储启用时把
-// b64 换存 URL（失败回退 b64，与 Leonardo 同策略）。
-func (s *FishImageService) buildResponseBody(ctx context.Context, images [][]byte, size, quality string) ([]byte, error) {
+// b64 换存 URL（失败回退 b64）。images 已是转码后的字节。
+func (s *FishImageService) buildResponseBody(ctx context.Context, images [][]byte, size, quality, outputFormat string) ([]byte, error) {
 	data := make([]map[string]any, 0, len(images))
 	for _, image := range images {
 		data = append(data, map[string]any{
@@ -495,6 +529,9 @@ func (s *FishImageService) buildResponseBody(ctx context.Context, images [][]byt
 	}
 	if strings.TrimSpace(quality) != "" {
 		bodyMap["quality"] = quality
+	}
+	if strings.TrimSpace(outputFormat) != "" {
+		bodyMap["output_format"] = outputFormat
 	}
 	body, err := json.Marshal(bodyMap)
 	if err != nil {

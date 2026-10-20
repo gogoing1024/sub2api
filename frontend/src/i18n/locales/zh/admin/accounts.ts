@@ -449,6 +449,9 @@ export default {
         kiroApikeyRelay: '通过外部 API Key + Base URL 中转',
         leonardoOauth: 'Leonardo 网页版 Cookie 直连',
         leonardoApikeyRelay: 'OpenAI 兼容 API 中转兜底',
+        fishOauthToken: 'Oauth Token',
+        fishOauth: '通过 Oauth Token 直连 Fish Audio',
+        fishApikeyRelay: 'OpenAI 兼容 API 中转兜底',
         kiroOauth: '社交 OAuth / AWS Builder ID / 导入',
         antigravityApikey: '通过 Base URL + API Key 连接',
         upstream: '对接上游',
@@ -540,6 +543,13 @@ export default {
           unavailableDesc: '服务不可用 - 暂停 30 分钟'
         }
       },
+      fish: {
+        tokenLabel: 'fish.audio 会话 Token',
+        tokenHint: '已登录 fish.audio 的浏览器 localStorage 里的 token 值（36 位 UUID，长期会话无刷新；失效后需重新导出）。team_id / device_id 会在连通性测试时自动回填。',
+        tokenRequired: '请粘贴 fish.audio 会话 token',
+        relayApiKeyHint: '该外部上游的 API Key（通过 Authorization: Bearer 发送）',
+        relayBaseUrlHint: '承接 fish 原生无法处理的请求（白名单外尺寸 / mask / n>8 / webp）。模型名经渠道映射改写（如 gpt-image-2 → gpt-image-1）。'
+      },
       leonardo: {
         cookieLabel: 'Leonardo Cookie',
         cookieHint: '登录 app.leonardo.ai 后，从浏览器 DevTools（Application → Cookies 或 Network 请求头的 Cookie）复制完整 cookie 串；必须包含 __Secure-better-auth.session_token，分片 session_data.* 建议一并复制。也支持只粘贴裸 session token 值。短期 JWT 由后台自动用该 cookie 换取并保活。',
@@ -588,6 +598,9 @@ export default {
         leonardoTopUp: '充值积分',
         leonardoReset: '重置',
         kiroCredits: 'Credits',
+        fishCredits: 'Credits',
+        fishDaily: '今日出图',
+        fishReset: '重置',
         kiroDaysLeft: '剩余 {days} 天',
         kiroExpires: '到期',
         kiroReset: '重置',

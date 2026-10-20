@@ -289,3 +289,80 @@ describe('AccountTestModal Leonardo', () => {
     expect(wrapper.find('img[alt="test-image-1"]').attributes('src')).toBe('data:image/jpeg;base64,QUJD')
   })
 })
+
+describe('AccountTestModal Fish', () => {
+  beforeEach(() => {
+    getAvailableModels.mockReset().mockResolvedValue([{ id: 'gpt-image-2', display_name: 'GPT Image 2' }])
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: vi.fn((key: string) => (key === 'auth_token' ? 'test-token' : null)),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+        clear: vi.fn()
+      },
+      configurable: true
+    })
+    global.fetch = vi.fn().mockResolvedValue(
+      createStreamResponse([
+        'data: {"type":"test_start","model":"gpt-image-2"}\n',
+        'data: {"type":"test_complete","success":true}\n'
+      ])
+    ) as any
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('中转号按所选模型出图并携带提示词', async () => {
+    const wrapper = mountModal({
+      id: 61,
+      name: 'Fish relay',
+      platform: 'fish',
+      type: 'apikey',
+      status: 'active',
+      credentials: { base_url: 'https://relay.example.com', api_key: 'sk-relay' }
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    const promptInput = wrapper.find('textarea.textarea-stub')
+    expect(promptInput.exists()).toBe(true)
+    await promptInput.setValue('a red fox')
+
+    const startButton = wrapper.findAll('button').find((button) => button.text().includes('admin.accounts.startTest'))
+    await startButton!.trigger('click')
+    await flushPromises()
+
+    const [, request] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(request.body)).toEqual({ model_id: 'gpt-image-2', prompt: 'a red fox' })
+  })
+
+  it('token 号按图像模型测试并填入默认提示词', async () => {
+    const wrapper = mountModal({
+      id: 62,
+      name: 'Fish token',
+      platform: 'fish',
+      type: 'apikey',
+      status: 'active',
+      credentials: { token: 'tok' }
+    })
+    await wrapper.setProps({ show: true })
+    await flushPromises()
+
+    const promptInput = wrapper.find('textarea.textarea-stub')
+    expect(promptInput.exists()).toBe(true)
+    expect((promptInput.element as HTMLTextAreaElement).value).toBe(
+      'Generate a cute orange cat astronaut sticker on a clean pastel background.'
+    )
+    const startButton = wrapper.findAll('button').find((button) => button.text().includes('admin.accounts.startTest'))
+    await startButton!.trigger('click')
+    await flushPromises()
+
+    const [, request] = (global.fetch as any).mock.calls[0]
+    expect(JSON.parse(request.body)).toEqual({
+      model_id: 'gpt-image-2',
+      prompt: 'Generate a cute orange cat astronaut sticker on a clean pastel background.'
+    })
+  })
+})

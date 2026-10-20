@@ -1,12 +1,17 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,8 +27,8 @@ func newFishTestService(t *testing.T, handler http.Handler) (*FishImageService, 
 	service := NewFishImageService(nil)
 	service.clients.options = fish.Options{APIBase: server.URL}
 	account := &Account{
-		ID:     1,
-		Type:   AccountTypeAPIKey,
+		ID:   1,
+		Type: AccountTypeAPIKey,
 		Credentials: map[string]any{
 			fishCredentialToken:    "tok",
 			fishCredentialTeamID:   "team-1",
@@ -83,6 +88,9 @@ func TestFishGenerateCallHappyPath(t *testing.T) {
 	b64 := data[0].(map[string]any)["b64_json"].(string)
 	if decoded, _ := base64.StdEncoding.DecodeString(b64); string(decoded) != string(pngBytes) {
 		t.Fatalf("b64 mismatch")
+	}
+	if bodyMap["output_format"] != "png" {
+		t.Fatalf("output_format = %v, want png", bodyMap["output_format"])
 	}
 	// 计费转发：1K 档
 	if result.Forward.ImageCount != 1 || result.Forward.ImageSize != ImageBillingSize1K {
@@ -232,6 +240,124 @@ func decodeFishBody(t *testing.T, r *http.Request) map[string]any {
 		t.Fatalf("decode body: %v", err)
 	}
 	return body
+}
+
+// fishTestPNG 是一张可解码的 1x1 PNG，供格式转换断言使用。
+func fishTestPNG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestFishGenerateCallOutputFormat(t *testing.T) {
+	pngBytes := fishTestPNG(t)
+	serve := func(body []byte) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/tools/image-video/price":
+				_, _ = w.Write([]byte(`{"credits":650,"pricingVersion":"pv"}`))
+			case "/tools/image-video/generate":
+				_, _ = w.Write([]byte(`{"id":"g","status":"generating","results":[]}`))
+			case "/task/group/g":
+				_, _ = w.Write([]byte(`{"id":"g","status":"done","results":[{"id":"m","status":"done","mediaItem":{"id":"m","url":"http://` + r.Host + `/img.png"}}]}`))
+			case "/img.png":
+				_, _ = w.Write(body)
+			default:
+				t.Errorf("unexpected path %q", r.URL.Path)
+				w.WriteHeader(404)
+			}
+		})
+	}
+
+	t.Run("png stays official bytes", func(t *testing.T) {
+		service, account, _ := newFishTestService(t, serve(pngBytes))
+		req := fishImageRequest("gpt-image-2", "1024x1024", "medium", 1)
+		req.OutputFormat = "png"
+		result, err := service.Generate(context.Background(), account, "tok", req)
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		decoded := fishResponseImage(t, result.Body)
+		if string(decoded) != string(pngBytes) {
+			t.Fatal("png request re-encoded official bytes")
+		}
+		if fishResponseFormat(t, result.Body) != "png" {
+			t.Fatalf("output_format = %s", fishResponseFormat(t, result.Body))
+		}
+	})
+
+	t.Run("jpeg converts", func(t *testing.T) {
+		service, account, _ := newFishTestService(t, serve(pngBytes))
+		req := fishImageRequest("gpt-image-2", "1024x1024", "medium", 1)
+		req.OutputFormat = "jpg"
+		result, err := service.Generate(context.Background(), account, "tok", req)
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		decoded := fishResponseImage(t, result.Body)
+		if _, format, err := image.DecodeConfig(bytes.NewReader(decoded)); err != nil || format != "jpeg" {
+			t.Fatalf("format = %q err=%v", format, err)
+		}
+		if fishResponseFormat(t, result.Body) != "jpeg" {
+			t.Fatalf("output_format = %s", fishResponseFormat(t, result.Body))
+		}
+		if _, err := jpeg.Decode(bytes.NewReader(decoded)); err != nil {
+			t.Fatalf("jpeg decode: %v", err)
+		}
+	})
+}
+
+func TestFishGenerateCallRejectsOutputFormatBeforeSubmit(t *testing.T) {
+	for _, format := range []string{"webp", "gif"} {
+		t.Run(format, func(t *testing.T) {
+			var hits atomic.Int32
+			service, account, _ := newFishTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				w.WriteHeader(404)
+			}))
+			req := fishImageRequest("gpt-image-2", "1024x1024", "medium", 1)
+			req.OutputFormat = format
+			_, err := service.Generate(context.Background(), account, "tok", req)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if hits.Load() != 0 {
+				t.Fatalf("upstream hits = %d, want 0", hits.Load())
+			}
+			if !strings.Contains(err.Error(), "output_format") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func fishResponseImage(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var bodyMap map[string]any
+	if err := json.Unmarshal(body, &bodyMap); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	data := bodyMap["data"].([]any)
+	b64 := data[0].(map[string]any)["b64_json"].(string)
+	decoded, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("decode b64: %v", err)
+	}
+	return decoded
+}
+
+func fishResponseFormat(t *testing.T, body []byte) string {
+	t.Helper()
+	var bodyMap map[string]any
+	if err := json.Unmarshal(body, &bodyMap); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	format, _ := bodyMap["output_format"].(string)
+	return format
 }
 
 func TestFishQualityForRequest(t *testing.T) {

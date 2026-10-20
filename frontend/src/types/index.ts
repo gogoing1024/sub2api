@@ -1564,6 +1564,12 @@ export interface AccountUsageInfo {
   kiro_runtime_reason?: string | null
   kiro_runtime_reset_at?: string | null
 
+  // Fish token 号：钱包已用/总额、每日出图窗口、套餐
+  fish_plan?: string | null
+  fish_credits?: KiroCreditProgress | null
+  fish_daily?: KiroCreditProgress | null
+  fish_reset_at?: string | null
+
   // Leonardo 积分余额快照
   leonardo_plan?: string | null
   leonardo_plan_name?: string | null

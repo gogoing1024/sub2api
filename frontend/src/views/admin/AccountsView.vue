@@ -329,6 +329,7 @@
               :today-stats-loading="todayStatsLoading"
               :manual-refresh-token="usageManualRefreshToken"
               @kiro-usage-meta="handleKiroUsageMeta(row, $event)"
+              @fish-usage-meta="handleFishUsageMeta(row, $event)"
               :batched-usage="usageBatchByAccountId[String(row.id)] ?? null"
               :batched-usage-error="usageBatchErrorByAccountId[String(row.id)] ?? null"
               :batched-usage-loading="usageBatchLoadingByAccountId[String(row.id)] === true"
@@ -1457,6 +1458,14 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
 
 const handleKiroUsageMeta = (account: Account, meta: { plan_type?: string }) => {
   if (account.platform !== 'kiro') return
+  account.credentials = {
+    ...(account.credentials || {}),
+    ...(meta.plan_type ? { plan_type: meta.plan_type } : {})
+  }
+}
+
+const handleFishUsageMeta = (account: Account, meta: { plan_type?: string }) => {
+  if (account.platform !== 'fish') return
   account.credentials = {
     ...(account.credentials || {}),
     ...(meta.plan_type ? { plan_type: meta.plan_type } : {})

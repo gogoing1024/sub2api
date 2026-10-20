@@ -448,8 +448,18 @@ const supportsGeminiImageTest = computed(() => {
 const supportsOpenAIImageTest = computed(() => {
   const modelID = selectedModelId.value.toLowerCase()
   if (!modelID.startsWith('gpt-image-')) return false
-  // Leonardo 是纯出图平台：Cookie 号与中转号的测试都真实出一张图。
-  return props.account?.platform === 'openai' || props.account?.platform === 'leonardo'
+  return props.account?.platform === 'openai'
+})
+
+const supportsLeonardoImageTest = computed(() => {
+  const modelID = selectedModelId.value.toLowerCase()
+  if (!modelID.startsWith('gpt-image-')) return false
+  return props.account?.platform === 'leonardo'
+})
+
+const supportsFishImageTest = computed(() => {
+  if (props.account?.platform !== 'fish') return false
+  return selectedModelId.value.toLowerCase().startsWith('gpt-image-')
 })
 
 const isGrokImageModel = (id: string) => {
@@ -477,6 +487,8 @@ const supportsImageTest = computed(
   () =>
     supportsGeminiImageTest.value ||
     supportsOpenAIImageTest.value ||
+    supportsLeonardoImageTest.value ||
+    supportsFishImageTest.value ||
     supportsGrokImageTest.value
 )
 

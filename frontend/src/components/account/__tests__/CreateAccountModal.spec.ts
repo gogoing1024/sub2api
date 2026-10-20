@@ -1313,3 +1313,53 @@ describe('CreateAccountModal Leonardo accounts', () => {
     expect(payload?.extra?.leonardo_max_short_edge).toBeUndefined()
   })
 })
+
+describe('CreateAccountModal Fish accounts', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 8, platform: 'fish', type: 'apikey' })
+  })
+
+  it('shows both account types on the first step and creates a relay as apikey', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-tab-fish"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="fish-account-type-token"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="fish-account-type-relay"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="fish-relay-base-url"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="fish-account-type-relay"]').trigger('click')
+    expect(wrapper.find('[data-testid="fish-relay-base-url"]').exists()).toBe(true)
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Fish relay')
+    await wrapper.get('[data-testid="fish-relay-base-url"]').setValue('https://relay.example.com')
+    await wrapper.get('[data-testid="fish-relay-api-key"]').setValue('sk-relay')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('fish')
+    expect(payload?.type).toBe('apikey')
+    expect(payload?.credentials).toMatchObject({ base_url: 'https://relay.example.com', api_key: 'sk-relay' })
+    expect(wrapper.find('[data-testid="fish-model-restriction-section"]').exists()).toBe(true)
+  })
+
+  it('creates an oauth token account on the first step', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-tab-fish"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="fish-token-input"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="fish-model-restriction-section"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('admin.accounts.oauth.authMethod')
+
+    await wrapper.get('[data-tour="account-form-name"]').setValue('Fish token')
+    await wrapper.get('[data-testid="fish-token-input"]').setValue('46471c2b-7cdc-4671-acc4-c0b2fd111817')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('fish')
+    expect(payload?.type).toBe('apikey')
+    expect(payload?.credentials).toEqual({ token: '46471c2b-7cdc-4671-acc4-c0b2fd111817' })
+    expect(wrapper.find('[data-testid="fish-token-input"]').exists()).toBe(true)
+  })
+})

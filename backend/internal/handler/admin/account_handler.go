@@ -2891,6 +2891,45 @@ func leonardoAccountTestModels(account *service.Account) []openai.Model {
 	return models
 }
 
+// fishAccountTestModels 列出 fish 账号测试可选的请求模型。只保留账号真能调度的
+// 对外名；通配符不能直接当请求模型。一个都不剩时回落平台默认模型。
+func fishAccountTestModels(account *service.Account) []openai.Model {
+	requested := make([]string, 0)
+	for model := range account.GetModelMapping() {
+		if strings.Contains(model, "*") || !account.IsModelSupported(model) {
+			continue
+		}
+		requested = append(requested, model)
+	}
+	sort.Strings(requested)
+	if len(requested) == 0 {
+		requested = service.FishModelIDs()
+	}
+	models := make([]openai.Model, 0, len(requested))
+	for _, id := range requested {
+		models = append(models, openai.Model{
+			ID:          id,
+			Object:      "model",
+			Type:        "model",
+			DisplayName: fishTestModelDisplayName(id),
+		})
+	}
+	return models
+}
+
+func fishTestModelDisplayName(id string) string {
+	switch id {
+	case "gpt-image-2":
+		return "GPT Image 2"
+	case "gpt-image-2.5-flare":
+		return "GPT Image 2.5 Flare"
+	case "gpt-image-2.5-sunburst":
+		return "GPT Image 2.5 Sunburst"
+	default:
+		return id
+	}
+}
+
 // GetAvailableModels handles getting available models for an account
 // GET /api/v1/admin/accounts/:id/models
 func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
@@ -2982,9 +3021,10 @@ func (h *AccountHandler) GetAvailableModels(c *gin.Context) {
 		return
 	}
 
-	// fish 只出图：列平台全部对外模型。
+	// fish 只出图：列出这个账号实际能调度的请求模型。返回对象要带 id / display_name，
+	// 测试弹窗的选择器读的是这两个字段。
 	if account.Platform == service.PlatformFish {
-		response.Success(c, domain.FishModelNames())
+		response.Success(c, fishAccountTestModels(account))
 		return
 	}
 

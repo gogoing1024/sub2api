@@ -3,6 +3,7 @@ package service
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/fish"
@@ -58,5 +59,55 @@ func TestFishAccountTestConnectionBackfillsIdentity(t *testing.T) {
 	if account.GetCredential(fishCredentialToken) != "tok" {
 		t.Fatalf("token must round-trip unchanged")
 	}
+	if account.GetCredential("plan_type") != "free" {
+		t.Fatalf("plan_type = %q, want free", account.GetCredential("plan_type"))
+	}
+	if strings.Contains(w.Body.String(), "/tools/image-video/price") || strings.Contains(w.Body.String(), "Generating image") {
+		t.Fatal("empty model must stay connectivity-only")
+	}
 	_ = fish.Identity{}
+}
+
+func TestFishTokenImageTestSubmitsAndEmitsImage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/user/self":
+			_, _ = w.Write([]byte(`{"_id":"uid-9","email":"a@b.c","banned":false}`))
+		case "/wallet/uid-9/package":
+			_, _ = w.Write([]byte(`{"total":8000,"balance":8000,"type":"free"}`))
+		case "/tools/image-video/entitlements":
+			_, _ = w.Write([]byte(`{"plan":"free","maxImagesPerGeneration":2,"dailyImage":{"limit":3,"used":0,"remaining":3,"resetAt":"2099-03-14T00:00:00Z"}}`))
+		case "/tools/image-video/price":
+			_, _ = w.Write([]byte(`{"credits":10,"perItemCredits":10,"pricingVersion":"v9"}`))
+		case "/tools/image-video/generate":
+			_, _ = w.Write([]byte(`{"id":"g1","status":"done","results":[{"id":"r1","status":"done","mediaItem":{"id":"m1","type":"image","url":"https://cdn.example/a.png"}}]}`))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	svc := &AccountTestService{}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	account := &Account{
+		ID:          42,
+		Type:        AccountTypeAPIKey,
+		Platform:    PlatformFish,
+		Credentials: map[string]any{fishCredentialToken: "tok"},
+	}
+	if err := svc.testFishTokenConnection(c, account, server.URL, "gpt-image-2", "a red cube"); err != nil {
+		t.Fatalf("testFishTokenConnection: %v", err)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "https://cdn.example/a.png") {
+		t.Fatalf("image url missing from SSE: %s", body)
+	}
+	if !strings.Contains(body, `"success":true`) {
+		t.Fatalf("test_complete missing success: %s", body)
+	}
 }

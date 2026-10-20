@@ -1332,6 +1332,58 @@
           </button>
         </div>
       </div>
+      <!-- Fish：Oauth Token 直连 vs OpenAI 兼容中转。两种都落库 apikey，不走 OAuth 授权。 -->
+      <div v-if="form.platform === 'fish'">
+        <label class="input-label">{{ t('admin.accounts.accountType') }}</label>
+        <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <button
+            type="button"
+            @click="fishAccountMode = 'token'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              fishAccountMode === 'token'
+                ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
+                : 'border-gray-200 hover:border-amber-300 dark:border-dark-600 dark:hover:border-amber-700'
+            ]"
+            data-testid="fish-account-type-token"
+          >
+            <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', fishAccountMode === 'token' ? 'bg-amber-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
+              <Icon name="key" size="sm" />
+            </div>
+            <div class="min-w-0">
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                {{ t('admin.accounts.types.fishOauthToken') }}
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.types.fishOauth') }}
+              </span>
+            </div>
+          </button>
+          <button
+            type="button"
+            @click="fishAccountMode = 'relay'"
+            :class="[
+              'flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all',
+              fishAccountMode === 'relay'
+                ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20'
+                : 'border-gray-200 hover:border-sky-300 dark:border-dark-600 dark:hover:border-sky-700'
+            ]"
+            data-testid="fish-account-type-relay"
+          >
+            <div :class="['flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', fishAccountMode === 'relay' ? 'bg-sky-500 text-white' : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400']">
+              <Icon name="cloud" size="sm" />
+            </div>
+            <div class="min-w-0">
+              <span class="block text-sm font-medium text-gray-900 dark:text-white">
+                API Key + Base URL
+              </span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.accounts.types.fishApikeyRelay') }}
+              </span>
+            </div>
+          </button>
+        </div>
+      </div>
       <!-- Leonardo Cookie 账号的每积分单价：仅用于今日统计估算积分消耗金额，不参与计费 -->
       <div v-if="form.platform === 'leonardo' && accountCategory === 'oauth-based'" class="space-y-2">
         <label class="input-label">{{ t('admin.accounts.leonardoCreditUnitPriceUsd') }}</label>
@@ -1406,6 +1458,129 @@
             data-testid="leonardo-relay-api-key"
           />
           <p class="input-hint">{{ t('admin.accounts.leonardo.relayApiKeyHint') }}</p>
+        </div>
+      </div>
+      <!-- Fish Oauth Token：第一步直接粘贴会话 token，仍以 apikey 落库，不进第二步。 -->
+      <div v-if="form.platform === 'fish' && fishAccountMode === 'token'" class="space-y-4" data-testid="fish-token-fields">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.fish.tokenLabel') }}</label>
+          <textarea
+            v-model="fishToken"
+            rows="3"
+            class="input font-mono text-xs"
+            placeholder="46471c2b-7cdc-4671-acc4-c0b2fd111817"
+            data-testid="fish-token-input"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.fish.tokenHint') }}</p>
+        </div>
+      </div>
+      <!-- Fish 中转：第一步直接填 Base URL + API Key，仍以 apikey 落库。 -->
+      <div v-if="form.platform === 'fish' && fishAccountMode === 'relay'" class="space-y-4" data-testid="fish-relay-fields">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
+          <input
+            v-model="apiKeyBaseUrl"
+            type="text"
+            required
+            class="input"
+            placeholder="https://api.openai.com"
+            data-testid="fish-relay-base-url"
+          />
+          <p class="input-hint">{{ t('admin.accounts.fish.relayBaseUrlHint') }}</p>
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.accounts.apiKeyRequired') }}</label>
+          <input
+            v-model="apiKeyValue"
+            type="password"
+            required
+            class="input font-mono"
+            placeholder="sk-..."
+            data-testid="fish-relay-api-key"
+          />
+          <p class="input-hint">{{ t('admin.accounts.fish.relayApiKeyHint') }}</p>
+        </div>
+      </div>
+      <!-- Fish 模型白名单 / 映射。token 号和中转号都在第一步设置。 -->
+      <div
+        v-if="form.platform === 'fish'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+        data-testid="fish-model-restriction-section"
+      >
+        <label class="input-label">{{ t('admin.accounts.modelRestriction') }}</label>
+        <div class="mb-4 flex gap-2">
+          <button
+            type="button"
+            @click="modelRestrictionMode = 'whitelist'"
+            :class="[
+              'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              modelRestrictionMode === 'whitelist'
+                ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+            ]"
+          >
+            {{ t('admin.accounts.modelWhitelist') }}
+          </button>
+          <button
+            type="button"
+            @click="modelRestrictionMode = 'mapping'"
+            :class="[
+              'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              modelRestrictionMode === 'mapping'
+                ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-600 dark:text-gray-400 dark:hover:bg-dark-500'
+            ]"
+          >
+            {{ t('admin.accounts.modelMapping') }}
+          </button>
+        </div>
+        <div v-if="modelRestrictionMode === 'whitelist'">
+          <ModelWhitelistSelector
+            v-model="allowedModels"
+            :model-mappings="modelMappings"
+            platform="fish"
+          />
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.selectedModels', { count: allowedModels.length }) }}
+            <span v-if="allowedModels.length === 0">{{ t('admin.accounts.supportsAllModels') }}</span>
+          </p>
+        </div>
+        <div v-else>
+          <div class="mb-3 rounded-lg bg-purple-50 p-3 dark:bg-purple-900/20">
+            <p class="text-xs text-purple-700 dark:text-purple-400">{{ t('admin.accounts.mapRequestModels') }}</p>
+          </div>
+          <div v-if="modelMappings.length > 0" class="mb-3 space-y-2">
+            <div
+              v-for="(mapping, index) in modelMappings"
+              :key="'fish-' + getModelMappingKey(mapping)"
+              class="flex items-center gap-2"
+            >
+              <input v-model="mapping.from" type="text" class="input flex-1" :placeholder="t('admin.accounts.requestModel')" />
+              <span class="text-gray-400">→</span>
+              <input v-model="mapping.to" type="text" class="input flex-1" :placeholder="t('admin.accounts.actualModel')" />
+              <button type="button" @click="removeModelMapping(index)" class="rounded-lg p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20">
+                ×
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            @click="addModelMapping"
+            class="mb-3 w-full rounded-lg border-2 border-dashed border-gray-300 px-4 py-2 text-gray-600 dark:border-dark-500 dark:text-gray-400"
+          >
+            + {{ t('admin.accounts.addMapping') }}
+          </button>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="preset in presetMappings"
+              :key="'fish-' + preset.label"
+              type="button"
+              @click="addPresetMapping(preset.from, preset.to)"
+              :class="['rounded-lg px-3 py-1 text-xs transition-colors', preset.color]"
+            >
+              + {{ preset.label }}
+            </button>
+          </div>
         </div>
       </div>
       <div v-if="form.platform === 'kiro' && accountCategory === 'oauth-based'">
@@ -2244,7 +2419,7 @@
       </div>
 
       <!-- API Key input (only for apikey type, excluding Antigravity / Kiro which have their own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'leonardo'" class="space-y-4">
+      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity' && form.platform !== 'kiro' && form.platform !== 'leonardo' && form.platform !== 'fish'" class="space-y-4">
         <div v-if="!isMultiProtocolPlatform || apiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -4504,52 +4679,6 @@
           <p class="input-hint">{{ t('admin.accounts.leonardo.cookieHint') }}</p>
         </div>
       </div>
-      <!-- Fish：token 原生号（网页会话 Bearer）或 OpenAI 兼容中转号兜底。 -->
-      <div v-else-if="form.platform === 'fish'" class="space-y-4">
-        <div>
-          <label class="input-label">账号类型</label>
-          <div class="flex gap-2">
-            <button
-              type="button"
-              class="btn flex-1"
-              :class="fishAccountMode === 'token' ? 'btn-primary' : 'btn-secondary'"
-              data-testid="fish-mode-token"
-              @click="fishAccountMode = 'token'"
-            >Token 原生（fish.audio 网页会话）</button>
-            <button
-              type="button"
-              class="btn flex-1"
-              :class="fishAccountMode === 'relay' ? 'btn-primary' : 'btn-secondary'"
-              data-testid="fish-mode-relay"
-              @click="fishAccountMode = 'relay'"
-            >API 中转（OpenAI 兼容兜底）</button>
-          </div>
-        </div>
-        <div v-if="fishAccountMode === 'token'">
-          <label class="input-label">fish.audio 会话 Token</label>
-          <textarea
-            v-model="fishToken"
-            rows="3"
-            class="input font-mono text-xs"
-            placeholder="46471c2b-7cdc-4671-acc4-c0b2fd111817"
-            data-testid="fish-token-input"
-          ></textarea>
-          <p class="input-hint">已登录 fish.audio 的浏览器 localStorage 里的 token 值（36 位 UUID，长期会话无刷新；失效后需重新导出）。team_id / device_id 会在连通性测试时自动回填。</p>
-        </div>
-        <template v-else>
-          <div>
-            <label class="input-label">Base URL</label>
-            <input v-model="fishRelayBaseUrl" type="text" class="input font-mono text-xs"
-              placeholder="https://api.openai.com" data-testid="fish-relay-base-url" />
-            <p class="input-hint">承接 fish 原生无法处理的请求（白名单外尺寸 / mask / n&gt;8 / webp）。模型名经渠道映射改写（如 gpt-image-2 → gpt-image-1）。</p>
-          </div>
-          <div>
-            <label class="input-label">API Key</label>
-            <input v-model="fishRelayApiKey" type="password" class="input font-mono text-xs"
-              placeholder="sk-..." data-testid="fish-relay-api-key" />
-          </div>
-        </template>
-      </div>
       <div v-else-if="isKiroImportMode" class="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-700 dark:bg-amber-900/20">
         <!-- Provider 选择:决定字段显隐与必填、示例 -->
         <div>
@@ -4679,16 +4808,6 @@
           class="btn btn-primary"
           data-testid="leonardo-create-account"
           @click="handleLeonardoCreate"
-        >
-          {{ submitting ? t('admin.accounts.creating') : t('common.create') }}
-        </button>
-        <button
-          v-else-if="form.platform === 'fish'"
-          type="button"
-          :disabled="submitting"
-          class="btn btn-primary"
-          data-testid="fish-create-account"
-          @click="handleFishCreate"
         >
           {{ submitting ? t('admin.accounts.creating') : t('common.create') }}
         </button>
@@ -5695,31 +5814,17 @@ const kiroCreateSyncCredentials = computed(() => {
 // Fish 建号：token 原生号（{token}）或 OpenAI 兼容中转号（{base_url, api_key}）。
 const fishAccountMode = ref<'token' | 'relay'>('token')
 const fishToken = ref('')
-const fishRelayBaseUrl = ref('')
-const fishRelayApiKey = ref('')
 const handleFishCreate = async () => {
   if (!form.name.trim()) {
     appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
     return
   }
-  const credentials: Record<string, unknown> = {}
-  if (fishAccountMode.value === 'token') {
-    const token = fishToken.value.trim()
-    if (!token) {
-      appStore.showError('请粘贴 fish.audio 会话 token')
-      return
-    }
-    credentials.token = token
-  } else {
-    const baseURL = fishRelayBaseUrl.value.trim()
-    const apiKey = fishRelayApiKey.value.trim()
-    if (!baseURL || !apiKey) {
-      appStore.showError('中转账号需要 Base URL 和 API Key')
-      return
-    }
-    credentials.base_url = baseURL
-    credentials.api_key = apiKey
+  const token = fishToken.value.trim()
+  if (!token) {
+    appStore.showError(t('admin.accounts.fish.tokenRequired'))
+    return
   }
+  const credentials: Record<string, unknown> = { token }
   const modelMapping = buildModelMappingObject(
     modelRestrictionMode.value,
     allowedModels.value,
@@ -6089,7 +6194,7 @@ const form = reactive({
 const isOAuthFlow = computed(() => {
   // Leonardo 的长期凭据是浏览器 cookie，没有授权重定向环节（两步建号由
   // needsCredentialStep 单独处理）。
-  if (form.platform === 'leonardo') {
+  if (form.platform === 'leonardo' || form.platform === 'fish') {
     return false
   }
   // Antigravity upstream 类型不需要 OAuth 流程
@@ -6103,11 +6208,10 @@ const isOAuthFlow = computed(() => {
   return accountCategory.value === 'oauth-based'
 })
 
-// Leonardo 与 OAuth 一样分两步：第一步基础信息，第二步再粘贴 cookie；
-// 中转（apikey-relay）单步直接建号。
+// Leonardo Cookie 分两步。Fish 的 token 和中转都在第一步直接建号。
 const needsCredentialStep = computed(() =>
-  isOAuthFlow.value || (form.platform === 'leonardo' && accountCategory.value !== 'apikey-relay') ||
-  form.platform === 'fish'
+  isOAuthFlow.value ||
+  (form.platform === 'leonardo' && accountCategory.value !== 'apikey-relay')
 )
 
 const isKiroImportMode = computed(() => form.platform === 'kiro' && kiroAccountType.value === 'import')
@@ -6198,6 +6302,11 @@ watch(
       form.type = category === 'apikey-relay' ? 'apikey' : 'oauth'
       return
     }
+    // Fish 的两种卡片都是 apikey：token 凭据或 base_url + api_key。
+    if (form.platform === 'fish') {
+      form.type = 'apikey'
+      return
+    }
     // Bedrock 类型
     if (form.platform === 'anthropic' && category === 'bedrock') {
       form.type = 'bedrock' as AccountType
@@ -6238,7 +6347,7 @@ watch(
                 ? 'https://api.x.ai/v1'
                 : newPlatform === 'typesafe'
                   ? 'https://api.typesafe.ai'
-                  : newPlatform === 'leonardo'
+                  : newPlatform === 'leonardo' || newPlatform === 'fish'
                     ? ''
                     : 'https://api.anthropic.com'
     }
@@ -6407,10 +6516,15 @@ const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | '
   geminiOAuthType.value = oauthType
 }
 
-// Auto-fill related models when switching to whitelist mode or changing platform
+// 切换白名单模式或平台时，按平台目录预填。Fish 留空：空映射由后端回落默认模型，
+// 不把上一个平台的模型带过来。
 watch(
   [modelRestrictionMode, () => form.platform],
-  ([newMode]) => {
+  ([newMode, platform]) => {
+    if (platform === 'fish') {
+      allowedModels.value = []
+      return
+    }
     if (newMode === 'whitelist') {
       allowedModels.value = [...getModelsByPlatform(form.platform)]
     }
@@ -6751,6 +6865,8 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  fishAccountMode.value = 'token'
+  fishToken.value = ''
   leonardoCookie.value = ''
   leonardoCreditUnitPriceUsd.value = 0
   leonardoImageLimits.value = defaultLeonardoImageLimits()
@@ -7148,6 +7264,43 @@ const handleSubmit = async () => {
     }
 
     await createAccountAndFinish('leonardo', 'apikey', credentials)
+    return
+  }
+
+  // Fish 两种账号都在第一步创建，用凭据区分：token，或 base_url + api_key。
+  if (form.platform === 'fish' && fishAccountMode.value === 'token') {
+    await handleFishCreate()
+    return
+  }
+
+  if (form.platform === 'fish' && fishAccountMode.value === 'relay') {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    if (!apiKeyBaseUrl.value.trim()) {
+      appStore.showError(t('admin.accounts.upstream.pleaseEnterBaseUrl'))
+      return
+    }
+    if (!apiKeyValue.value.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterApiKey'))
+      return
+    }
+
+    const credentials: Record<string, unknown> = {
+      api_key: apiKeyValue.value.trim(),
+      base_url: apiKeyBaseUrl.value.trim()
+    }
+    const modelMapping = buildModelMappingObject(
+      modelRestrictionMode.value,
+      allowedModels.value,
+      modelMappings.value
+    )
+    if (modelMapping) {
+      credentials.model_mapping = modelMapping
+    }
+
+    await createAccountAndFinish('fish', 'apikey', credentials)
     return
   }
 
