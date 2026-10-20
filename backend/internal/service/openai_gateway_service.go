@@ -508,7 +508,6 @@ type OpenAIGatewayService struct {
 	excelBPSModelCooldowns              excelBPSModelCooldowns
 	excelBPSCooldownUntil               sync.Map // key: int64(accountID), value: time.Time
 	excelBPSAttachments                 basispoints.AttachmentCache
-	excelBPSGroupPresence               sync.Map // key: excelBPSGroupPresenceKey, value: excelBPSGroupPresenceEntry
 	openaiCompatSessionResponses        sync.Map
 	openaiCompatAnthropicDigestSessions sync.Map
 	// openaiCodexTurnStateOrigins: 下游会话 seed → openAICodexTurnStateOrigin，

@@ -544,28 +544,6 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		clearBinding()
 		return nil, false, nil
 	}
-	// A sticky binding created before a BPS account joined the group may still
-	// point at a native account. Do not let that old binding bypass the explicit
-	// BPS route while a BPS account can serve this request.
-	// Skipped while the pool is known to hold no BPS-only account: there is
-	// nothing to yield to, so listing it would not change the outcome.
-	if req.Platform == PlatformOpenAI && strings.TrimSpace(req.RequestedModel) != "" && !isBPSUnsupportedInbound(ctx) && !account.IsExcelBPSEnabledForModel(req.RequestedModel) &&
-		s.service.groupMayHaveBPSOAuth(req.GroupID, req.Platform) {
-		schedulable := func(candidate *Account) bool {
-			if _, excluded := req.ExcludedIDs[candidate.ID]; excluded {
-				return false
-			}
-			return candidate.IsSchedulableForModelWithContext(ctx, req.RequestedModel) &&
-				s.isAccountRequestCompatible(ctx, candidate, req) &&
-				s.isAccountTransportCompatible(candidate, req.RequiredTransport, req.RequestedModel) &&
-				!s.service.isExcelBPSRouteCoolingDown(candidate, req.RequestedModel)
-		}
-		if candidates, listErr := s.service.listSchedulableAccounts(ctx, req.GroupID, req.Platform); listErr == nil &&
-			stickyShouldYieldToBPS(ctx, account, candidates, req.RequestedModel, req.RequiredCapability, req.RequiredImageCapability, schedulable) {
-			clearBinding()
-			return nil, false, nil
-		}
-	}
 	// Free-tier soft gate: sticky session must not pin an over-quota free OAuth account.
 	// Admin QueryQuota / import probes do not use this path.
 	if account != nil && len(s.filterGrokFreeQuotaAccounts(ctx, []Account{*account})) == 0 {
@@ -1127,34 +1105,6 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 		return append(primary, overflow...)
 	}
 
-	// Excel/BPS is a per-account protocol. Once a request model has a BPS
-	// candidate, try those accounts before native Codex accounts so a pool of
-	// accounts does not randomly send the same model to /v1/responses. Native
-	// candidates remain as a last resort for pools where BPS accounts cannot be
-	// acquired; Forward still enforces BPS whenever the selected account has it
-	// enabled.
-	buildBPSPreferredOrder := func(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
-		if req.Platform != PlatformOpenAI || strings.TrimSpace(req.RequestedModel) == "" || len(pool) < 2 {
-			return buildSelectionOrder(pool)
-		}
-		bps := make([]openAIAccountCandidateScore, 0, len(pool))
-		native := make([]openAIAccountCandidateScore, 0, len(pool))
-		for _, candidate := range pool {
-			if candidate.account != nil && candidate.account.IsExcelBPSEnabledForModel(req.RequestedModel) {
-				bps = append(bps, candidate)
-			} else {
-				native = append(native, candidate)
-			}
-		}
-		if len(bps) == 0 || len(native) == 0 {
-			return buildSelectionOrder(pool)
-		}
-		ordered := make([]openAIAccountCandidateScore, 0, len(pool))
-		ordered = append(ordered, buildSelectionOrder(bps)...)
-		ordered = append(ordered, buildSelectionOrder(native)...)
-		return ordered
-	}
-
 	if req.RequireCompact {
 		supported := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
 		unknown := make([]openAIAccountCandidateScore, 0, len(plan.candidates))
@@ -1167,15 +1117,15 @@ func (s *defaultOpenAIAccountScheduler) buildOpenAISelectionOrder(
 			}
 		}
 		selectionOrder := make([]openAIAccountCandidateScore, 0, len(plan.allCandidates))
-		selectionOrder = append(selectionOrder, buildBPSPreferredOrder(supported)...)
-		selectionOrder = append(selectionOrder, buildBPSPreferredOrder(unknown)...)
+		selectionOrder = append(selectionOrder, buildSelectionOrder(supported)...)
+		selectionOrder = append(selectionOrder, buildSelectionOrder(unknown)...)
 		if len(plan.staleSnapshotCompactRetry) > 0 && s.service.schedulerSnapshot != nil {
 			selectionOrder = append(selectionOrder, sortOpenAICompactRetryCandidates(plan.staleSnapshotCompactRetry)...)
 		}
 		return selectionOrder
 	}
 
-	return buildBPSPreferredOrder(plan.candidates)
+	return buildSelectionOrder(plan.candidates)
 }
 
 func sortOpenAICompactRetryCandidates(pool []openAIAccountCandidateScore) []openAIAccountCandidateScore {
@@ -1548,36 +1498,6 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 	if s.service.concurrencyService != nil {
 		if batchLoad, loadErr := s.service.concurrencyService.GetAccountsLoadBatch(ctx, loadReq); loadErr == nil {
 			loadMap = batchLoad
-		}
-	}
-
-	// Preserve BPS preference across the subscription/compact priority partitions:
-	// try to acquire a BPS account first, but let native capacity handle the
-	// request when BPS is busy instead of committing to a BPS wait plan.
-	if req.Platform == PlatformOpenAI && strings.TrimSpace(req.RequestedModel) != "" {
-		var bps, native []*Account
-		for _, account := range filtered {
-			if account.IsExcelBPSEnabledForModel(req.RequestedModel) {
-				bps = append(bps, account)
-			} else {
-				native = append(native, account)
-			}
-		}
-		if len(bps) > 0 && len(native) > 0 {
-			bpsAttempt := s.trySelectByLoadBalancePool(ctx, req, bps, loadMap, budget)
-			if bpsAttempt.result != nil && bpsAttempt.result.Acquired {
-				return bpsAttempt.result, bpsAttempt.candidateCount, bpsAttempt.topK, bpsAttempt.loadSkew, nil
-			}
-			if bpsAttempt.err != nil && !bpsAttempt.noCompactCandidates {
-				return nil, bpsAttempt.candidateCount, bpsAttempt.topK, bpsAttempt.loadSkew, bpsAttempt.err
-			}
-			nativeAttempt := s.trySelectByLoadBalancePool(ctx, req, native, loadMap, budget)
-			if nativeAttempt.result != nil && nativeAttempt.result.Acquired {
-				return nativeAttempt.result, nativeAttempt.candidateCount, nativeAttempt.topK, nativeAttempt.loadSkew, nil
-			}
-			if nativeAttempt.err != nil && !nativeAttempt.noCompactCandidates {
-				return nil, nativeAttempt.candidateCount, nativeAttempt.topK, nativeAttempt.loadSkew, nativeAttempt.err
-			}
 		}
 	}
 

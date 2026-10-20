@@ -111,7 +111,7 @@ func WithBPSUnsupportedInbound(ctx context.Context) context.Context {
 
 // WithBPSRouteExcluded keeps the rest of a request off BPS once BPS turned out
 // unable to carry it (ExcelBPSImageUnsupportedReason): later account switches
-// skip BPS-only accounts and sticky native bindings no longer yield to BPS.
+// skip BPS-only accounts.
 func WithBPSRouteExcluded(ctx context.Context) context.Context {
 	return context.WithValue(ctx, bpsRouteExcludedKey{}, true)
 }
@@ -170,27 +170,4 @@ func newExcelOAuthRouteFailoverError() *UpstreamFailoverError {
 		ClientStatusCode:  http.StatusBadGateway,
 		ClientMessage:     errExcelOAuthRouteUnavailable.Error(),
 	}
-}
-
-// stickyShouldYieldToBPS reports whether a sticky binding to a native account
-// must give way to BPS: only when the request's entry point has a BPS route and
-// the pool holds another BPS-only account that the caller's scheduler would
-// actually pick for this very request. Chat Completions, Anthropic Messages and
-// count_tokens keep their native binding (and its prompt cache), and so does
-// every request while the BPS candidates are cooling down or otherwise
-// unschedulable; evicting then would only move the session to another native
-// account.
-func stickyShouldYieldToBPS(ctx context.Context, sticky *Account, candidates []Account, requestedModel string, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability, schedulable func(*Account) bool) bool {
-	if sticky == nil || sticky.IsExcelBPSEnabledForModel(requestedModel) || isBPSUnsupportedInbound(ctx) {
-		return false
-	}
-	for i := range candidates {
-		candidate := &candidates[i]
-		if candidate.ID != sticky.ID && candidate.IsBPSOAuth() &&
-			accountSupportsOpenAICapabilitiesForRequest(ctx, candidate, requestedModel, requiredCapability, requiredImageCapability) &&
-			schedulable(candidate) {
-			return true
-		}
-	}
-	return false
 }

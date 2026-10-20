@@ -62,8 +62,9 @@ func newExcelBPSImageFailoverContext() (*gin.Context, *httptest.ResponseRecorder
 	return c, rec
 }
 
-// In a mixed pool the BPS account is tried first; its image rejection keeps
-// the rest of the request off BPS and a native account serves it.
+// In a mixed pool whose BPS accounts rank first (lower priority value), a BPS
+// account is tried first; its image rejection keeps the rest of the request off
+// BPS and a native account serves it.
 func TestOpenAIGatewayHandlerResponses_ExcelBPSImageFailureMovesToNative(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := newAstraProCapturedUpstream(&http.Response{

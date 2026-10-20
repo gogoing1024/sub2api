@@ -988,28 +988,6 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 		_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 		return nil
 	}
-	// A stale sticky binding must not bypass BPS once a BPS account can serve
-	// this request. Clear it and let normal selection choose an eligible BPS
-	// account instead of silently forwarding this turn to /v1/responses.
-	// Skipped while the pool is known to hold no BPS-only account: there is
-	// nothing to yield to, so listing it would not change the outcome.
-	if platform == PlatformOpenAI && strings.TrimSpace(requestedModel) != "" && !isBPSUnsupportedInbound(ctx) && !account.IsExcelBPSEnabledForModel(requestedModel) &&
-		s.groupMayHaveBPSOAuth(groupID, platform) {
-		schedulable := func(candidate *Account) bool {
-			if _, excluded := excludedIDs[candidate.ID]; excluded {
-				return false
-			}
-			return isOpenAICompatibleAccountEligibleForRequest(ctx, candidate, platform, requestedModel, requireCompact, requiredCapability) &&
-				!s.isOpenAIAccountRequestRuntimeBlocked(candidate, requestedModel, requireCompact) &&
-				!s.isExcelBPSRouteCoolingDown(candidate, requestedModel)
-		}
-		if candidates, listErr := s.listSchedulableAccounts(ctx, groupID, platform); listErr == nil &&
-			stickyShouldYieldToBPS(ctx, account, candidates, requestedModel, requiredCapability, "", schedulable) {
-			_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
-			return nil
-		}
-	}
-
 	// 验证账号是否可用于当前请求
 	// Verify account is usable for current request
 	if !isOpenAICompatibleAccountEligibleForRequest(ctx, account, platform, requestedModel, false, requiredCapability) {
@@ -1117,16 +1095,8 @@ func (s *OpenAIGatewayService) selectBestAccount(ctx context.Context, groupID *i
 	if preferLowUpstreamRate {
 		rateOrder = newOpenAILegacyUpstreamRateOrder(eligible, time.Now(), s.openAIOAuthSchedulingRateMultiplier(ctx))
 	}
-	bpsPreferred := strings.TrimSpace(requestedModel) != ""
 	sort.SliceStable(eligible, func(i, j int) bool {
 		a, b := eligible[i], eligible[j]
-		if bpsPreferred {
-			aBPS := a.IsExcelBPSEnabledForModel(requestedModel)
-			bBPS := b.IsExcelBPSEnabledForModel(requestedModel)
-			if aBPS != bBPS {
-				return aBPS
-			}
-		}
 		if requireCompact && compactTiers[a.ID] != compactTiers[b.ID] {
 			return compactTiers[a.ID] > compactTiers[b.ID]
 		}
@@ -1560,7 +1530,6 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 		if err != nil {
 			return accounts, err
 		}
-		s.recordExcelBPSGroupPresence(groupID, platform, accounts)
 		accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
 		if platform == PlatformGrok {
 			accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)
@@ -1579,7 +1548,6 @@ func (s *OpenAIGatewayService) listSchedulableAccounts(ctx context.Context, grou
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
-	s.recordExcelBPSGroupPresence(groupID, platform, accounts)
 	accounts = s.filterOpenAIAccountsBySchedulingThreshold(ctx, accounts)
 	if platform == PlatformGrok {
 		accounts = s.filterGrokFreeQuotaAccountsForOpenAI(ctx, accounts)

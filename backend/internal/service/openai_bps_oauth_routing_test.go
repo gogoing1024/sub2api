@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	coderws "github.com/coder/websocket"
@@ -77,7 +78,7 @@ func TestLegacySelectionAppliesBPSOAuthRules(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	t.Run("BPS preferred on the Responses entry point", func(t *testing.T) {
+	t.Run("BPS account eligible on the Responses entry point", func(t *testing.T) {
 		svc := newSvc(bpsRoutingNativeAccount(2, 5), bpsRoutingBPSAccount(1))
 		account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, "", "gpt-5.6-sol", nil)
 		require.NoError(t, err)
@@ -128,27 +129,16 @@ var bpsCooldownCases = []struct {
 	}},
 }
 
-// A native sticky binding yields to BPS only when a BPS account can and will
-// serve this request: Chat Completions, Messages and count_tokens keep it, and
-// so does every request while the BPS candidate is cooling down.
-func TestLegacyStickyBindingYieldsToBPSOnlyWhenBPSCanServe(t *testing.T) {
+// A sticky session stays on its native account even when a BPS account could
+// serve the model: BPS and native accounts compete on equal terms, and only the
+// sticky account's own eligibility can move the session.
+func TestLegacyStickyBindingStaysOnNativeAccount(t *testing.T) {
 	const sessionHash = "bps-sticky"
-	type stickyCase struct {
-		name      string
-		ctx       context.Context
-		cool      func(svc *OpenAIGatewayService, bps *Account)
-		wantID    int64
-		wantEvict bool
-	}
-	cases := []stickyCase{
-		{name: "Responses", ctx: context.Background(), wantID: 1, wantEvict: true},
-		{name: "unsupported entry point", ctx: WithBPSUnsupportedInbound(context.Background()), wantID: 2, wantEvict: false},
-	}
-	for _, cooldown := range bpsCooldownCases {
-		cases = append(cases, stickyCase{name: cooldown.name, ctx: context.Background(), cool: cooldown.cool, wantID: 2, wantEvict: false})
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for name, ctx := range map[string]context.Context{
+		"Responses":               context.Background(),
+		"unsupported entry point": WithBPSUnsupportedInbound(context.Background()),
+	} {
+		t.Run(name, func(t *testing.T) {
 			bps := bpsRoutingBPSAccount(1)
 			cache := &stubGatewayCache{sessionBindings: map[string]int64{"openai:" + sessionHash: 2}}
 			svc := &OpenAIGatewayService{
@@ -156,33 +146,14 @@ func TestLegacyStickyBindingYieldsToBPSOnlyWhenBPSCanServe(t *testing.T) {
 				cache:       cache,
 				cfg:         &config.Config{},
 			}
-			if tc.cool != nil {
-				tc.cool(svc, &bps)
-			}
 
-			account, err := svc.SelectAccountForModelWithExclusions(tc.ctx, nil, sessionHash, "gpt-5.6-sol", nil)
+			account, err := svc.SelectAccountForModelWithExclusions(ctx, nil, sessionHash, "gpt-5.6-sol", nil)
 
 			require.NoError(t, err)
-			require.Equal(t, tc.wantID, account.ID)
-			require.Equal(t, tc.wantEvict, cache.deletedSessions["openai:"+sessionHash] > 0)
+			require.Equal(t, int64(2), account.ID)
+			require.Zero(t, cache.deletedSessions["openai:"+sessionHash])
 		})
 	}
-}
-
-func TestStickyShouldYieldToBPS(t *testing.T) {
-	native := bpsRoutingNativeAccount(2, 5)
-	scoped := bpsRoutingBPSAccount(1, "gpt-7-new")
-	ctx := context.Background()
-	schedulable := func(*Account) bool { return true }
-
-	require.True(t, stickyShouldYieldToBPS(ctx, &native, []Account{native, scoped}, "gpt-7-new", OpenAIEndpointCapabilityResponses, "", schedulable))
-	require.False(t, stickyShouldYieldToBPS(ctx, &native, []Account{native, scoped}, "gpt-5.6-sol", OpenAIEndpointCapabilityResponses, "", schedulable), "outside the BPS whitelist")
-	require.False(t, stickyShouldYieldToBPS(WithBPSUnsupportedInbound(ctx), &native, []Account{native, scoped}, "gpt-7-new", "", "", schedulable), "no BPS route for this entry point")
-	require.False(t, stickyShouldYieldToBPS(WithBPSRouteExcluded(ctx), &native, []Account{native, scoped}, "gpt-7-new", OpenAIEndpointCapabilityResponses, "", schedulable), "BPS cannot carry this request")
-	require.False(t, stickyShouldYieldToBPS(ctx, &native, []Account{native, scoped}, "gpt-7-new", OpenAIEndpointCapabilityEmbeddings, "", schedulable))
-	require.False(t, stickyShouldYieldToBPS(ctx, &native, []Account{native}, "gpt-7-new", "", "", schedulable), "no BPS candidate")
-	require.False(t, stickyShouldYieldToBPS(ctx, &scoped, []Account{native, scoped}, "gpt-7-new", "", "", schedulable), "already on BPS")
-	require.False(t, stickyShouldYieldToBPS(ctx, &native, []Account{native, scoped}, "gpt-7-new", "", "", func(*Account) bool { return false }), "BPS candidate not schedulable")
 }
 
 // Forward-time backstop: a BPS-only account that cannot serve the request
@@ -224,29 +195,18 @@ func TestForwardBPSOAuthRouteUnavailableFailsOver(t *testing.T) {
 	}
 }
 
-// The advanced scheduler's sticky layer follows the same entry-point rule.
-func TestAdvancedStickyBindingYieldsToBPSOnlyWhenBPSCanServe(t *testing.T) {
+// The advanced scheduler's sticky layer keeps native sessions too.
+func TestAdvancedStickyBindingStaysOnNativeAccount(t *testing.T) {
 	groupID := int64(10)
 	native := bpsRoutingNativeAccount(2001, 5)
 	native.GroupIDs = []int64{groupID}
 	bps := bpsRoutingBPSAccount(2002)
 	bps.GroupIDs = []int64{groupID}
-	type stickyCase struct {
-		name       string
-		ctx        context.Context
-		cool       func(svc *OpenAIGatewayService, bps *Account)
-		wantID     int64
-		wantSticky bool
-	}
-	cases := []stickyCase{
-		{name: "Responses", ctx: context.Background(), wantID: bps.ID, wantSticky: false},
-		{name: "unsupported entry point", ctx: WithBPSUnsupportedInbound(context.Background()), wantID: native.ID, wantSticky: true},
-	}
-	for _, cooldown := range bpsCooldownCases {
-		cases = append(cases, stickyCase{name: cooldown.name, ctx: context.Background(), cool: cooldown.cool, wantID: native.ID, wantSticky: true})
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for name, ctx := range map[string]context.Context{
+		"Responses":               context.Background(),
+		"unsupported entry point": WithBPSUnsupportedInbound(context.Background()),
+	} {
+		t.Run(name, func(t *testing.T) {
 			resetOpenAIAdvancedSchedulerSettingCacheForTest()
 			cache := &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:bps_sticky": native.ID}}
 			svc := &OpenAIGatewayService{
@@ -256,17 +216,14 @@ func TestAdvancedStickyBindingYieldsToBPSOnlyWhenBPSCanServe(t *testing.T) {
 				rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
 				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{}),
 			}
-			if tc.cool != nil {
-				tc.cool(svc, &bps)
-			}
 
-			selection, decision, err := svc.SelectAccountWithScheduler(tc.ctx, &groupID, "", "bps_sticky", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
+			selection, decision, err := svc.SelectAccountWithScheduler(ctx, &groupID, "", "bps_sticky", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
 
 			require.NoError(t, err)
 			require.NotNil(t, selection)
-			require.Equal(t, tc.wantID, selection.Account.ID)
-			require.Equal(t, tc.wantSticky, decision.StickySessionHit)
-			require.Equal(t, !tc.wantSticky, cache.deletedSessions["openai:bps_sticky"] > 0)
+			require.Equal(t, native.ID, selection.Account.ID)
+			require.True(t, decision.StickySessionHit)
+			require.Zero(t, cache.deletedSessions["openai:bps_sticky"])
 			if selection.ReleaseFunc != nil {
 				selection.ReleaseFunc()
 			}
@@ -426,13 +383,13 @@ func (r listCountingSchedulerRepo) ListSchedulableByGroupIDAndPlatform(ctx conte
 	return r.schedulerTestOpenAIAccountRepo.ListSchedulableByGroupIDAndPlatform(ctx, groupID, platform)
 }
 
-// A sticky hit in a pool known to hold no BPS-only account does not list the
-// pool to decide whether to yield to BPS; the selection is unchanged.
-func TestLegacyStickyHitSkipsListingWithoutBPSAccounts(t *testing.T) {
+// A sticky hit never lists the pool, with or without BPS-only accounts in it:
+// there is no BPS preference to check.
+func TestLegacyStickyHitNeverListsPool(t *testing.T) {
 	const sessionHash = "native-sticky"
 	lists := 0
 	svc := &OpenAIGatewayService{
-		accountRepo: listCountingOpenAIAccountRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{bpsRoutingNativeAccount(2, 5), bpsRoutingNativeAccount(3, 5)}}, lists: &lists},
+		accountRepo: listCountingOpenAIAccountRepo{stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{bpsRoutingNativeAccount(2, 5), bpsRoutingNativeAccount(3, 5), bpsRoutingBPSAccount(1)}}, lists: &lists},
 		cache:       &stubGatewayCache{sessionBindings: map[string]int64{"openai:" + sessionHash: 2}},
 		cfg:         &config.Config{},
 	}
@@ -441,19 +398,21 @@ func TestLegacyStickyHitSkipsListingWithoutBPSAccounts(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(2), account.ID)
 	}
-	require.Equal(t, 1, lists, "only the first sticky hit lists the pool")
+	require.Zero(t, lists)
 }
 
-func TestAdvancedStickyHitSkipsListingWithoutBPSAccounts(t *testing.T) {
+func TestAdvancedStickyHitNeverListsPool(t *testing.T) {
 	groupID := int64(12)
 	native := bpsRoutingNativeAccount(2201, 5)
 	native.GroupIDs = []int64{groupID}
 	other := bpsRoutingNativeAccount(2202, 5)
 	other.GroupIDs = []int64{groupID}
+	bps := bpsRoutingBPSAccount(2203)
+	bps.GroupIDs = []int64{groupID}
 	lists := 0
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 	svc := &OpenAIGatewayService{
-		accountRepo:        listCountingSchedulerRepo{schedulerTestOpenAIAccountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{native, other}}, lists: &lists},
+		accountRepo:        listCountingSchedulerRepo{schedulerTestOpenAIAccountRepo: schedulerTestOpenAIAccountRepo{accounts: []Account{native, other, bps}}, lists: &lists},
 		cache:              &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:native_sticky": native.ID}},
 		cfg:                &config.Config{},
 		rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
@@ -468,5 +427,157 @@ func TestAdvancedStickyHitSkipsListingWithoutBPSAccounts(t *testing.T) {
 			selection.ReleaseFunc()
 		}
 	}
-	require.Equal(t, 1, lists, "only the first sticky hit lists the pool")
+	require.Zero(t, lists)
+}
+
+// BPS-only and native accounts compete on the same terms in the legacy
+// scheduler: priority decides across types and nothing favors BPS at equal
+// priority (the least recently used account wins, as between native accounts).
+func TestLegacySelectionTreatsBPSAndNativeEqually(t *testing.T) {
+	recent := time.Now()
+	for name, tc := range map[string]struct {
+		nativePriority, bpsPriority int
+		nativeUsed, bpsUsed         *time.Time
+		want                        int64
+	}{
+		"native wins on priority":              {nativePriority: 1, bpsPriority: 5, want: 2},
+		"BPS wins on priority":                 {nativePriority: 5, bpsPriority: 1, want: 1},
+		"equal priority, BPS used more recent": {nativePriority: 3, bpsPriority: 3, bpsUsed: &recent, want: 2},
+		"equal priority, native used recently": {nativePriority: 3, bpsPriority: 3, nativeUsed: &recent, want: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			native := bpsRoutingNativeAccount(2, tc.nativePriority)
+			native.LastUsedAt = tc.nativeUsed
+			bps := bpsRoutingBPSAccount(1)
+			bps.Priority = tc.bpsPriority
+			bps.LastUsedAt = tc.bpsUsed
+			svc := &OpenAIGatewayService{accountRepo: stubOpenAIAccountRepo{accounts: []Account{native, bps}}, cache: &stubGatewayCache{}, cfg: &config.Config{}}
+
+			account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gpt-5.6-sol", nil)
+
+			require.NoError(t, err)
+			require.Equal(t, tc.want, account.ID)
+		})
+	}
+}
+
+// The advanced scheduler likewise ranks BPS-only and native accounts together
+// by priority, score and load.
+func TestAdvancedSelectionTreatsBPSAndNativeEqually(t *testing.T) {
+	groupID := int64(13)
+	for name, tc := range map[string]struct {
+		nativePriority, bpsPriority int
+		nativeLoad, bpsLoad         int
+		want                        int64
+	}{
+		"native wins on priority":        {nativePriority: 1, bpsPriority: 5, want: 2301},
+		"BPS wins on priority":           {nativePriority: 5, bpsPriority: 1, want: 2302},
+		"equal priority, lighter load":   {nativePriority: 3, bpsPriority: 3, bpsLoad: 90, want: 2301},
+		"equal priority, BPS is lighter": {nativePriority: 3, bpsPriority: 3, nativeLoad: 90, want: 2302},
+	} {
+		t.Run(name, func(t *testing.T) {
+			native := bpsRoutingNativeAccount(2301, tc.nativePriority)
+			native.GroupIDs = []int64{groupID}
+			bps := bpsRoutingBPSAccount(2302)
+			bps.Priority = tc.bpsPriority
+			bps.GroupIDs = []int64{groupID}
+			svc := &OpenAIGatewayService{
+				accountRepo:      schedulerTestOpenAIAccountRepo{accounts: []Account{native, bps}},
+				cache:            &schedulerTestGatewayCache{},
+				cfg:              newSchedulerTestSubscriptionPriorityConfig(),
+				rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("true"),
+				concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+					acquireResults: map[int64]bool{native.ID: true, bps.ID: true},
+					loadMap: map[int64]*AccountLoadInfo{
+						native.ID: {AccountID: native.ID, LoadRate: tc.nativeLoad},
+						bps.ID:    {AccountID: bps.ID, LoadRate: tc.bpsLoad},
+					},
+				}),
+			}
+
+			selection, _, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
+
+			require.NoError(t, err)
+			require.NotNil(t, selection)
+			require.Equal(t, tc.want, selection.Account.ID)
+			if selection.ReleaseFunc != nil {
+				selection.ReleaseFunc()
+			}
+		})
+	}
+}
+
+// Subscription priority applies to BPS-whitelisted models as well: the
+// subscription pool is tried before regular accounts, BPS-only ones included.
+func TestAdvancedSubscriptionPriorityAppliesToBPSModels(t *testing.T) {
+	groupID := int64(14)
+	subscription := bpsRoutingNativeAccount(2401, 10)
+	subscription.GroupIDs = []int64{groupID}
+	subscription.Credentials["plan_type"] = "plus"
+	bps := bpsRoutingBPSAccount(2402)
+	bps.Priority = 0
+	bps.GroupIDs = []int64{groupID}
+	svc := &OpenAIGatewayService{
+		accountRepo:      schedulerTestOpenAIAccountRepo{accounts: []Account{subscription, bps}},
+		cache:            &schedulerTestGatewayCache{},
+		cfg:              newSchedulerTestSubscriptionPriorityConfig(),
+		rateLimitService: newOpenAIAdvancedSchedulerRateLimitService("true", "", "true"),
+		concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{
+			acquireResults: map[int64]bool{subscription.ID: true, bps.ID: true},
+		}),
+	}
+
+	selection, _, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
+
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, subscription.ID, selection.Account.ID)
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+}
+
+// Pools without BPS-only accounts are untouched: priority decides in both
+// schedulers and sticky sessions stay where they are.
+func TestNativePoolSelectionUnchanged(t *testing.T) {
+	t.Run("legacy", func(t *testing.T) {
+		svc := &OpenAIGatewayService{
+			accountRepo: stubOpenAIAccountRepo{accounts: []Account{bpsRoutingNativeAccount(2, 5), bpsRoutingNativeAccount(3, 1)}},
+			cache:       &stubGatewayCache{sessionBindings: map[string]int64{"openai:native": 2}},
+			cfg:         &config.Config{},
+		}
+		account, err := svc.SelectAccountForModelWithExclusions(context.Background(), nil, "", "gpt-5.6-sol", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(3), account.ID)
+		account, err = svc.SelectAccountForModelWithExclusions(context.Background(), nil, "native", "gpt-5.6-sol", nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(2), account.ID, "the sticky session stays")
+	})
+	t.Run("advanced", func(t *testing.T) {
+		groupID := int64(15)
+		low := bpsRoutingNativeAccount(2501, 5)
+		low.GroupIDs = []int64{groupID}
+		high := bpsRoutingNativeAccount(2502, 1)
+		high.GroupIDs = []int64{groupID}
+		svc := &OpenAIGatewayService{
+			accountRepo:        schedulerTestOpenAIAccountRepo{accounts: []Account{low, high}},
+			cache:              &schedulerTestGatewayCache{sessionBindings: map[string]int64{"openai:native": low.ID}},
+			cfg:                newSchedulerTestSubscriptionPriorityConfig(),
+			rateLimitService:   newOpenAIAdvancedSchedulerRateLimitService("true"),
+			concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{acquireResults: map[int64]bool{low.ID: true, high.ID: true}}),
+		}
+		selection, _, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
+		require.NoError(t, err)
+		require.Equal(t, high.ID, selection.Account.ID)
+		if selection.ReleaseFunc != nil {
+			selection.ReleaseFunc()
+		}
+		selection, decision, err := svc.SelectAccountWithScheduler(context.Background(), &groupID, "", "native", "gpt-5.6-sol", nil, OpenAIUpstreamTransportAny, false)
+		require.NoError(t, err)
+		require.Equal(t, low.ID, selection.Account.ID)
+		require.True(t, decision.StickySessionHit)
+		if selection.ReleaseFunc != nil {
+			selection.ReleaseFunc()
+		}
+	})
 }
