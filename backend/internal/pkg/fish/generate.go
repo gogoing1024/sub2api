@@ -164,6 +164,7 @@ func refImagesEcho(assets []RefAsset) []map[string]any {
 	echo := make([]map[string]any, 0, len(assets))
 	for _, asset := range assets {
 		echo = append(echo, map[string]any{
+			"id":        newRequestID(),
 			"role":      "ref",
 			"status":    "ready",
 			"objectKey": asset.ObjectKey,

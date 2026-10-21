@@ -128,8 +128,16 @@ func TestSubmitGenerationEditEcho(t *testing.T) {
 		t.Fatalf("asset = %v", asset)
 	}
 	refImages := body["refImages"].([]any)
-	if refImages[0].(map[string]any)["role"] != "ref" {
+	ref := refImages[0].(map[string]any)
+	if ref["role"] != "ref" || ref["status"] != "ready" || ref["objectKey"] != "media_gen_ref/x/image.png" {
 		t.Fatalf("refImages = %v", refImages)
+	}
+	refID, _ := ref["id"].(string)
+	if len(strings.Split(refID, "-")) != 5 {
+		t.Fatalf("refImages[0].id = %q, want uuid", refID)
+	}
+	if _, hasURL := ref["url"]; hasURL {
+		t.Fatalf("refImages must not echo a blob url: %v", ref)
 	}
 }
 
