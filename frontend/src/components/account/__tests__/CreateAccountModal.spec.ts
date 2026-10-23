@@ -277,6 +277,9 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     const wrapper = mountModal()
     const platformSelector = wrapper.get('[data-tour="account-form-platform"]')
 
+    // 手机 3 列，sm 起 4 列（16 个平台正好 4 行）。
+    expect(platformSelector.classes()).toEqual(expect.arrayContaining(['grid-cols-3', 'sm:grid-cols-4']))
+    expect(platformSelector.classes()).not.toContain('sm:grid-cols-5')
     expect(platformSelector.findAll('button').map((button) => button.text())).toEqual([
       'Anthropic',
       'OpenAI',
