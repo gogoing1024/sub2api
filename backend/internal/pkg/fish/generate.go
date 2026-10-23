@@ -74,12 +74,15 @@ func (c *Client) Price(ctx context.Context, token string, identity Identity, par
 // GenerateRequest 是 SubmitGeneration 的入参。ExpectedCredits 与
 // PricingVersion 必须来自紧邻的 Price 调用（上游校验一致性）。
 type GenerateRequest struct {
-	Model           string
-	Variant         string
-	Prompt          string
-	Count           int
-	ImageSize       string
-	Quality         string // 可空：仅 gpt 家族发送
+	Model     string
+	Variant   string
+	Prompt    string
+	Count     int
+	ImageSize string
+	Quality   string // 可空：仅 gpt 家族发送
+	// ExtendedQuality 为 true（gpt-image-2.5 系列）时 quality 同时回显到
+	// frontendParams；gpt-image-2 没有这样的抓包样本，保持原请求形状。
+	ExtendedQuality bool
 	Locale          string // 可空默认 en
 	RefAssets       []RefAsset
 	ExpectedCredits int
@@ -141,12 +144,7 @@ func (c *Client) SubmitGeneration(ctx context.Context, token string, identity Id
 		"count":           request.Count,
 		"promptEnhance":   false,
 		"params":          params,
-		"frontendParams": map[string]any{
-			"modelId":           request.Model,
-			"count":             request.Count,
-			"promptEnhance":     false,
-			"generationPurpose": "general",
-		},
+		"frontendParams":  fishFrontendParams(request),
 		"expectedCredits": request.ExpectedCredits,
 		"pricingVersion":  request.PricingVersion,
 	}
@@ -158,6 +156,21 @@ func (c *Client) SubmitGeneration(ctx context.Context, token string, identity Id
 		return nil, err
 	}
 	return &group, nil
+}
+
+// fishFrontendParams 是网页端回显用的参数。2.5 抓包里 quality 同时出现在
+// params 和 frontendParams（xhigh / max 为小写）；其它模型不带。
+func fishFrontendParams(request GenerateRequest) map[string]any {
+	params := map[string]any{
+		"modelId":           request.Model,
+		"count":             request.Count,
+		"promptEnhance":     false,
+		"generationPurpose": "general",
+	}
+	if quality := strings.TrimSpace(request.Quality); quality != "" && request.ExtendedQuality {
+		params["quality"] = quality
+	}
+	return params
 }
 
 func refImagesEcho(assets []RefAsset) []map[string]any {

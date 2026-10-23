@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -95,7 +96,9 @@ func (h *GatewayHandler) FishImages(c *gin.Context) {
 
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, routingModel)
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
-	call := service.NewFishImageCall(parsed, channelMapping.MappedModel)
+	// 动态尺寸规划阈值每请求读一次，随 call 下传保证换号续跑规划一致。
+	fitLimits := h.fishImageFitLimits(c.Request.Context())
+	call := service.NewFishImageCall(parsed, channelMapping.MappedModel, fitLimits)
 	h.runFishImagesFailover(c, reqLog, apiKey, subject, subscription, &fishImagesRequest{
 		parsed:         parsed,
 		body:           body,
@@ -112,8 +115,17 @@ type fishImagesRequest struct {
 	// routingModel 用于选号；channelMapping.MappedModel 用于上游请求。
 	routingModel   string
 	channelMapping service.ChannelMappingResult
-	// call 在换号之间复用已抓取的参考图。
+	// call 在换号之间复用已抓取的参考图，并携带本次的尺寸规划阈值。
 	call *service.FishImageCall
+}
+
+// fishImageFitLimits 读取 fish 原生号动态尺寸规划阈值（系统设置-网关）。
+// settingService 未注入（部分测试）时取默认值。
+func (h *GatewayHandler) fishImageFitLimits(ctx context.Context) domain.FishFitLimits {
+	if h.settingService == nil {
+		return domain.DefaultFishFitLimits()
+	}
+	return h.settingService.GetFishImageFitLimits(ctx)
 }
 
 // admitFishImagesRequest 与 Leonardo 出图一致的准入：全局出图并发槽 →
@@ -213,7 +225,7 @@ func (h *GatewayHandler) runFishImagesFailover(
 		defer stopJSONKeepalive()
 	}
 
-	requireRelay := service.FishRequiresRelay(parsed)
+	requireRelay := service.FishRequiresRelay(parsed, req.call.FitLimits())
 	deferredNatives := make(map[int64]struct{})
 
 	attempts := 0
@@ -574,7 +586,7 @@ func fishImagesError(c *gin.Context, status int, errType, message string) {
 }
 
 // tryFishImagesRelay 把 OpenAI Images 形状的请求原样转发到中转号的 base_url
-//（镜像 tryLeonardoImagesRelay）。done=true 表示已经给客户端写了成功或终态
+// （镜像 tryLeonardoImagesRelay）。done=true 表示已经给客户端写了成功或终态
 // 错误；switched=true 表示应换下一个账号。
 func (h *GatewayHandler) tryFishImagesRelay(
 	c *gin.Context,

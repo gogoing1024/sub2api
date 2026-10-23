@@ -1949,6 +1949,44 @@ describe('EditAccountModal', () => {
     })
   })
 
+  it('hydrates and submits Fish native max quality', async () => {
+    const account = {
+      ...buildAccount(),
+      id: 21,
+      name: 'Fish Token',
+      platform: 'fish',
+      type: 'apikey',
+      credentials: {},
+      extra: { fish_max_quality: 'high' }
+    } as any
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    const quality = wrapper.get<HTMLSelectElement>('[data-testid="fish-max-quality"]')
+    expect(quality.element.value).toBe('high')
+
+    await quality.setValue('medium')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra?.fish_max_quality).toBe('medium')
+  })
+
+  it('does not show Fish max quality for relay accounts', () => {
+    const account = {
+      ...buildAccount(),
+      id: 22,
+      name: 'Fish Relay',
+      platform: 'fish',
+      type: 'apikey',
+      credentials: { base_url: 'https://api.openai.com' }
+    } as any
+
+    const wrapper = mountModal(account)
+    expect(wrapper.find('[data-testid="fish-max-quality"]').exists()).toBe(false)
+  })
+
   it('does not show the Leonardo credit unit price for relay accounts', () => {
     const account = {
       ...buildGrokAPIKeyAccount(),

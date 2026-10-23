@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/fish"
 )
 
@@ -64,9 +65,9 @@ func fishSplitUpstream(t *testing.T, submitCount *int32, failOnSubmit int32) htt
 
 func fishAccountWithCap(cap int) *Account {
 	creds := map[string]any{
-		fishCredentialToken:     "tok",
-		fishCredentialTeamID:    "t",
-		fishCredentialDeviceID:  "d",
+		fishCredentialToken:    "tok",
+		fishCredentialTeamID:   "t",
+		fishCredentialDeviceID: "d",
 	}
 	if cap > 0 {
 		creds[fishCredentialMaxPerGen] = cap
@@ -79,7 +80,7 @@ func TestFishGenerateCallSplitsByAccountCap(t *testing.T) {
 	service, _, _ := newFishTestService(t, fishSplitUpstream(t, &submits, 0))
 	account2 := fishAccountWithCap(2)
 	// n=4, cap=2 → 2 次提交
-	call := NewFishImageCall(fishImageRequest("gpt-image-2", "", "", 4), "gpt-image-2")
+	call := NewFishImageCall(fishImageRequest("gpt-image-2", "", "", 4), "gpt-image-2", domain.FishFitLimits{})
 	result, err := service.GenerateCall(context.Background(), account2, "tok", call)
 	if err != nil {
 		t.Fatalf("GenerateCall: %v", err)
@@ -100,7 +101,7 @@ func TestFishGenerateCallPartialProgressOnQuota(t *testing.T) {
 	service, _, _ := newFishTestService(t, fishSplitUpstream(t, &submits, 3))
 	account := fishAccountWithCap(2)
 	// n=6, cap=2 → 第 1、2 组成功（4 张交付），第 3 组 402 → 可换号错误 + 进度保留
-	call := NewFishImageCall(fishImageRequest("gpt-image-2", "", "", 6), "gpt-image-2")
+	call := NewFishImageCall(fishImageRequest("gpt-image-2", "", "", 6), "gpt-image-2", domain.FishFitLimits{})
 	_, err := service.GenerateCall(context.Background(), account, "tok", call)
 	if err == nil {
 		t.Fatal("expected quota error")
@@ -126,7 +127,7 @@ func TestFishGenerateCallCrossAccountContinuation(t *testing.T) {
 	service, _, _ := newFishTestService(t, fishSplitUpstream(t, &submits, 3))
 	free := fishAccountWithCap(2)
 	pro := fishAccountWithCap(8)
-	call := NewFishImageCall(fishImageRequest("gpt-image-2", "", "", 6), "gpt-image-2")
+	call := NewFishImageCall(fishImageRequest("gpt-image-2", "", "", 6), "gpt-image-2", domain.FishFitLimits{})
 	// 第一个账号（cap=2）：交 2 组（4 张）后第 3 组 402
 	if _, err := service.GenerateCall(context.Background(), free, "tok", call); err == nil {
 		t.Fatal("expected quota error on free account")
@@ -150,7 +151,7 @@ func TestFishGenerateCallCrossAccountContinuation(t *testing.T) {
 
 func TestFishBuildPartialResult(t *testing.T) {
 	service := NewFishImageService(nil)
-	call := NewFishImageCall(fishImageRequest("gpt-image-2", "1024x1024", "medium", 8), "gpt-image-2")
+	call := NewFishImageCall(fishImageRequest("gpt-image-2", "1024x1024", "medium", 8), "gpt-image-2", domain.FishFitLimits{})
 	call.delivered = [][]byte{[]byte("a"), []byte("b")}
 	result := service.BuildFishPartialResult(context.Background(), call)
 	if result == nil {
@@ -167,7 +168,7 @@ func TestFishBuildPartialResult(t *testing.T) {
 		t.Fatalf("data len mismatch")
 	}
 	// 空进度 → nil
-	empty := NewFishImageCall(fishImageRequest("gpt-image-2", "", "", 2), "gpt-image-2")
+	empty := NewFishImageCall(fishImageRequest("gpt-image-2", "", "", 2), "gpt-image-2", domain.FishFitLimits{})
 	if service.BuildFishPartialResult(context.Background(), empty) != nil {
 		t.Fatal("empty call must yield nil")
 	}

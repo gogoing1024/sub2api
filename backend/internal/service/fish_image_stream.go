@@ -35,14 +35,19 @@ func FishImagesStreamEvents(req *OpenAIImagesRequest, result *FishImageResult) [
 		}
 	}
 	events := make([]ImagesStreamEvent, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
 		b64 := strings.TrimSpace(item.Get("b64_json").String())
+		// usage 是整次请求的估算用量，只挂在最后一个 completed 事件上（镜像 Leonardo）。
+		var usage []byte
+		if i == len(items)-1 {
+			usage = result.Usage
+		}
 		payload := buildOpenAIImagesStreamCompletedPayload(eventName, openAIResponsesImageResult{
-			Result:   b64,
-			Size:     result.Size,
-			Quality:  result.Quality,
-			Model:    model,
-		}, responseFormat, createdAt, nil)
+			Result:  b64,
+			Size:    result.Size,
+			Quality: result.Quality,
+			Model:   model,
+		}, responseFormat, createdAt, usage)
 		if b64 == "" {
 			payload, _ = sjson.SetBytes(payload, "url", strings.TrimSpace(item.Get("url").String()))
 		}

@@ -738,6 +738,12 @@ const (
 	// SettingKeyOpenAIAllowClaudeCodeCodexPlugin 已废弃：历史全局开关只作为升级迁移输入读取。
 	// 迁移后等价规则写入 SettingKeyCodexCLIOnlyWhitelist，不再参与运行时判定。
 	SettingKeyOpenAIAllowClaudeCodeCodexPlugin = "openai_allow_claude_code_codex_plugin"
+	// SettingKeyFishImageMaxCropPixels fish 原生号动态尺寸规划的最大裁剪量
+	// （按交付分辨率计的像素，居中对称裁剪）。0 = 不裁剪仅同比例缩放；默认 4。
+	SettingKeyFishImageMaxCropPixels = "fish_image_max_crop_pixels"
+	// SettingKeyFishImageMaxUpscaleFactor fish 原生号动态尺寸规划的最大本地
+	// 放大倍数（Lanczos3）。1 = 禁止放大；默认 2。规划不出的尺寸仍走中转。
+	SettingKeyFishImageMaxUpscaleFactor = "fish_image_max_upscale_factor"
 
 	// 余额不足提醒
 	SettingKeyBalanceLowNotifyEnabled     = "balance_low_notify_enabled"      // 全局开关

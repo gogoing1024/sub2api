@@ -466,6 +466,11 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 				return nil, err
 			}
 		}
+		if isFishTokenAccount(account) {
+			if err := ValidateFishMaxQualityFromExtra(account.Extra); err != nil {
+				return nil, err
+			}
+		}
 		NormalizeFixedQuotaWindows(account.Extra)
 	}
 	if input.ExpiresAt != nil && *input.ExpiresAt > 0 {
@@ -774,6 +779,11 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 				return nil, err
 			}
 			if err := ValidateLeonardoImageLimitsFromExtra(account.Extra); err != nil {
+				return nil, err
+			}
+		}
+		if isFishTokenAccount(account) {
+			if err := ValidateFishMaxQualityFromExtra(account.Extra); err != nil {
 				return nil, err
 			}
 		}

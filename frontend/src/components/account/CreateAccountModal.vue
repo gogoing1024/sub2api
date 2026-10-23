@@ -1501,6 +1501,11 @@
           ></textarea>
           <p class="input-hint">{{ t('admin.accounts.fish.tokenHint') }}</p>
         </div>
+        <div data-testid="fish-max-quality-section">
+          <label class="input-label">{{ t('admin.accounts.fishMaxQuality') }}</label>
+          <Select v-model="fishMaxQuality" :options="fishMaxQualityOptions" data-testid="fish-max-quality" />
+          <p class="input-hint">{{ t('admin.accounts.fishMaxQualityHint') }}</p>
+        </div>
       </div>
       <!-- Fish 中转：第一步直接填 Base URL + API Key，仍以 apikey 落库。 -->
       <div v-if="form.platform === 'fish' && fishAccountMode === 'relay'" class="space-y-4" data-testid="fish-relay-fields">
@@ -5171,6 +5176,7 @@ import {
   defaultLeonardoImageLimits,
   type LeonardoImageLimitsForm
 } from '@/utils/leonardoImageLimits'
+import { FISH_MAX_QUALITY_VALUES, applyFishMaxQualityToExtra } from '@/utils/fishImageLimits'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
@@ -5830,6 +5836,11 @@ const leonardoMaxQualityOptions = computed(() => [
   { value: '', label: t('admin.accounts.leonardoMaxQualityUnlimited') },
   ...LEONARDO_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
 ])
+const fishMaxQuality = ref('')
+const fishMaxQualityOptions = computed(() => [
+  { value: '', label: t('admin.accounts.fishMaxQualityUnlimited') },
+  ...FISH_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
+])
 const kiroUpstreamIDs = ref<Record<string, string>>({})
 const mergeKiroUpstreamIDs = (ids: Record<string, string>) => {
   kiroUpstreamIDs.value = { ...kiroUpstreamIDs.value, ...ids }
@@ -5873,7 +5884,12 @@ const handleFishCreate = async () => {
   if (modelMapping) {
     credentials.model_mapping = modelMapping
   }
-  await createAccountAndFinish('fish', 'apikey' as AccountType, credentials)
+  await createAccountAndFinish(
+    'fish',
+    'apikey' as AccountType,
+    credentials,
+    applyFishMaxQualityToExtra({}, fishMaxQuality.value)
+  )
 }
 
 const handleLeonardoCreate = async () => {
@@ -6925,6 +6941,7 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 const resetForm = () => {
   fishAccountMode.value = 'token'
   fishToken.value = ''
+  fishMaxQuality.value = ''
   leonardoCookie.value = ''
   leonardoCreditUnitPriceUsd.value = 0
   leonardoImageLimits.value = defaultLeonardoImageLimits()

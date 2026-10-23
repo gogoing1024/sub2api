@@ -261,6 +261,9 @@ type UpdateSettingsRequest struct {
 	OpenAICodexTicketEnabled               *bool   `json:"openai_codex_ticket_enabled"`
 	OpenAICodexTicketFailClosed            *bool   `json:"openai_codex_ticket_fail_closed"`
 	OpenAICodexTicketHarvestProxyURL       string  `json:"openai_codex_ticket_harvest_proxy_url"`
+	// fish 原生号动态尺寸规划阈值；nil = 保持既有。
+	FishImageMaxCropPixels    *int     `json:"fish_image_max_crop_pixels"`
+	FishImageMaxUpscaleFactor *float64 `json:"fish_image_max_upscale_factor"`
 	// OpenAICodexTicketDefaultLength nil = 保持既有；OpenAICodexTicketPlanLengthRules nil = 保持既有（空数组 = 清空规则）。
 	OpenAICodexTicketDefaultLength   *int                                       `json:"openai_codex_ticket_default_length"`
 	OpenAICodexTicketPlanLengthRules *[]service.OpenAICodexTicketPlanLengthRule `json:"openai_codex_ticket_plan_lengths"`
@@ -1872,6 +1875,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.ClaudeCodeVersionAutoSyncEnabled
 		}(),
+		FishImageMaxCropPixels: func() int {
+			if req.FishImageMaxCropPixels != nil {
+				return *req.FishImageMaxCropPixels
+			}
+			return previousSettings.FishImageMaxCropPixels
+		}(),
+		FishImageMaxUpscaleFactor: func() float64 {
+			if req.FishImageMaxUpscaleFactor != nil {
+				return *req.FishImageMaxUpscaleFactor
+			}
+			return previousSettings.FishImageMaxUpscaleFactor
+		}(),
 		MinCodexVersion:       strings.TrimSpace(req.MinCodexVersion),
 		MaxCodexVersion:       strings.TrimSpace(req.MaxCodexVersion),
 		CodexCLIOnlyBlacklist: strings.TrimSpace(req.CodexCLIOnlyBlacklist),
@@ -2433,6 +2448,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ClaudeCodeClientVersion:                                updatedSettings.ClaudeCodeClientVersion,
 		ClaudeCodeClientVersionSynced:                          updatedSettings.ClaudeCodeClientVersionSynced,
 		ClaudeCodeVersionAutoSyncEnabled:                       updatedSettings.ClaudeCodeVersionAutoSyncEnabled,
+		FishImageMaxCropPixels:                                 updatedSettings.FishImageMaxCropPixels,
+		FishImageMaxUpscaleFactor:                              updatedSettings.FishImageMaxUpscaleFactor,
 		MinCodexVersion:                                        updatedSettings.MinCodexVersion,
 		MaxCodexVersion:                                        updatedSettings.MaxCodexVersion,
 		CodexCLIOnlyBlacklist:                                  updatedSettings.CodexCLIOnlyBlacklist,

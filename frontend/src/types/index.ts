@@ -1281,6 +1281,7 @@ kiro_credit_unit_price_usd?: number
     leonardo_max_quality?: string
     leonardo_max_short_edge?: number
     leonardo_max_upscale_factor?: number
+    fish_max_quality?: string
     upstream_billing_probe_enabled?: boolean
     upstream_billing_rate_sync_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot

@@ -52,6 +52,11 @@
           ></textarea>
           <p class="input-hint">{{ t('admin.accounts.fish.tokenHint') }}</p>
         </div>
+        <div data-testid="fish-max-quality-section">
+          <label class="input-label">{{ t('admin.accounts.fishMaxQuality') }}</label>
+          <Select v-model="fishMaxQuality" :options="fishMaxQualityOptions" data-testid="fish-max-quality" />
+          <p class="input-hint">{{ t('admin.accounts.fishMaxQualityHint') }}</p>
+        </div>
       </div>
 
       <!-- Fish 模型白名单 / 映射。token 号和中转号共用，不走其他平台的模型区块。 -->
@@ -3573,6 +3578,7 @@ import {
   leonardoImageLimitsFromExtra,
   type LeonardoImageLimitsForm
 } from '@/utils/leonardoImageLimits'
+import { FISH_MAX_QUALITY_VALUES, applyFishMaxQualityToExtra, fishMaxQualityFromExtra } from '@/utils/fishImageLimits'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
 import Toggle from '@/components/common/Toggle.vue'
@@ -3864,6 +3870,11 @@ const leonardoImageLimits = ref<LeonardoImageLimitsForm>(defaultLeonardoImageLim
 const leonardoMaxQualityOptions = computed(() => [
   { value: '', label: t('admin.accounts.leonardoMaxQualityUnlimited') },
   ...LEONARDO_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
+])
+const fishMaxQuality = ref('')
+const fishMaxQualityOptions = computed(() => [
+  { value: '', label: t('admin.accounts.fishMaxQualityUnlimited') },
+  ...FISH_MAX_QUALITY_VALUES.map((value) => ({ value, label: value }))
 ])
 
 // ── 国产供应商（Kimi / Zhipu / DeepSeek）account_mode / api_protocol 编辑 ──
@@ -4768,6 +4779,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
       ? Number(leonardoCreditUnitPrice) || 0
       : 0
   leonardoImageLimits.value = leonardoImageLimitsFromExtra(extra as Record<string, unknown> | undefined)
+  fishMaxQuality.value = fishMaxQualityFromExtra(extra as Record<string, unknown> | undefined)
   autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
   autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
   autoPause5hDisabled.value = extra?.auto_pause_5h_disabled === true
@@ -6278,6 +6290,13 @@ const handleSubmit = async () => {
       const unitPrice = Number(leonardoCreditUnitPriceUsd.value ?? 0)
       newExtra.leonardo_credit_unit_price_usd = Number.isFinite(unitPrice) ? unitPrice : 0
       updatePayload.extra = applyLeonardoImageLimitsToExtra(newExtra, leonardoImageLimits.value)
+    }
+
+    // Fish 原生号的最大质量。中转号原样转发，不写这个上限。
+    if (props.account.platform === 'fish' && props.account.type === 'apikey' && !isFishRelayEdit.value) {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      updatePayload.extra = applyFishMaxQualityToExtra({ ...currentExtra }, fishMaxQuality.value)
     }
 
     // Grok OAuth: 自定义上游地址 + 请求头覆写。base_url 仅改写转发端点，

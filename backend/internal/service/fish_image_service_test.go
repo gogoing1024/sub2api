@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/fish"
 )
 
@@ -233,6 +234,82 @@ func TestFishGenerateCallUnsupportedSizeIsRequestError(t *testing.T) {
 	}
 }
 
+func TestFishGenerateCallDynamicFitSize(t *testing.T) {
+	// 880x1168（≈3:4 微畸变）：限制 {8,2} 时规划为 1536x2048 原生档，
+	// 出图后先裁后缩回请求尺寸；响应回显与计费都按交付尺寸（长边 1168 → 2K）。
+	nativePNG := newFitTestPNG(t, 1536, 2048)
+	var generateBody map[string]any
+	service, account, _ := newFishTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/tools/image-video/price":
+			_, _ = w.Write([]byte(`{"credits":650,"perItemCredits":650,"pricingVersion":"pv-1"}`))
+		case "/tools/image-video/generate":
+			generateBody = decodeFishBody(t, r)
+			_, _ = w.Write([]byte(`{"id":"grp-1","status":"generating","results":[{"id":"m1","status":"generating"}]}`))
+		case "/task/group/grp-1":
+			_, _ = w.Write([]byte(`{"id":"grp-1","status":"done","results":[{"id":"m1","status":"done","mediaItem":{"id":"m1","url":"http://` + r.Host + `/img.png"}}]}`))
+		case "/img.png":
+			_, _ = w.Write(nativePNG)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	limits := domain.FishFitLimits{MaxCropPixels: 8, MaxUpscaleFactor: 2.0}
+	call := NewFishImageCall(fishImageRequest("gpt-image-2", "880x1168", "medium", 1), "gpt-image-2", limits)
+	result, err := service.GenerateCall(context.Background(), account, "tok", call)
+	if err != nil {
+		t.Fatalf("GenerateCall: %v", err)
+	}
+	// 上游收到就近原生档
+	params := generateBody["params"].(map[string]any)
+	if params["image_size"] != "1536x2048" {
+		t.Fatalf("image_size = %v, want 1536x2048", params["image_size"])
+	}
+	// 响应回显客户请求尺寸；交付图实际 880x1168
+	var bodyMap map[string]any
+	if err := json.Unmarshal(result.Body, &bodyMap); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if bodyMap["size"] != "880x1168" {
+		t.Fatalf("body size = %v, want 880x1168", bodyMap["size"])
+	}
+	if result.Size != "880x1168" {
+		t.Fatalf("result.Size = %q, want 880x1168", result.Size)
+	}
+	b64 := bodyMap["data"].([]any)[0].(map[string]any)["b64_json"].(string)
+	decoded, _ := base64.StdEncoding.DecodeString(b64)
+	img, _, err := image.Decode(bytes.NewReader(decoded))
+	if err != nil {
+		t.Fatalf("decode delivered image: %v", err)
+	}
+	if img.Bounds().Dx() != 880 || img.Bounds().Dy() != 1168 {
+		t.Fatalf("delivered = %dx%d, want 880x1168", img.Bounds().Dx(), img.Bounds().Dy())
+	}
+	// 计费按交付尺寸（880x1168 → 2K）
+	if result.Forward.ImageSize != ImageBillingSize2K {
+		t.Fatalf("billing = %v, want 2K", result.Forward.ImageSize)
+	}
+}
+
+func TestFishGenerateCallDynamicFitBeyondLimitsIsRequestError(t *testing.T) {
+	// 同尺寸但裁剪限制收紧到 4px（实际需 5.33px）：规划失败，不打上游。
+	service, account, _ := newFishTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("upstream should not be called for unplannable size")
+		w.WriteHeader(404)
+	}))
+	limits := domain.FishFitLimits{MaxCropPixels: 4, MaxUpscaleFactor: 2.0}
+	call := NewFishImageCall(fishImageRequest("gpt-image-2", "880x1168", "medium", 1), "gpt-image-2", limits)
+	_, err := service.GenerateCall(context.Background(), account, "tok", call)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	failure := classifyFishError(err)
+	if failure.Failover == nil || failure.Failover.NextAccountAction != NextAccountStop {
+		t.Fatalf("classify = %+v", failure.Failover)
+	}
+}
+
 func decodeFishBody(t *testing.T, r *http.Request) map[string]any {
 	t.Helper()
 	var body map[string]any
@@ -360,22 +437,335 @@ func fishResponseFormat(t *testing.T, body []byte) string {
 	return format
 }
 
+func TestFishGenerateCallCapsQualityToAccountMax(t *testing.T) {
+	cases := []struct {
+		name      string
+		max       string
+		requested string
+		upstream  string
+		echoed    string
+	}{
+		{name: "caps high to medium", max: "medium", requested: "high", upstream: "medium", echoed: "high"},
+		{name: "normalizes hd before capping", max: "medium", requested: "hd", upstream: "medium", echoed: "high"},
+		{name: "keeps a lower request", max: "high", requested: "low", upstream: "low", echoed: "low"},
+		{name: "unlimited keeps the request", max: "", requested: "high", upstream: "high", echoed: "high"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var priceQuality, generateQuality string
+			service, account, _ := newFishTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/tools/image-video/price":
+					body := decodeFishBody(t, r)
+					params, _ := body["params"].(map[string]any)
+					priceQuality, _ = params["quality"].(string)
+					_, _ = w.Write([]byte(`{"credits":650,"perItemCredits":650,"pricingVersion":"pv-1"}`))
+				case "/tools/image-video/generate":
+					body := decodeFishBody(t, r)
+					params, _ := body["params"].(map[string]any)
+					generateQuality, _ = params["quality"].(string)
+					_, _ = w.Write([]byte(`{"id":"grp-1","status":"generating","results":[{"id":"m1","status":"generating"}]}`))
+				case "/task/group/grp-1":
+					_, _ = w.Write([]byte(`{"id":"grp-1","status":"done","results":[{"id":"m1","status":"done","mediaItem":{"id":"m1","url":"http://` + r.Host + `/img.png"}}]}`))
+				case "/img.png":
+					_, _ = w.Write([]byte("pngdata"))
+				default:
+					t.Errorf("unexpected path %q", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			account.Platform = PlatformFish
+			if tc.max != "" {
+				account.Extra = map[string]any{fishMaxQualityExtraKey: tc.max}
+			}
+
+			result, err := service.Generate(context.Background(), account, "tok", fishImageRequest("gpt-image-2", "1024x1024", tc.requested, 1))
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			if priceQuality != tc.upstream || generateQuality != tc.upstream {
+				t.Fatalf("upstream quality price=%q generate=%q, want %q", priceQuality, generateQuality, tc.upstream)
+			}
+			if result.Quality != tc.echoed {
+				t.Fatalf("result quality = %q, want %q", result.Quality, tc.echoed)
+			}
+			var bodyMap map[string]any
+			if err := json.Unmarshal(result.Body, &bodyMap); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if bodyMap["quality"] != tc.echoed {
+				t.Fatalf("response quality = %v, want %q", bodyMap["quality"], tc.echoed)
+			}
+		})
+	}
+}
+
+func TestFishGenerateCallExtendedQuality(t *testing.T) {
+	for _, tc := range []struct {
+		model    string
+		quality  string
+		upstream string
+	}{
+		{model: "gpt-image-2.5-flare", quality: "max", upstream: "max"},
+		{model: "gpt-image-2.5-sunburst", quality: "xhigh", upstream: "xhigh"},
+		{model: "gpt-image-2.5-flare", quality: "maximum", upstream: "max"},
+	} {
+		t.Run(tc.model+"/"+tc.quality, func(t *testing.T) {
+			var paramsQuality, frontendQuality string
+			service, account, _ := newFishTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/tools/image-video/price":
+					body := decodeFishBody(t, r)
+					params, _ := body["params"].(map[string]any)
+					paramsQuality, _ = params["quality"].(string)
+					_, _ = w.Write([]byte(`{"credits":650,"perItemCredits":650,"pricingVersion":"pv-1"}`))
+				case "/tools/image-video/generate":
+					body := decodeFishBody(t, r)
+					frontend, _ := body["frontendParams"].(map[string]any)
+					frontendQuality, _ = frontend["quality"].(string)
+					_, _ = w.Write([]byte(`{"id":"grp-1","status":"generating","results":[{"id":"m1","status":"generating"}]}`))
+				case "/task/group/grp-1":
+					_, _ = w.Write([]byte(`{"id":"grp-1","status":"done","results":[{"id":"m1","status":"done","mediaItem":{"id":"m1","url":"http://` + r.Host + `/img.png"}}]}`))
+				case "/img.png":
+					_, _ = w.Write([]byte("pngdata"))
+				default:
+					t.Errorf("unexpected path %q", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			account.Platform = PlatformFish
+			result, err := service.Generate(context.Background(), account, "tok", fishImageRequest(tc.model, "1024x1024", tc.quality, 1))
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			if paramsQuality != tc.upstream || frontendQuality != tc.upstream {
+				t.Fatalf("upstream params=%q frontend=%q, want %q", paramsQuality, frontendQuality, tc.upstream)
+			}
+			if result.Quality != tc.upstream {
+				t.Fatalf("echo = %q, want %q", result.Quality, tc.upstream)
+			}
+		})
+	}
+}
+
+func TestFishGenerateCallRejectsExtendedQualityOnImage2(t *testing.T) {
+	service, account, _ := newFishTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("gpt-image-2 must not call upstream for quality %s", r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	account.Platform = PlatformFish
+	_, err := service.Generate(context.Background(), account, "tok", fishImageRequest("gpt-image-2", "1024x1024", "max", 1))
+	var requestErr *fish.RequestError
+	if !errors.As(err, &requestErr) {
+		t.Fatalf("err = %v, want request error", err)
+	}
+}
+
+func TestFishGenerateCallCapsMaxToAccountLimit(t *testing.T) {
+	var upstream string
+	service, account, _ := newFishTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/tools/image-video/price":
+			body := decodeFishBody(t, r)
+			params, _ := body["params"].(map[string]any)
+			upstream, _ = params["quality"].(string)
+			_, _ = w.Write([]byte(`{"credits":650,"perItemCredits":650,"pricingVersion":"pv-1"}`))
+		case "/tools/image-video/generate":
+			_, _ = w.Write([]byte(`{"id":"grp-1","status":"generating","results":[{"id":"m1","status":"generating"}]}`))
+		case "/task/group/grp-1":
+			_, _ = w.Write([]byte(`{"id":"grp-1","status":"done","results":[{"id":"m1","status":"done","mediaItem":{"id":"m1","url":"http://` + r.Host + `/img.png"}}]}`))
+		case "/img.png":
+			_, _ = w.Write([]byte("pngdata"))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	account.Platform = PlatformFish
+	account.Extra = map[string]any{fishMaxQualityExtraKey: "xhigh"}
+	result, err := service.Generate(context.Background(), account, "tok", fishImageRequest("gpt-image-2.5-flare", "1024x1024", "max", 1))
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if upstream != "xhigh" {
+		t.Fatalf("upstream = %q, want xhigh", upstream)
+	}
+	if result.Quality != "max" {
+		t.Fatalf("echo = %q, want max", result.Quality)
+	}
+}
+
 func TestFishQualityForRequest(t *testing.T) {
 	cases := []struct {
 		requested string
+		extended  bool
 		want      string
+		wantErr   bool
 	}{
-		{"medium", "medium"},
-		{"standard", "medium"},
-		{"hd", "high"},
-		{"high", "high"},
-		{"low", "low"},
-		{"", "medium"},
-		{"auto", "medium"},
+		{requested: "medium", want: "medium"},
+		{requested: "standard", want: "medium"},
+		{requested: "hd", want: "high"},
+		{requested: "high", want: "high"},
+		{requested: "low", want: "low"},
+		{requested: "", want: "medium"},
+		{requested: "auto", want: "medium"},
+		{requested: "max", extended: true, want: "max"},
+		{requested: "xhigh", extended: true, want: "xhigh"},
+		{requested: "extra-high", extended: true, want: "xhigh"},
+		{requested: "max", wantErr: true},
+		{requested: "xhigh", wantErr: true},
 	}
 	for _, tc := range cases {
-		if got := fishQualityForRequest(tc.requested); got != tc.want {
-			t.Errorf("fishQualityForRequest(%q) = %q, want %q", tc.requested, got, tc.want)
+		got, err := fishQualityForRequest(tc.requested, tc.extended)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("fishQualityForRequest(%q, %v) err = nil, want error", tc.requested, tc.extended)
+			}
+			continue
 		}
+		if err != nil || got != tc.want {
+			t.Errorf("fishQualityForRequest(%q, %v) = %q, %v; want %q", tc.requested, tc.extended, got, err, tc.want)
+		}
+	}
+}
+
+// fishSingleImageUpstream 是交付一张指定图片的假上游；generateBody 非空时记录
+// generate 请求体。
+func fishSingleImageUpstream(t *testing.T, img []byte, generateBody *map[string]any) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/tools/image-video/price":
+			_, _ = w.Write([]byte(`{"credits":650,"perItemCredits":650,"pricingVersion":"pv-1"}`))
+		case "/tools/image-video/generate":
+			if generateBody != nil {
+				*generateBody = decodeFishBody(t, r)
+			}
+			_, _ = w.Write([]byte(`{"id":"grp-1","status":"generating","results":[{"id":"m1","status":"generating"}]}`))
+		case "/task/group/grp-1":
+			_, _ = w.Write([]byte(`{"id":"grp-1","status":"done","results":[{"id":"m1","status":"done","mediaItem":{"id":"m1","url":"http://` + r.Host + `/img.png"}}]}`))
+		case "/img.png":
+			_, _ = w.Write(img)
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	})
+}
+
+func TestFishGenerateCallBillsDeliveredSizeOnUpscale(t *testing.T) {
+	// 1568x672（21:9）只能由 1K 档 1344x576 放大 1.17 倍得到：交付长边 1568
+	// 属 2K 档，计费跟交付走，不按 1K 原生档。
+	var generateBody map[string]any
+	service, account, _ := newFishTestService(t, fishSingleImageUpstream(t, newFitTestPNG(t, 1344, 576), &generateBody))
+	call := NewFishImageCall(fishImageRequest("gpt-image-2", "1568x672", "medium", 1), "gpt-image-2", domain.DefaultFishFitLimits())
+	result, err := service.GenerateCall(context.Background(), account, "tok", call)
+	if err != nil {
+		t.Fatalf("GenerateCall: %v", err)
+	}
+	if params := generateBody["params"].(map[string]any); params["image_size"] != "1344x576" {
+		t.Fatalf("image_size = %v, want 1344x576", params["image_size"])
+	}
+	if result.Size != "1568x672" {
+		t.Fatalf("result.Size = %q, want 1568x672", result.Size)
+	}
+	if result.Forward.ImageSize != ImageBillingSize2K {
+		t.Fatalf("billing = %v, want 2K (delivered size)", result.Forward.ImageSize)
+	}
+}
+
+func TestFishGenerateCallFitFailureEchoesDeliveredSize(t *testing.T) {
+	// 上游给了与规划比例不符的 1024x1024：裁剪缩放拒绝多裁、回退原图，
+	// 回显与计费都按实际交付的 1024x1024，而不是请求的 1568x672。
+	service, account, _ := newFishTestService(t, fishSingleImageUpstream(t, newFitTestPNG(t, 1024, 1024), nil))
+	call := NewFishImageCall(fishImageRequest("gpt-image-2", "1568x672", "medium", 1), "gpt-image-2", domain.DefaultFishFitLimits())
+	result, err := service.GenerateCall(context.Background(), account, "tok", call)
+	if err != nil {
+		t.Fatalf("GenerateCall: %v", err)
+	}
+	var bodyMap map[string]any
+	if err := json.Unmarshal(result.Body, &bodyMap); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if result.Size != "1024x1024" || bodyMap["size"] != "1024x1024" {
+		t.Fatalf("size echo = %q / %v, want 1024x1024", result.Size, bodyMap["size"])
+	}
+	if result.Forward.ImageSize != ImageBillingSize1K {
+		t.Fatalf("billing = %v, want 1K", result.Forward.ImageSize)
+	}
+}
+
+func TestFishGenerateCallImage2OmitsFrontendQuality(t *testing.T) {
+	// gpt-image-2 没有 frontendParams.quality 的抓包样本：只在 params 里发。
+	var generateBody map[string]any
+	service, account, _ := newFishTestService(t, fishSingleImageUpstream(t, []byte("pngdata"), &generateBody))
+	if _, err := service.Generate(context.Background(), account, "tok", fishImageRequest("gpt-image-2", "1024x1024", "high", 1)); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if params := generateBody["params"].(map[string]any); params["quality"] != "high" {
+		t.Fatalf("params.quality = %v, want high", params["quality"])
+	}
+	frontend := generateBody["frontendParams"].(map[string]any)
+	if _, ok := frontend["quality"]; ok {
+		t.Fatalf("frontendParams.quality must be absent for gpt-image-2, got %v", frontend["quality"])
+	}
+}
+
+func TestFishBuildPartialResultUsesMappedModelQuality(t *testing.T) {
+	// 渠道把对外名映射到 2.5：partial 回显与 GenerateCall 一致按映射后的模型判定 max。
+	service := NewFishImageService(nil)
+	call := NewFishImageCall(fishImageRequest("my-image", "1024x1024", "max", 4), "gpt-image-2.5-flare", domain.DefaultFishFitLimits())
+	call.delivered = [][]byte{[]byte("a")}
+	result := service.BuildFishPartialResult(context.Background(), call)
+	if result == nil {
+		t.Fatal("partial result nil")
+	}
+	if result.Quality != "max" {
+		t.Fatalf("partial quality = %q, want max", result.Quality)
+	}
+}
+
+func TestFishGenerateCallEstimatesUsage(t *testing.T) {
+	// fish 不报 token：按 gpt-image-1 官方表 × 交付像素估算，写进响应体与用量记录。
+	service, account, _ := newFishTestService(t, fishSingleImageUpstream(t, []byte("pngdata"), nil))
+	result, err := service.Generate(context.Background(), account, "tok", fishImageRequest("gpt-image-2", "1024x1024", "medium", 1))
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(result.Body, &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	usage, ok := body["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("response body has no usage: %s", result.Body)
+	}
+	if usage["output_tokens"] != float64(1056) {
+		t.Fatalf("usage.output_tokens = %v, want 1056", usage["output_tokens"])
+	}
+	inputTokens, _ := usage["input_tokens"].(float64)
+	if inputTokens <= 0 {
+		t.Fatalf("usage.input_tokens = %v, want prompt tokens > 0", usage["input_tokens"])
+	}
+	forward := result.Forward.Usage
+	if forward.OutputTokens != 1056 || forward.ImageOutputTokens != 1056 || forward.InputTokens != int(inputTokens) {
+		t.Fatalf("Forward.Usage = %+v, want output/image 1056 and input %v", forward, inputTokens)
+	}
+	if string(result.Usage) == "" {
+		t.Fatal("result.Usage must carry the estimate for the stream path")
+	}
+}
+
+func TestFishBuildPartialResultUsageCountsDeliveredImages(t *testing.T) {
+	// n=4 只交付了 3 张：usage 按已交付张数估算。
+	service := NewFishImageService(nil)
+	call := NewFishImageCall(fishImageRequest("gpt-image-2", "1024x1024", "low", 4), "gpt-image-2", domain.DefaultFishFitLimits())
+	call.delivered = [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+	result := service.BuildFishPartialResult(context.Background(), call)
+	if result == nil {
+		t.Fatal("partial result nil")
+	}
+	if result.Forward.Usage.OutputTokens != 3*272 {
+		t.Fatalf("partial output tokens = %d, want %d", result.Forward.Usage.OutputTokens, 3*272)
 	}
 }

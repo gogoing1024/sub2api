@@ -84,34 +84,46 @@ func TestFishAccountBaseURLAndAPIKeyHooks(t *testing.T) {
 }
 
 func TestFishRequiresRelayMatrix(t *testing.T) {
+	strict := domain.FishFitLimits{MaxCropPixels: 0, MaxUpscaleFactor: 1}     // 不裁剪不放大
+	generous := domain.FishFitLimits{MaxCropPixels: 8, MaxUpscaleFactor: 2.0} // 允许微裁+放大
 	base := func() *OpenAIImagesRequest {
 		return &OpenAIImagesRequest{Model: "gpt-image-2", Prompt: "x", N: 1, Size: "1024x1024"}
 	}
 	cases := []struct {
-		name string
-		mut  func(*OpenAIImagesRequest)
-		want bool
+		name   string
+		mut    func(*OpenAIImagesRequest)
+		limits *domain.FishFitLimits
+		want   bool
 	}{
-		{"whitelisted size", func(r *OpenAIImagesRequest) {}, false},
-		{"empty size defaults", func(r *OpenAIImagesRequest) { r.Size = "" }, false},
-		{"openai portrait size", func(r *OpenAIImagesRequest) { r.Size = "1024x1536" }, true},
-		{"arbitrary size", func(r *OpenAIImagesRequest) { r.Size = "123x456" }, true},
-		{"mask", func(r *OpenAIImagesRequest) { r.HasMask = true }, true},
-		{"n over cap", func(r *OpenAIImagesRequest) { r.N = 9 }, true},
-		{"webp", func(r *OpenAIImagesRequest) { r.OutputFormat = "webp" }, true},
-		{"background", func(r *OpenAIImagesRequest) { r.Background = "transparent" }, true},
-		{"non-fish model bad size stays false", func(r *OpenAIImagesRequest) { r.Model = "gpt-image-1"; r.Size = "123x456" }, false},
+		{"whitelisted size", func(r *OpenAIImagesRequest) {}, nil, false},
+		{"empty size defaults", func(r *OpenAIImagesRequest) { r.Size = "" }, nil, false},
+		{"openai portrait size", func(r *OpenAIImagesRequest) { r.Size = "1024x1536" }, nil, true},
+		{"arbitrary size", func(r *OpenAIImagesRequest) { r.Size = "123x456" }, nil, true},
+		{"mask", func(r *OpenAIImagesRequest) { r.HasMask = true }, nil, true},
+		{"n over cap", func(r *OpenAIImagesRequest) { r.N = 9 }, nil, true},
+		{"webp", func(r *OpenAIImagesRequest) { r.OutputFormat = "webp" }, nil, true},
+		{"background", func(r *OpenAIImagesRequest) { r.Background = "transparent" }, nil, true},
+		{"non-fish model bad size stays false", func(r *OpenAIImagesRequest) { r.Model = "gpt-image-1"; r.Size = "123x456" }, nil, false},
+		{"plannable size within limits", func(r *OpenAIImagesRequest) { r.Size = "880x1168" }, &generous, false},
+		{"plannable size beyond crop limit", func(r *OpenAIImagesRequest) { r.Size = "880x1168" }, &strict, true},
+		{"largest native at gpt-image pixel cap", func(r *OpenAIImagesRequest) { r.Size = "2880x2880" }, &generous, false},
+		{"above gpt-image max size goes to relay", func(r *OpenAIImagesRequest) { r.Size = "5760x5760" }, &generous, true},
+		{"long edge above 3840 goes to relay", func(r *OpenAIImagesRequest) { r.Size = "4096x1152" }, &generous, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := base()
 			tc.mut(req)
-			if got := FishRequiresRelay(req); got != tc.want {
+			limits := strict
+			if tc.limits != nil {
+				limits = *tc.limits
+			}
+			if got := FishRequiresRelay(req, limits); got != tc.want {
 				t.Fatalf("FishRequiresRelay = %v, want %v", got, tc.want)
 			}
 		})
 	}
-	if FishRequiresRelay(nil) {
+	if FishRequiresRelay(nil, strict) {
 		t.Fatal("nil request must not require relay")
 	}
 }

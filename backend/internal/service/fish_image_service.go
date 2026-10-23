@@ -1,11 +1,14 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +17,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/fish"
+	"github.com/tidwall/gjson"
 )
 
 // fish 账号的凭据键。api_key 必填；team_id / device_id 由账号连通性测试
@@ -107,6 +111,9 @@ type FishImageResult struct {
 	// Size / Quality 是回显给客户端的请求参数。
 	Size    string
 	Quality string
+	// Usage 是估算的 OpenAI usage（fish 不报 token 用量，见 fishImageUsage）；
+	// 非流式写进响应体最外层，假流式挂在最后一个 completed 事件上。
+	Usage json.RawMessage
 }
 
 // fishInputImage 是一张待上传的参考图（复用 leonardoInputImage 形状）。
@@ -117,22 +124,27 @@ type fishInputImage = leonardoInputImage
 type FishImageCall struct {
 	Request            *OpenAIImagesRequest
 	ChannelMappedModel string
-	inputsOnce         sync.Once
-	inputs             []*fishInputImage
-	inputsErr          error
+	// fitLimits 是动态尺寸规划阈值（系统设置-网关，handler 每请求传入）；
+	// plan 是解析出的尺寸决策，partial 路径复用，避免换号后重猜。
+	fitLimits  domain.FishFitLimits
+	plan       *domain.FishSizePlan
+	inputsOnce sync.Once
+	inputs     []*fishInputImage
+	inputsErr  error
 	// delivered 是已下载入内存的成品图（跨账号累计）。
 	delivered [][]byte
 	// remaining 是还需生成的张数（NewFishImageCall 时 = n）。
 	remaining int
 }
 
-// NewFishImageCall 构造一次调用的共享状态。
-func NewFishImageCall(req *OpenAIImagesRequest, channelMappedModel string) *FishImageCall {
+// NewFishImageCall 构造一次调用的共享状态。fitLimits 零值 = 不裁剪 +
+// 允许 2 倍放大（生产路径恒传设置解析层的值，缺省 4px / 2.0）。
+func NewFishImageCall(req *OpenAIImagesRequest, channelMappedModel string, fitLimits domain.FishFitLimits) *FishImageCall {
 	n := 1
 	if req != nil && req.N > 1 {
 		n = req.N
 	}
-	return &FishImageCall{Request: req, ChannelMappedModel: channelMappedModel, remaining: n}
+	return &FishImageCall{Request: req, ChannelMappedModel: channelMappedModel, fitLimits: fitLimits, remaining: n}
 }
 
 // Remaining 返回还需生成的张数（handler 日志用）。
@@ -151,9 +163,29 @@ func (c *FishImageCall) Delivered() int {
 	return len(c.delivered)
 }
 
-// Generate 是 GenerateCall 的薄封装（单账号直调 / 测试用）。
+// FitLimits 返回本次调用的尺寸规划阈值（handler 的中转判定与规划共用）。
+func (c *FishImageCall) FitLimits() domain.FishFitLimits {
+	if c == nil {
+		return domain.DefaultFishFitLimits()
+	}
+	return c.fitLimits
+}
+
+// modelName 返回实际出图的模型名：渠道映射优先，未映射回落请求名。
+func (c *FishImageCall) modelName() string {
+	if mapped := strings.TrimSpace(c.ChannelMappedModel); mapped != "" {
+		return mapped
+	}
+	if c.Request == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Request.Model)
+}
+
+// Generate 是 GenerateCall 的薄封装（单账号直调 / 测试用），规划阈值取
+// 系统设置缺省（裁 4px / 放大 2 倍）。
 func (s *FishImageService) Generate(ctx context.Context, account *Account, token string, req *OpenAIImagesRequest) (*FishImageResult, error) {
-	return s.GenerateCall(ctx, account, token, NewFishImageCall(req, req.Model))
+	return s.GenerateCall(ctx, account, token, NewFishImageCall(req, req.Model, domain.DefaultFishFitLimits()))
 }
 
 // fishIdentityFromAccount 从账号凭据构造指纹身份。
@@ -199,19 +231,24 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 		return nil, fmt.Errorf("fish: nil call")
 	}
 	parsed := call.Request
-	mappedModel := strings.TrimSpace(call.ChannelMappedModel)
-	if mappedModel == "" {
-		mappedModel = strings.TrimSpace(parsed.Model)
-	}
+	mappedModel := call.modelName()
 	model, ok := domain.LookupFishModel(mappedModel)
 	if !ok {
 		return nil, fish.NewRequestError(fmt.Sprintf("fish: model %q is not a fish image model", mappedModel))
 	}
-	imageSize, err := domain.FishResolveSize(model, parsed.Size)
+	// 动态尺寸规划：白名单外但能就近 cover 的尺寸也走原生（受阈值约束）。
+	plan, err := domain.FishPlanSize(parsed.Size, call.fitLimits)
 	if err != nil {
 		return nil, fish.NewRequestError(err.Error())
 	}
-	quality := fishQualityForRequest(parsed.Quality)
+	call.plan = plan
+	imageSize := plan.Native
+	requestedQuality, err := fishQualityForRequest(parsed.Quality, model.ExtendedQuality)
+	if err != nil {
+		return nil, err
+	}
+	// 账号上限只压低实际上游档；响应回显请求档，计费按交付尺寸。
+	quality := fishCapQuality(requestedQuality, account.FishMaxQuality())
 	if call.remaining < 1 {
 		call.remaining = 1
 	}
@@ -273,7 +310,7 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 		submitCtx, cancel := context.WithTimeout(ctx, fishSubmitBudget)
 		group, err := client.SubmitGeneration(submitCtx, token, identity, fish.GenerateRequest{
 			Model: model.Name, Variant: variant, Prompt: parsed.Prompt,
-			Count: batch, ImageSize: imageSize, Quality: quality,
+			Count: batch, ImageSize: imageSize, Quality: quality, ExtendedQuality: model.ExtendedQuality,
 			RefAssets: refAssets, ExpectedCredits: price.Credits, PricingVersion: price.PricingVersion,
 		})
 		cancel()
@@ -327,21 +364,30 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 	// remaining 重算：n - 已交付
 	call.remaining = callInitialN(call) - len(call.delivered)
 	if call.remaining <= 0 {
-		delivered, echoedFormat := fishResponseImages(call)
-		body, err := s.buildResponseBody(ctx, delivered, imageSize, quality, echoedFormat)
+		delivered, echoedFormat := fishResponseImages(call, plan)
+		// 回显与计费都按交付尺寸（正常即客户请求尺寸；裁剪缩放失败回退原图时如实变化）。
+		deliveredSize := fishDeliveredSize(delivered, plan)
+		usage := fishImageUsage(parsed.Model, parsed.Prompt, requestedQuality, deliveredSize, len(delivered))
+		body, err := s.buildResponseBody(ctx, delivered, deliveredSize, requestedQuality, echoedFormat, usage)
 		if err != nil {
 			return nil, err
 		}
+		if plan.NeedsTransform() {
+			slog.Info("fish_image_fit_applied",
+				"requested_size", plan.TargetSize,
+				"native_size", plan.Native,
+				"crop_px", plan.CropPixels,
+				"scale", strconv.FormatFloat(plan.ScaleFactor, 'f', 3, 64),
+				"account_id", accountIDOrZero(account),
+			)
+		}
 		return &FishImageResult{
-			Body: body,
-			Forward: &OpenAIForwardResult{
-				Model:      parsed.Model,
-				ImageCount: len(call.delivered),
-				ImageSize:  fishBillingSize(imageSize),
-			},
+			Body:    body,
+			Forward: fishForwardResult(parsed.Model, len(call.delivered), deliveredSize, usage),
 			GroupID: fishFirstGroupID(pending),
-			Size:    imageSize,
-			Quality: quality,
+			Size:    deliveredSize,
+			Quality: requestedQuality,
+			Usage:   usage,
 		}, nil
 	}
 
@@ -399,40 +445,105 @@ func (s *FishImageService) BuildFishPartialResult(ctx context.Context, call *Fis
 		return nil
 	}
 	parsed := call.Request
-	shape := domainFishResolveLoose(parsed)
-	images, echoedFormat := fishResponseImages(call)
-	body, err := s.buildResponseBody(ctx, images, shape.size, shape.quality, echoedFormat)
+	// 正常路径恒有 call.plan；注入交付图的测试路径宽松回退。
+	plan := call.plan
+	if plan == nil {
+		plan = domainFishResolveLoose(parsed, call.fitLimits)
+	}
+	if plan == nil {
+		return nil
+	}
+	quality := fishLooseQuality(call)
+	images, echoedFormat := fishResponseImages(call, plan)
+	deliveredSize := fishDeliveredSize(images, plan)
+	usage := fishImageUsage(parsed.Model, parsed.Prompt, quality, deliveredSize, len(images))
+	body, err := s.buildResponseBody(ctx, images, deliveredSize, quality, echoedFormat, usage)
 	if err != nil {
 		return nil
 	}
 	return &FishImageResult{
-		Body: body,
-		Forward: &OpenAIForwardResult{
-			Model:      parsed.Model,
-			ImageCount: len(call.delivered),
-			ImageSize:  fishBillingSize(shape.size),
-		},
-		Size:    shape.size,
-		Quality: shape.quality,
+		Body:    body,
+		Forward: fishForwardResult(parsed.Model, len(call.delivered), deliveredSize, usage),
+		Size:    deliveredSize,
+		Quality: quality,
+		Usage:   usage,
 	}
 }
 
-// fishResolvedShape 是已解析的尺寸/质量（BuildFishPartialResult 用）。
-type fishResolvedShape struct{ size, quality string }
-
-func domainFishResolveLoose(parsed *OpenAIImagesRequest) fishResolvedShape {
-	mapped := strings.TrimSpace(parsed.Model)
-	model, ok := domain.LookupFishModel(mapped)
-	if !ok {
-		if len(domain.FishModels) > 0 {
-			model = domain.FishModels[0]
+// fishForwardResult 构造计费记账用的转发结果：张数 + 交付尺寸档，估算的 usage
+// 同时写进用量记录（/usage 展示；渠道按 token 计价时按它计费）。与 OpenAI 出图
+// 同一套映射：OutputTokens 含图片 token，ImageOutputTokens 单列，不会重复计费。
+func fishForwardResult(model string, imageCount int, deliveredSize string, usage json.RawMessage) *OpenAIForwardResult {
+	forward := &OpenAIForwardResult{
+		Model:      model,
+		ImageCount: imageCount,
+		ImageSize:  fishBillingSize(deliveredSize),
+	}
+	if len(usage) > 0 {
+		if parsed, ok := openAIUsageFromGJSON(gjson.ParseBytes(usage)); ok {
+			forward.Usage = parsed
 		}
 	}
-	size, err := domain.FishResolveSize(model, parsed.Size)
-	if err != nil {
-		size = "1024x1024"
+	return forward
+}
+
+// fishImageUsage 估算 fish 原生出图的 OpenAI usage：fish 不报 token 用量，输出
+// token 按 gpt-image-1 官方表 × 交付像素 × 张数估算（见
+// estimateGPTImageOutputTokens），质量按客户请求档；提示词按 o200k 计数。
+// 尺寸无法解析或档位未知时返回 nil。
+func fishImageUsage(model, prompt, quality, deliveredSize string, imageCount int) json.RawMessage {
+	if imageCount <= 0 {
+		return nil
 	}
-	return fishResolvedShape{size: size, quality: fishQualityForRequest(parsed.Quality)}
+	width, height, ok := parseImageBillingDimensions(deliveredSize)
+	if !ok {
+		return nil
+	}
+	return openAIImageUsageJSON(model, prompt, estimateGPTImageOutputTokens(quality, width, height)*imageCount)
+}
+
+// domainFishResolveLoose 为 partial 路径宽松解析尺寸：规划失败回落默认
+// 1024x1024（回显与计费兜底；正常路径恒有 call.plan）。
+func domainFishResolveLoose(parsed *OpenAIImagesRequest, limits domain.FishFitLimits) *domain.FishSizePlan {
+	if plan, err := domain.FishPlanSize(parsed.Size, limits); err == nil {
+		return plan
+	}
+	plan, _ := domain.FishPlanSize("1024x1024", limits)
+	return plan
+}
+
+// fishLooseQuality 宽松归一质量档（与 GenerateCall 同样按渠道映射后的模型
+// 判定 xhigh / max），失败回落 medium。
+func fishLooseQuality(call *FishImageCall) string {
+	model, ok := domain.LookupFishModel(call.modelName())
+	if !ok && len(domain.FishModels) > 0 {
+		model = domain.FishModels[0]
+	}
+	quality, err := fishQualityForRequest(call.Request.Quality, model.ExtendedQuality)
+	if err != nil {
+		return "medium"
+	}
+	return quality
+}
+
+// fishDeliveredSize 返回交付给客户的实际尺寸（镜像 leonardoDeliveredSize）：
+// 优先读首张最终图的像素（裁剪缩放失败退回原图时如实变化），读不到时取
+// plan 的目标尺寸。
+func fishDeliveredSize(images [][]byte, plan *domain.FishSizePlan) string {
+	if len(images) > 0 {
+		if cfg, _, err := image.DecodeConfig(bytes.NewReader(images[0])); err == nil && cfg.Width > 0 && cfg.Height > 0 {
+			return fmt.Sprintf("%dx%d", cfg.Width, cfg.Height)
+		}
+	}
+	return plan.TargetSize
+}
+
+// accountIDOrZero 供日志安全取账号 id。
+func accountIDOrZero(account *Account) int64 {
+	if account == nil {
+		return 0
+	}
+	return account.ID
 }
 
 // pollUntilDone 轮询任务组到终态。429/5xx/网络是暂态（退避重试）；
@@ -488,15 +599,22 @@ func (s *FishImageService) downloadWithRetry(ctx context.Context, client *fish.C
 	return nil, lastErr
 }
 
-// fishResponseImages 在写响应前按 output_format 转码。空格式保持官网字节。
-func fishResponseImages(call *FishImageCall) ([][]byte, string) {
+// fishResponseImages 在写响应前按 plan 做裁剪缩放并按 output_format 转码。
+// 有变换时 fit 内已完成格式编码（含 jpeg 质量）；无变换时仅转码。
+// 空格式保持官网字节。
+func fishResponseImages(call *FishImageCall, plan *domain.FishSizePlan) ([][]byte, string) {
 	format := ""
 	var compression *int
 	if call != nil && call.Request != nil {
 		format, _ = normalizeImageOutputFormat(call.Request.OutputFormat)
 		compression = call.Request.OutputCompression
 	}
-	images := applyImageOutputFormat(call.delivered, format, compression)
+	images := call.delivered
+	if plan.NeedsTransform() {
+		images = fitCoverImages(images, plan, format, compression)
+	} else {
+		images = applyImageOutputFormat(images, format, compression)
+	}
 	return images, fishDeliveredOutputFormat(images)
 }
 
@@ -513,7 +631,7 @@ func fishDeliveredOutputFormat(images [][]byte) string {
 
 // buildResponseBody 构造 OpenAI Images 形状响应；对象存储启用时把
 // b64 换存 URL（失败回退 b64）。images 已是转码后的字节。
-func (s *FishImageService) buildResponseBody(ctx context.Context, images [][]byte, size, quality, outputFormat string) ([]byte, error) {
+func (s *FishImageService) buildResponseBody(ctx context.Context, images [][]byte, size, quality, outputFormat string, usage json.RawMessage) ([]byte, error) {
 	data := make([]map[string]any, 0, len(images))
 	for _, image := range images {
 		data = append(data, map[string]any{
@@ -532,6 +650,9 @@ func (s *FishImageService) buildResponseBody(ctx context.Context, images [][]byt
 	}
 	if strings.TrimSpace(outputFormat) != "" {
 		bodyMap["output_format"] = outputFormat
+	}
+	if len(usage) > 0 {
+		bodyMap["usage"] = usage
 	}
 	body, err := json.Marshal(bodyMap)
 	if err != nil {
@@ -580,16 +701,27 @@ func (s *FishImageService) loadInputs(ctx context.Context, call *FishImageCall) 
 
 // ── 内部工具 ──
 
-// fishQualityForRequest 归一 OpenAI 质量（standard/hd）到 fish 档位。
-// gpt-image 家族恒支持 quality 三档。
-func fishQualityForRequest(requested string) string {
+// fishQualityForRequest 归一 OpenAI 质量到 fish 档位。
+// gpt-image-2 只有 low/medium/high。extended 为 true（两个 2.5 模型）时
+// 额外接受 xhigh 和 max；max 是最高档。不支持的高档返回请求错误。
+func fishQualityForRequest(requested string, extended bool) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(requested)) {
 	case "low":
-		return "low"
+		return "low", nil
 	case "high", "hd":
-		return "high"
+		return "high", nil
+	case "xhigh", "x-high", "extra-high", "extra_high", "extrahigh":
+		if !extended {
+			return "", fish.NewRequestError("quality xhigh is only supported by gpt-image-2.5 models")
+		}
+		return "xhigh", nil
+	case "max", "maximum":
+		if !extended {
+			return "", fish.NewRequestError("quality max is only supported by gpt-image-2.5 models")
+		}
+		return "max", nil
 	default: // "", "auto", "medium", "standard"
-		return "medium"
+		return "medium", nil
 	}
 }
 

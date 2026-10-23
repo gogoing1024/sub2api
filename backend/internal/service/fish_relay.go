@@ -42,13 +42,14 @@ func isFishTokenAccount(account *Account) bool {
 }
 
 // FishRequiresRelay 预判一次请求是否必须走中转（fish 原生无法承接）：
-//   - 模型是 fish 公共名但尺寸不在原生白名单（如 OpenAI 标准竖版
-//     1024x1536）——尺寸合法性是纯函数，选号前就能确定；
+//   - 模型是 fish 公共名但尺寸无法就近规划（FishPlanSize 在 fitLimits 内
+//     找不到 cover 档，如比例缺口过大的 1024x1536）——规划是纯函数，
+//     选号前就能确定；
 //   - mask / n>8 / output_format=webp / background（fish 产物恒 PNG 且
 //     不支持这些参数）。
 //
 // 非 fish 模型名不在判定内：选号阶段按账号模型支持自然拦截。
-func FishRequiresRelay(req *OpenAIImagesRequest) bool {
+func FishRequiresRelay(req *OpenAIImagesRequest, limits domain.FishFitLimits) bool {
 	if req == nil {
 		return false
 	}
@@ -56,8 +57,8 @@ func FishRequiresRelay(req *OpenAIImagesRequest) bool {
 		isImageOutputFormatWebP(req.OutputFormat) || strings.TrimSpace(req.Background) != "" {
 		return true
 	}
-	if model, ok := domain.LookupFishModel(req.Model); ok {
-		if _, err := domain.FishResolveSize(model, req.Size); err != nil {
+	if _, ok := domain.LookupFishModel(req.Model); ok {
+		if _, err := domain.FishPlanSize(req.Size, limits); err != nil {
 			return true
 		}
 	}
