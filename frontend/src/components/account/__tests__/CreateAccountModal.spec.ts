@@ -1510,7 +1510,8 @@ describe('CreateAccountModal Fish accounts', () => {
     const payload = createAccountMock.mock.calls[0]?.[0]
     expect(payload?.platform).toBe('fish')
     expect(payload?.type).toBe('apikey')
-    expect(payload?.credentials).toEqual({ token: '46471c2b-7cdc-4671-acc4-c0b2fd111817' })
+    // 原生号 token 落在 api_key：调度快照只保留 api_key（见 044adb592）。
+    expect(payload?.credentials).toEqual({ api_key: '46471c2b-7cdc-4671-acc4-c0b2fd111817' })
     expect(wrapper.find('[data-testid="fish-token-input"]').exists()).toBe(true)
   })
 })
