@@ -38,6 +38,30 @@ func TestClassifyFishErrorInsufficientCredits(t *testing.T) {
 	}
 }
 
+func TestClassifyFishErrorForbidden(t *testing.T) {
+	native := `fish: GENERATION_UNAVAILABLE: {"code":"GENERATION_UNAVAILABLE"} (status 403)`
+	failure := classifyFishError(&fish.ForbiddenError{RequestError: fish.RequestError{
+		Message: `GENERATION_UNAVAILABLE: {"code":"GENERATION_UNAVAILABLE"}`, StatusCode: 403}})
+	if failure.Failover == nil || failure.Failover.Reason != fishFailureForbidden {
+		t.Fatalf("failover = %+v", failure.Failover)
+	}
+	if failure.Failover.NextAccountAction != NextAccountRetry {
+		t.Fatal("forbidden should retry next account")
+	}
+	if failure.Failover.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", failure.Failover.StatusCode)
+	}
+	if !failure.SetAccountError {
+		t.Fatal("forbidden must set account error (risk control)")
+	}
+	if failure.AccountErrorMessage != native {
+		t.Fatalf("account error message = %q, want native %q", failure.AccountErrorMessage, native)
+	}
+	if failure.Cooldown > 0 {
+		t.Fatal("forbidden should not cooldown (error state already unschedulable)")
+	}
+}
+
 func TestClassifyFishErrorRateLimited(t *testing.T) {
 	failure := classifyFishError(&fish.RateLimitedError{RequestError: fish.RequestError{StatusCode: 429}})
 	if failure.Cooldown != fishRateLimitCooldown || failure.Failover.Reason != fishFailureUpstream {

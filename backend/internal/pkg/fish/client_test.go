@@ -88,6 +88,7 @@ func TestErrorEnvelopeClassification(t *testing.T) {
 		{"rate limited 429", 429, "Too many requests", func(err error) bool { _, ok := err.(*RateLimitedError); return ok }},
 		{"credits 402", 402, "insufficient credits", func(err error) bool { _, ok := err.(*InsufficientCreditsError); return ok }},
 		{"credits by message", 400, "You have exceeded your daily image limit", func(err error) bool { _, ok := err.(*InsufficientCreditsError); return ok }},
+		{"forbidden 403", 403, `GENERATION_UNAVAILABLE: {"code":"GENERATION_UNAVAILABLE"}`, func(err error) bool { _, ok := err.(*ForbiddenError); return ok }},
 		{"invalid combination", 400, "Pricing configuration must match exactly one rate: matches=0", func(err error) bool { _, ok := err.(*InvalidCombinationError); return ok }},
 		{"upstream 5xx", 503, "unavailable", func(err error) bool { _, ok := err.(*UpstreamTemporaryError); return ok }},
 	}
@@ -163,5 +164,23 @@ func TestOutOfCreditsEnvelopeCarriesCode(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "OUT_OF_CREDITS") {
 		t.Fatalf("error message must carry stable code, got %q", err.Error())
+	}
+}
+
+func TestForbiddenEnvelopeCarriesNativeBody(t *testing.T) {
+	client, _ := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte(`{"code":"GENERATION_UNAVAILABLE"}`))
+	}))
+	_, err := client.Price(context.Background(), "tok", Identity{}, PriceParams{Model: "gpt-image-2", ImageSize: "1024x1024", Count: 1})
+	var forbidden *ForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("err = %v, want ForbiddenError", err)
+	}
+	// 账号置 error 的文案逐字取这条原生串，不得改写
+	want := `fish: GENERATION_UNAVAILABLE: {"code":"GENERATION_UNAVAILABLE"} (status 403)`
+	if err.Error() != want {
+		t.Fatalf("error string = %q, want %q", err.Error(), want)
 	}
 }

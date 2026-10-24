@@ -68,6 +68,14 @@ type UpstreamTemporaryError struct{ RequestError }
 
 func (e *UpstreamTemporaryError) Unwrap() error { return &e.RequestError }
 
+// ForbiddenError 表示上游业务 API 拒绝该账号（403；实测样本为生图接口
+// GENERATION_UNAVAILABLE，2026-10-24：账号级风控/封禁信号，token 鉴权
+// 本身仍通过）。换账号可解。参考图 R2 预签名 PUT 的 403 不经
+// classifyAPIError，不受此分类影响。
+type ForbiddenError struct{ RequestError }
+
+func (e *ForbiddenError) Unwrap() error { return &e.RequestError }
+
 func NewRequestError(message string) *RequestError {
 	return &RequestError{Message: message, ErrorType: ErrorTypeStatus}
 }
@@ -108,6 +116,8 @@ func classifyAPIError(statusCode int, message string) error {
 		return &AuthError{RequestError{Message: pickMessage(message, "Invalid token"), StatusCode: statusCode, ErrorType: ErrorTypeStatus}}
 	case statusCode == 402:
 		return &InsufficientCreditsError{RequestError{Message: pickMessage(message, "insufficient credits"), StatusCode: statusCode, ErrorType: ErrorTypeStatus}}
+	case statusCode == 403:
+		return &ForbiddenError{RequestError{Message: pickMessage(message, "forbidden"), StatusCode: statusCode, ErrorType: ErrorTypeStatus}}
 	case statusCode == 429:
 		return &RateLimitedError{RequestError{Message: pickMessage(message, "rate limited"), StatusCode: statusCode, ErrorType: ErrorTypeStatus}}
 	case statusCode >= 500:

@@ -33,6 +33,7 @@ var fishDailyResetLookupTimeout = 5 * time.Second
 const (
 	fishFailureInsufficientCredits = GatewayFailureReason("fish_insufficient_credits")
 	fishFailureAuth                = GatewayFailureReason("fish_auth")
+	fishFailureForbidden           = GatewayFailureReason("fish_forbidden")
 	fishFailureUpstream            = GatewayFailureReason("fish_upstream")
 	fishFailureRequest             = GatewayFailureReason("fish_request")
 	fishFailureGenerationFailed    = GatewayFailureReason("fish_generation_failed")
@@ -112,6 +113,24 @@ func classifyFishError(err error) fishFailure {
 			},
 			SetAccountError:     true,
 			AccountErrorMessage: "fish token rejected by upstream (invalid token)",
+		}
+	}
+
+	// 业务 API 403（实测 GENERATION_UNAVAILABLE，2026-10-24：edit 与 t2i 先后
+	// 全池 403，账号级风控/封禁；token 鉴权本身仍通过）。换号重试；账号置
+	// error，文案逐字写上游原生错误串。
+	var forbiddenErr *fish.ForbiddenError
+	if errors.As(err, &forbiddenErr) {
+		return fishFailure{
+			Failover: &UpstreamFailoverError{
+				StatusCode:        statusOrDefault(forbiddenErr.StatusCode, http.StatusForbidden),
+				Stage:             GatewayFailureStageAccountAuth,
+				Scope:             GatewayFailureScopeAccount,
+				Reason:            fishFailureForbidden,
+				NextAccountAction: NextAccountRetry,
+			},
+			SetAccountError:     true,
+			AccountErrorMessage: forbiddenErr.Error(),
 		}
 	}
 
