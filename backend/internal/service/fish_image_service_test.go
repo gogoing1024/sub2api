@@ -93,9 +93,12 @@ func TestFishGenerateCallHappyPath(t *testing.T) {
 	if bodyMap["output_format"] != "png" {
 		t.Fatalf("output_format = %v, want png", bodyMap["output_format"])
 	}
-	// 计费转发：1K 档
+	// 计费转发：1K 档；总耗时覆盖整个请求（usage 记录的 duration_ms）
 	if result.Forward.ImageCount != 1 || result.Forward.ImageSize != ImageBillingSize1K {
 		t.Fatalf("Forward = %+v", result.Forward)
+	}
+	if result.Forward.Duration <= 0 {
+		t.Fatalf("Forward.Duration = %v, want > 0 (usage duration_ms)", result.Forward.Duration)
 	}
 }
 
@@ -767,5 +770,8 @@ func TestFishBuildPartialResultUsageCountsDeliveredImages(t *testing.T) {
 	}
 	if result.Forward.Usage.OutputTokens != 3*272 {
 		t.Fatalf("partial output tokens = %d, want %d", result.Forward.Usage.OutputTokens, 3*272)
+	}
+	if result.Forward.Duration <= 0 {
+		t.Fatalf("partial Forward.Duration = %v, want > 0 (usage duration_ms)", result.Forward.Duration)
 	}
 }

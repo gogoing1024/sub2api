@@ -135,6 +135,8 @@ type FishImageCall struct {
 	delivered [][]byte
 	// remaining 是还需生成的张数（NewFishImageCall 时 = n）。
 	remaining int
+	// startedAt 是请求起点：usage 记录的总耗时按整个请求计（含换号续跑）。
+	startedAt time.Time
 }
 
 // NewFishImageCall 构造一次调用的共享状态。fitLimits 零值 = 不裁剪 +
@@ -144,7 +146,7 @@ func NewFishImageCall(req *OpenAIImagesRequest, channelMappedModel string, fitLi
 	if req != nil && req.N > 1 {
 		n = req.N
 	}
-	return &FishImageCall{Request: req, ChannelMappedModel: channelMappedModel, fitLimits: fitLimits, remaining: n}
+	return &FishImageCall{Request: req, ChannelMappedModel: channelMappedModel, fitLimits: fitLimits, remaining: n, startedAt: time.Now()}
 }
 
 // Remaining 返回还需生成的张数（handler 日志用）。
@@ -381,9 +383,11 @@ func (s *FishImageService) GenerateCall(ctx context.Context, account *Account, t
 				"account_id", accountIDOrZero(account),
 			)
 		}
+		forward := fishForwardResult(parsed.Model, len(call.delivered), deliveredSize, usage)
+		forward.Duration = time.Since(call.startedAt)
 		return &FishImageResult{
 			Body:    body,
-			Forward: fishForwardResult(parsed.Model, len(call.delivered), deliveredSize, usage),
+			Forward: forward,
 			GroupID: fishFirstGroupID(pending),
 			Size:    deliveredSize,
 			Quality: requestedQuality,
@@ -461,9 +465,11 @@ func (s *FishImageService) BuildFishPartialResult(ctx context.Context, call *Fis
 	if err != nil {
 		return nil
 	}
+	forward := fishForwardResult(parsed.Model, len(call.delivered), deliveredSize, usage)
+	forward.Duration = time.Since(call.startedAt)
 	return &FishImageResult{
 		Body:    body,
-		Forward: fishForwardResult(parsed.Model, len(call.delivered), deliveredSize, usage),
+		Forward: forward,
 		Size:    deliveredSize,
 		Quality: quality,
 		Usage:   usage,
