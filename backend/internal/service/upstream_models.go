@@ -811,10 +811,11 @@ func (s *AccountTestService) fetchUpstreamModelListRequest(ctx context.Context, 
 	}
 	if account.Platform == PlatformKiro && isKiroDirectModeAccount(account) {
 		models, err := s.fetchKiroDirectUpstreamModels(ctx, account)
-		return models, nil, err
+		return models, nil, nil, err
 	}
 	if account.IsBPSOAuth() {
-		return s.fetchExcelBPSUpstreamModels(ctx, account)
+		models, body, err := s.fetchExcelBPSUpstreamModels(ctx, account)
+		return models, body, nil, err
 	}
 
 	if s.httpUpstream == nil {

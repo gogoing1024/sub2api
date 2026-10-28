@@ -16,6 +16,13 @@ const mocks = vi.hoisted(() => ({ list: vi.fn(), create: vi.fn(), update: vi.fn(
 vi.mock('@/api/admin/adminAccessKeys', () => mocks)
 vi.mock('@/api/admin/groups', () => ({ getAllIncludingInactive: vi.fn().mockResolvedValue([{ id: 7, name: '测试分组' }]) }))
 vi.mock('@/components/auth/TotpStepUpDialog.vue', () => ({ default: { template: '<div />' } }))
+vi.mock('@/components/common/ConfirmDialog.vue', () => ({
+  default: {
+    props: ['show', 'message'],
+    emits: ['confirm', 'cancel'],
+    template: '<div v-if="show" data-test="confirm-dialog"><span data-test="confirm-message">{{ message }}</span><button data-test="confirm-ok" @click="$emit(\'confirm\')">确认</button><button data-test="confirm-cancel" @click="$emit(\'cancel\')">取消</button></div>'
+  }
+}))
 vi.mock('@/composables/useStepUp', () => ({ useStepUp: () => ({ run: mocks.stepUp }), isStepUpCancelled: () => false }))
 beforeEach(() => {
   vi.clearAllMocks()
@@ -47,7 +54,7 @@ describe('管理员受限密钥配置', () => {
     await flushPromises()
     await wrapper.get('[data-test="create"]').trigger('click')
     await wrapper.get('[data-test="name"]').setValue('分组模型工具')
-    await wrapper.get('[data-test="groups-0"]').setValue(['7'])
+    await wrapper.get('[data-test="groups-0"] input[value="7"]').setValue(true)
     expect(wrapper.text()).toContain('分组模型白名单会限制分组可调用的模型')
     await wrapper.get('input[value="groups.models.read"]').setValue(true)
     await wrapper.get('input[value="groups.models.write"]').setValue(true)
@@ -65,7 +72,7 @@ describe('管理员受限密钥配置', () => {
     await flushPromises()
     await wrapper.get('[data-test="create"]').trigger('click')
     await wrapper.get('[data-test="name"]').setValue('自动化')
-    await wrapper.get('[data-test="groups-0"]').setValue(['7'])
+    await wrapper.get('[data-test="groups-0"] input[value="7"]').setValue(true)
     await wrapper.get('[data-test="add-rule"]').trigger('click')
     await wrapper.get('[data-test="save"]').trigger('click')
     await flushPromises()
@@ -109,22 +116,26 @@ describe('管理员受限密钥配置', () => {
     mocks.update.mockResolvedValueOnce({ ...item, enabled: false })
     await click('停用')
     expect(wrapper.text()).toContain('已停用')
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     mocks.rotate.mockResolvedValueOnce({ item: { ...item, enabled: false }, key: 'rotated-once' })
     await click('轮换')
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
     expect(mocks.rotate).toHaveBeenCalledWith('key-1')
     expect(wrapper.text()).toContain('rotated-once')
     mocks.revoke.mockRejectedValueOnce(new Error('撤销失败'))
     await click('永久撤销')
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
     expect(wrapper.text()).toContain('自动化')
     expect(wrapper.text()).toContain('撤销失败')
     mocks.revoke.mockResolvedValueOnce({ message: 'ok' })
     await click('永久撤销')
+    await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+    await flushPromises()
     expect(wrapper.text()).toContain('adm_sc_1')
     expect(wrapper.text()).toContain('已撤销')
     expect(wrapper.findAll('button').some(button => button.text() === '删除记录')).toBe(true)
     expect(mocks.stepUp).toHaveBeenCalledTimes(5)
-    vi.restoreAllMocks()
   })
 
   it('删除已撤销记录时提示历史保留，取消和失败不移除，服务器确认后才移除', async () => {
@@ -135,23 +146,32 @@ describe('管理员受限密钥配置', () => {
     const remove = () => wrapper.findAll('button').find(button => button.text() === '删除记录')!
     expect(remove()).toBeDefined()
     expect(wrapper.findAll('button').some(button => button.text() === '永久撤销')).toBe(false)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     try {
       await remove().trigger('click')
-      expect(confirm).toHaveBeenCalledWith(expect.stringContaining('删除只是从列表移除，历史操作记录仍会继续保留'))
+      expect(wrapper.text()).toContain('删除只是从列表移除，历史操作记录仍会继续保留')
       expect(mocks.deleteRecord).not.toHaveBeenCalled()
       expect(wrapper.text()).toContain('revoked-prefix')
 
-      confirm.mockReturnValue(true)
+      // 取消确认不移除
+      await wrapper.get('[data-test="confirm-cancel"]').trigger('click')
+      await flushPromises()
+      expect(mocks.deleteRecord).not.toHaveBeenCalled()
+      expect(wrapper.text()).toContain('revoked-prefix')
+
+      // 确认但失败不移除
       mocks.deleteRecord.mockRejectedValueOnce(new Error('删除失败'))
       await remove().trigger('click')
+      await wrapper.get('[data-test="confirm-ok"]').trigger('click')
       await flushPromises()
       expect(wrapper.text()).toContain('删除失败')
       expect(wrapper.text()).toContain('revoked-prefix')
 
+      // 服务器确认后才移除
       let resolve!: (value: { message: string }) => void
       mocks.deleteRecord.mockReturnValueOnce(new Promise(r => { resolve = r }))
       await remove().trigger('click')
+      await wrapper.get('[data-test="confirm-ok"]').trigger('click')
+      await flushPromises()
       expect(remove().attributes('disabled')).toBeDefined()
       expect(wrapper.text()).toContain('revoked-prefix')
       resolve({ message: 'ok' })
@@ -161,7 +181,6 @@ describe('管理员受限密钥配置', () => {
       expect(wrapper.text()).not.toContain('revoked-prefix')
       expect(wrapper.text()).toContain('历史操作记录仍会继续保留')
     } finally {
-      confirm.mockRestore()
       wrapper.unmount()
     }
   })

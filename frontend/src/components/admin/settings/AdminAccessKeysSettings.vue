@@ -44,10 +44,10 @@
       <fieldset v-for="(rule, index) in draft.policy.rules" :key="index" class="space-y-3 rounded-lg border border-gray-200 p-3 dark:border-dark-700">
         <legend>{{ t('adminAccessKeys.ruleLegend', { index: index + 1 }) }}</legend>
         <label class="flex gap-2"><input v-model="rule.all_groups" type="checkbox" />{{ t('adminAccessKeys.allGroups') }}</label>
-        <label class="block">{{ t('adminAccessKeys.groups') }}<select v-model="rule.group_ids" :data-test="`groups-${index}`" multiple class="input mt-1" :disabled="rule.all_groups"><option v-for="group in groups" :key="group.id" :value="group.id">{{ group.name }}</option></select></label>
+        <label class="block">{{ t('adminAccessKeys.groups') }}<div :data-test="`groups-${index}`" class="mt-1 max-h-32 overflow-y-auto rounded-lg border border-gray-200 p-2 dark:border-dark-600"><label v-for="group in groups" :key="group.id" class="flex gap-2"><input v-model="rule.group_ids" type="checkbox" :value="group.id" :disabled="rule.all_groups" />{{ group.name }}</label></div></label>
         <label class="flex gap-2"><input v-model="rule.include_ungrouped" type="checkbox" />{{ t('adminAccessKeys.includeUngrouped') }}</label>
         <div>{{ t('adminAccessKeys.accountTypes') }}<div class="flex flex-wrap gap-4"><label v-for="type in accountTypes" :key="type" class="flex gap-2"><input v-model="rule.account_types" type="checkbox" :value="type" />{{ type }}</label></div></div>
-        <label class="block">{{ t('adminAccessKeys.platforms') }}<select v-model="rule.platforms" multiple class="input mt-1"><option v-for="platform in CONCRETE_PLATFORM_OPTIONS" :key="platform.value" :value="platform.value">{{ platform.label }}</option></select></label>
+        <label class="block">{{ t('adminAccessKeys.platforms') }}<div class="mt-1 grid gap-2 sm:grid-cols-2"><label v-for="platform in CONCRETE_PLATFORM_OPTIONS" :key="platform.value" class="flex gap-2"><input v-model="rule.platforms" type="checkbox" :value="platform.value" />{{ platform.label }}</label></div></label>
         <div>{{ t('adminAccessKeys.accountOperations') }}<div class="grid gap-2 sm:grid-cols-2"><label v-for="permission in accountPermissions" :key="permission.id" class="flex gap-2"><input v-model="rule.permissions" type="checkbox" :value="permission.id" />{{ permission.label }} <span class="text-xs text-gray-500">{{ permission.id }}</span></label></div></div>
         <div v-if="groupPermissions.length" class="space-y-2 rounded border border-amber-300 p-3">
           <p>{{ t('adminAccessKeys.groupOperations') }}</p>
@@ -67,6 +67,14 @@
       <div class="flex gap-2"><button type="button" data-test="save" class="btn btn-primary" :disabled="busy" @click="save">{{ busy ? t('adminAccessKeys.processing') : t('adminAccessKeys.save') }}</button><button type="button" class="btn btn-secondary" :disabled="busy" @click="draft = null">{{ t('adminAccessKeys.cancel') }}</button></div>
     </div>
     <TotpStepUpDialog :controller="stepUp" />
+    <ConfirmDialog
+      :show="confirmState !== null"
+      :title="t('adminAccessKeys.confirmTitle')"
+      :message="confirmState?.message || ''"
+      :danger="confirmState?.danger ?? false"
+      @confirm="confirmAction"
+      @cancel="confirmState = null"
+    />
   </section>
 </template>
 
@@ -78,6 +86,7 @@ import type { AccessRule, AdminKey, AdminKeyInput, Permission } from '@/api/admi
 import { getAllIncludingInactive } from '@/api/admin/groups'
 import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import TotpStepUpDialog from '@/components/auth/TotpStepUpDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { isStepUpCancelled, useStepUp } from '@/composables/useStepUp'
 
 const { t } = useI18n()
@@ -97,6 +106,8 @@ const expiration = ref('')
 const initialExpiration = ref('')
 const ips = ref('')
 const accountTypes = ['oauth', 'setup-token', 'apikey', 'upstream', 'bedrock', 'service_account']
+// 确认弹窗状态：保存待执行的动作，ConfirmDialog 确认后由 confirmAction 派发。
+const confirmState = ref<null | { message: string; danger: boolean; run: () => Promise<void> }>(null)
 const accountPermissions = computed(() => permissions.value.filter(p => p.scope === 'account'))
 const groupPermissions = computed(() => permissions.value.filter(p => p.scope === 'group'))
 const globalCategories = computed(() => {
@@ -169,23 +180,37 @@ async function save() {
   })
 }
 async function toggle(item: AdminKey) { await mutate(async () => { replace(await api.update(item.id, { name: item.name, description: item.description, enabled: !item.enabled, expires_at: item.expires_at, allowed_ips: item.allowed_ips, policy: item.policy })); notice.value = t('adminAccessKeys.statusUpdated') }) }
+async function confirmAction() {
+  const pending = confirmState.value
+  confirmState.value = null
+  if (pending) await mutate(pending.run)
+}
 async function rotateKey(item: AdminKey) {
-  if (!confirm(t('adminAccessKeys.rotateConfirm', { name: item.name }))) return
-  await mutate(async () => { const result = await api.rotate(item.id); replace(result.item); secret.value = result.key; notice.value = t('adminAccessKeys.rotated') })
+  confirmState.value = {
+    message: t('adminAccessKeys.rotateConfirm', { name: item.name }),
+    danger: true,
+    run: async () => { const result = await api.rotate(item.id); replace(result.item); secret.value = result.key; notice.value = t('adminAccessKeys.rotated') }
+  }
 }
 async function revokeKey(item: AdminKey) {
-  if (!confirm(t('adminAccessKeys.revokeConfirm', { name: item.name }))) return
-  await mutate(async () => { await api.revoke(item.id); replace({ ...item, enabled: false, revoked_at: new Date().toISOString() }); if (editingID.value === item.id) draft.value = null; notice.value = t('adminAccessKeys.revoked') })
+  confirmState.value = {
+    message: t('adminAccessKeys.revokeConfirm', { name: item.name }),
+    danger: true,
+    run: async () => { await api.revoke(item.id); replace({ ...item, enabled: false, revoked_at: new Date().toISOString() }); if (editingID.value === item.id) draft.value = null; notice.value = t('adminAccessKeys.revoked') }
+  }
 }
 async function deleteRecord(item: AdminKey) {
   if (busy.value || !item.revoked_at) return
-  if (!confirm(t('adminAccessKeys.deleteConfirm', { name: item.name }))) return
-  await mutate(async () => {
-    await api.deleteRecord(item.id)
-    items.value = items.value.filter(key => key.id !== item.id)
-    if (editingID.value === item.id) draft.value = null
-    notice.value = t('adminAccessKeys.removed')
-  })
+  confirmState.value = {
+    message: t('adminAccessKeys.deleteConfirm', { name: item.name }),
+    danger: true,
+    run: async () => {
+      await api.deleteRecord(item.id)
+      items.value = items.value.filter(key => key.id !== item.id)
+      if (editingID.value === item.id) draft.value = null
+      notice.value = t('adminAccessKeys.removed')
+    }
+  }
 }
 async function copySecret() { try { await navigator.clipboard.writeText(secret.value); notice.value = t('adminAccessKeys.copied') } catch { error.value = t('adminAccessKeys.copyFailed') } }
 function status(item: AdminKey) { return item.revoked_at ? t('adminAccessKeys.statusRevoked') : !item.enabled ? t('adminAccessKeys.statusDisabled') : item.expires_at && new Date(item.expires_at).getTime() <= Date.now() ? t('adminAccessKeys.statusExpired') : t('adminAccessKeys.statusEnabled') }
