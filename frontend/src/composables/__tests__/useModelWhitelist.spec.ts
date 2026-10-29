@@ -205,6 +205,7 @@ describe('useModelWhitelist', () => {
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
+      'kimi-k3',
       'codex-auto-review',
       'claude-opus-4-8',
       'claude-opus-4-8-thinking',
@@ -227,7 +228,9 @@ describe('useModelWhitelist', () => {
       'claude-sonnet-4-5-20250929',
       'claude-sonnet-4-5-20250929-thinking',
       'claude-haiku-4-5-20251001',
-      'claude-haiku-4-5-20251001-thinking'
+      'claude-haiku-4-5-20251001-thinking',
+      'claude-haiku-5-5',
+      'claude-haiku-5-5-thinking'
     ])
     expect(models).toContain('gpt-5.6-sol')
     expect(models).toContain('gpt-5.6-terra')
@@ -314,6 +317,7 @@ describe('useModelWhitelist', () => {
       { from: 'gpt-5.6-sol', to: 'gpt-5.6-sol' },
       { from: 'gpt-5.6-terra', to: 'gpt-5.6-terra' },
       { from: 'gpt-5.6-luna', to: 'gpt-5.6-luna' },
+      { from: 'kimi-k3', to: 'kimi-k3' },
       { from: 'codex-auto-review', to: 'gpt-5.6-luna' },
       { from: 'claude-opus-4-8', to: 'claude-opus-4.8' },
       { from: 'claude-opus-4-8-thinking', to: 'claude-opus-4.8' },
@@ -336,7 +340,9 @@ describe('useModelWhitelist', () => {
       { from: 'claude-sonnet-4-5-20250929', to: 'claude-sonnet-4.5' },
       { from: 'claude-sonnet-4-5-20250929-thinking', to: 'claude-sonnet-4.5' },
       { from: 'claude-haiku-4-5-20251001', to: 'claude-haiku-4.5' },
-      { from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5' }
+      { from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5' },
+      { from: 'claude-haiku-5-5', to: 'claude-haiku-5.5' },
+      { from: 'claude-haiku-5-5-thinking', to: 'claude-haiku-5.5' }
     ])
     expect(mappingPairs).toEqual(expect.arrayContaining([
       { from: 'gpt-5.6-sol', to: 'gpt-5.6-sol' },
@@ -372,6 +378,7 @@ describe('useModelWhitelist', () => {
       { from: 'gpt-5.6-sol', to: 'gpt-5.6-sol' },
       { from: 'gpt-5.6-terra', to: 'gpt-5.6-terra' },
       { from: 'gpt-5.6-luna', to: 'gpt-5.6-luna' },
+      { from: 'kimi-k3', to: 'kimi-k3' },
       { from: 'codex-auto-review', to: 'gpt-5.6-luna' },
       { from: 'claude-opus-4-8', to: 'claude-opus-4.8' },
       { from: 'claude-opus-4-8-thinking', to: 'claude-opus-4.8' },
@@ -394,9 +401,11 @@ describe('useModelWhitelist', () => {
       { from: 'claude-sonnet-4-5-20250929', to: 'claude-sonnet-4.5' },
       { from: 'claude-sonnet-4-5-20250929-thinking', to: 'claude-sonnet-4.5' },
       { from: 'claude-haiku-4-5-20251001', to: 'claude-haiku-4.5' },
-      { from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5' }
+      { from: 'claude-haiku-4-5-20251001-thinking', to: 'claude-haiku-4.5' },
+      { from: 'claude-haiku-5-5', to: 'claude-haiku-5.5' },
+      { from: 'claude-haiku-5-5-thinking', to: 'claude-haiku-5.5' }
     ]))
-    expect(mappings).toHaveLength(26)
+    expect(mappings).toHaveLength(29)
     expect(mappings.every(item => !item.from.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.to.startsWith('kiro-'))).toBe(true)
     expect(mappings.every(item => !item.from.endsWith('-agentic'))).toBe(true)
