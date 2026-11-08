@@ -556,16 +556,13 @@ func (s *OpenAIGatewayService) clearOpenAIAccountRuntimeBlockIfUnchanged(account
 // and Excel BPS cooldowns (BPS-routed models only) are left alone. This is
 // fail-open if a DB write failed or the snapshot has not caught up yet: empty
 // cooldown fields drop the local account-level block.
-func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string, requireCompact bool) bool {
+func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string) bool {
 	if s == nil {
 		return false
 	}
 	// The BPS 429 and model-permission cooldowns live only in memory; every
 	// scheduling path, sticky bindings included, must honor them.
 	if s.isExcelBPSRouteCoolingDown(account, requestedModel) {
-		return true
-	}
-	if s.openAICodexTicketBlocksAccount(account, s.openAICodexTicketOutboundModel(account, requestedModel, requireCompact)) {
 		return true
 	}
 	snapshot := s.peekOpenAIAccountRuntimeBlock(account)
