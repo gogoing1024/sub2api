@@ -67,6 +67,7 @@ type cachedGatewayForwardingSettings struct {
 	rewriteMessageCacheControl       bool
 	clientDatelineNormalization      bool
 	kiroTokenizer                    anthropictokenizer.Algorithm
+	kiroCacheScopeClient             bool
 	expiresAt                        int64 // unix nano
 }
 
@@ -941,6 +942,7 @@ type gatewayForwardingSettingsResult struct {
 	clientDatelineNormalization                                                           bool
 	claudeOAuthSystemPrompt, claudeOAuthSystemPromptBlocks                                string
 	kiroTokenizer                                                                         anthropictokenizer.Algorithm
+	kiroCacheScopeClient                                                                  bool
 }
 
 func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context) gatewayForwardingSettingsResult {
@@ -958,6 +960,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 				rewriteMessageCacheControl:       cached.rewriteMessageCacheControl,
 				clientDatelineNormalization:      cached.clientDatelineNormalization,
 				kiroTokenizer:                    cached.kiroTokenizer,
+				kiroCacheScopeClient:             cached.kiroCacheScopeClient,
 			}
 		}
 	}
@@ -976,6 +979,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 					rewriteMessageCacheControl:       cached.rewriteMessageCacheControl,
 					clientDatelineNormalization:      cached.clientDatelineNormalization,
 					kiroTokenizer:                    cached.kiroTokenizer,
+					kiroCacheScopeClient:             cached.kiroCacheScopeClient,
 				}, nil
 			}
 		}
@@ -993,6 +997,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			SettingKeyRewriteMessageCacheControl,
 			SettingKeyEnableClientDatelineNormalization,
 			SettingKeyGatewayKiroTokenizer,
+			SettingKeyGatewayKiroCacheScopeClient,
 		})
 		if err != nil {
 			slog.Warn("failed to get gateway forwarding settings", "error", err)
@@ -1044,6 +1049,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			rewriteMessageCacheControl:       rewriteMessageCacheControl,
 			clientDatelineNormalization:      clientDatelineNormalization,
 			kiroTokenizer:                    anthropictokenizer.ParseAlgorithm(values[SettingKeyGatewayKiroTokenizer]),
+			kiroCacheScopeClient:             values[SettingKeyGatewayKiroCacheScopeClient] == "true",
 			expiresAt:                        time.Now().Add(gatewayForwardingCacheTTL).UnixNano(),
 		})
 		return gatewayForwardingSettingsResult{
@@ -1058,6 +1064,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			rewriteMessageCacheControl:       rewriteMessageCacheControl,
 			clientDatelineNormalization:      clientDatelineNormalization,
 			kiroTokenizer:                    anthropictokenizer.ParseAlgorithm(values[SettingKeyGatewayKiroTokenizer]),
+			kiroCacheScopeClient:             values[SettingKeyGatewayKiroCacheScopeClient] == "true",
 		}, nil
 	})
 	if r, ok := val.(gatewayForwardingSettingsResult); ok {
@@ -1069,6 +1076,11 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 // GetOpenAITTFTMode 返回 Responses first_token_ms 的统计口径。
 func (s *SettingService) GetOpenAITTFTMode(ctx context.Context) string {
 	return s.getGatewayForwardingSettingsCached(ctx).openAITTFTMode
+}
+
+// IsGatewayKiroCacheScopeClientEnabled 返回 Kiro 缓存模拟是否按「API key + 会话」分桶（默认 false）。
+func (s *SettingService) IsGatewayKiroCacheScopeClientEnabled(ctx context.Context) bool {
+	return s.getGatewayForwardingSettingsCached(ctx).kiroCacheScopeClient
 }
 
 // GetGatewayKiroTokenizer 返回 Kiro 渠道的 token 计量算法（默认 official）。
