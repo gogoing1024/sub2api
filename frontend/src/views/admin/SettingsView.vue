@@ -5348,7 +5348,7 @@
               <div class="border-b border-gray-100 pb-5 dark:border-dark-700 md:col-span-2">
                 <label
                   for="fish-image-max-crop-pixels"
-                  class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                 >
                   {{ t("admin.settings.gatewayForwarding.fishImageMaxCropPixels") }}
                 </label>
@@ -5371,7 +5371,7 @@
               <div class="border-b border-gray-100 pb-5 dark:border-dark-700 md:col-span-2">
                 <label
                   for="fish-image-max-upscale-factor"
-                  class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                 >
                   {{ t("admin.settings.gatewayForwarding.fishImageMaxUpscaleFactor") }}
                 </label>
