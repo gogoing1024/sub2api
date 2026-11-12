@@ -21,6 +21,9 @@ func KiroContextWindowTokens(model string) int {
 		"claude-opus-4.6", "claude-opus-4.7", "claude-opus-4.8", "claude-opus-5", "claude-opus-5.5",
 		"claude-haiku-5.5", "claude-fable-5":
 		return 1_000_000
+	case "grok-4.7":
+		// Kiro 文档口径 500K，与其定价目录的 max_input_tokens 一致。
+		return 500_000
 	}
 	// 其他 GPT 模型的窗口尚未确认，沿用 kiro.rs 的 272k 兜底。
 	if strings.HasPrefix(normalized, "gpt") {

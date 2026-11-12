@@ -31,6 +31,7 @@ func TestKiroContextWindowTokens(t *testing.T) {
 		{"claude-fable-5-thinking", 1_000_000},
 		{"gpt-5.6-sol", 1_000_000},
 		{"gpt-5.6-terra", 1_000_000},
+		{"grok-4.7", 500_000},
 		{"gpt-5.4", 272_000},
 		{"kimi-k3", 200_000},
 		{"", 200_000},
